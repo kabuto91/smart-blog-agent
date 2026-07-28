@@ -1,6 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai"
 
-export function createLLM() {
+export function createLLM(streaming = false) {
   return new ChatOpenAI({
     modelName: process.env.QWEN_MODEL || "qwen-plus",
     configuration: {
@@ -8,5 +8,6 @@ export function createLLM() {
     },
     apiKey: process.env.QWEN_API_KEY,
     temperature: 0.7,
+    streaming,
   })
 }
