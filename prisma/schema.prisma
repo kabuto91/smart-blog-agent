@@ -45,3 +45,15 @@ model ThemeMessage {
   @@index([sessionId])
   @@map("theme_messages")
 }
+
+model Theme {
+  id            String   @id @default(uuid())
+  name          String
+  html          String
+  contentConfig String?
+  isActive      Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("themes")
+}
