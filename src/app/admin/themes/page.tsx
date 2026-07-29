@@ -3,12 +3,15 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ThemeGenerateDialog } from "@/components/admin/theme-generate-dialog"
-import { Plus, Palette, Trash2, Eye } from "lucide-react"
+import { ContentEditorDialog } from "@/components/admin/content-editor-dialog"
+import { Plus, Palette, Trash2, Eye, Settings } from "lucide-react"
+import type { ContentConfig } from "@/lib/types/content-config"
 
 interface Theme {
   id: string
   name: string
   html: string
+  contentConfig?: string
   createdAt: string
 }
 
@@ -16,13 +19,17 @@ export default function ThemesPage() {
   const [themes, setThemes] = useState<Theme[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+  const [configEditThemeId, setConfigEditThemeId] = useState<string | null>(null)
 
-  function handleSaved(html: string) {
+  const configEditTheme = themes.find((t) => t.id === configEditThemeId)
+
+  function handleSaved(html: string, contentConfig?: string) {
     const name = `主题 ${themes.length + 1}`
     const newTheme: Theme = {
       id: crypto.randomUUID(),
       name,
       html,
+      contentConfig,
       createdAt: new Date().toLocaleDateString("zh-CN"),
     }
     setThemes((prev) => [newTheme, ...prev])
@@ -30,6 +37,18 @@ export default function ThemesPage() {
 
   function handleDelete(id: string) {
     setThemes((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  function handleConfigSaved(config: ContentConfig) {
+    if (!configEditThemeId) return
+    setThemes((prev) =>
+      prev.map((t) =>
+        t.id === configEditThemeId
+          ? { ...t, contentConfig: JSON.stringify(config) }
+          : t
+      )
+    )
+    setConfigEditThemeId(null)
   }
 
   return (
@@ -107,6 +126,15 @@ export default function ThemesPage() {
                     >
                       <Eye className="size-3.5" />
                     </Button>
+                    {theme.contentConfig && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setConfigEditThemeId(theme.id)}
+                      >
+                        <Settings className="size-3.5" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-sm"
@@ -129,6 +157,21 @@ export default function ThemesPage() {
         onOpenChange={setDialogOpen}
         onSaved={handleSaved}
       />
+
+      {/* Content config editor */}
+      {configEditTheme && (
+        <ContentEditorDialog
+          open={true}
+          onOpenChange={() => setConfigEditThemeId(null)}
+          htmlTemplate={configEditTheme.html}
+          initialConfig={
+            configEditTheme.contentConfig
+              ? JSON.parse(configEditTheme.contentConfig)
+              : {}
+          }
+          onSave={handleConfigSaved}
+        />
+      )}
 
       {/* Full preview modal */}
       {previewHtml && (

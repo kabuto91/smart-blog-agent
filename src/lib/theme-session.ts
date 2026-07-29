@@ -20,7 +20,8 @@ export async function addMessage(
   sessionId: string,
   role: ThemeMessage["role"],
   content: string,
-  htmlSnapshot?: string
+  htmlSnapshot?: string,
+  contentConfig?: string
 ): Promise<void> {
   // Ensure session exists
   const exists = await sessionExists(sessionId)
@@ -34,6 +35,7 @@ export async function addMessage(
       role,
       content,
       htmlSnapshot: htmlSnapshot || null,
+      contentConfig: contentConfig || null,
     },
   })
 
@@ -62,6 +64,18 @@ export async function getLatestHtml(sessionId: string): Promise<string | null> {
     select: { htmlSnapshot: true },
   })
   return message?.htmlSnapshot ?? null
+}
+
+export async function getLatestContentConfig(sessionId: string): Promise<string | null> {
+  const message = await prisma.themeMessage.findFirst({
+    where: {
+      sessionId,
+      contentConfig: { not: null },
+    },
+    orderBy: { id: "desc" },
+    select: { contentConfig: true },
+  })
+  return message?.contentConfig ?? null
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

@@ -7,6 +7,22 @@ datasource db {
   provider = "sqlite"
 }
 
+model SiteConfig {
+  id     Int    @id @default(1)
+  config String
+  
+  @@map("site_config")
+}
+
+model SiteStats {
+  id            Int  @id @default(1)
+  totalViews    Int  @default(0) @map("total_views")
+  totalArticles Int  @default(0) @map("total_articles")
+  totalLikes    Int  @default(0) @map("total_likes")
+
+  @@map("site_stats")
+}
+
 model ThemeSession {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now()) @map("created_at")
@@ -17,13 +33,14 @@ model ThemeSession {
 }
 
 model ThemeMessage {
-  id           Int      @id @default(autoincrement())
-  sessionId    String   @map("session_id")
-  role         String
-  content      String
-  htmlSnapshot String?  @map("html_snapshot")
-  createdAt    DateTime @default(now()) @map("created_at")
-  session      ThemeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id             Int      @id @default(autoincrement())
+  sessionId      String   @map("session_id")
+  role           String
+  content        String
+  htmlSnapshot   String?  @map("html_snapshot")
+  contentConfig  String?  @map("content_config")
+  createdAt      DateTime @default(now()) @map("created_at")
+  session        ThemeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId])
   @@map("theme_messages")

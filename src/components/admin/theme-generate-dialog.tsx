@@ -18,6 +18,7 @@ interface Message {
   role: "user" | "assistant"
   content: string
   html?: string
+  contentConfig?: string
   thinking?: string[]
   thinkingVisible?: boolean
 }
@@ -25,7 +26,7 @@ interface Message {
 interface ThemeGenerateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSaved?: (html: string) => void
+  onSaved?: (html: string, contentConfig?: string) => void
 }
 
 export function ThemeGenerateDialog({
@@ -126,10 +127,10 @@ export function ThemeGenerateDialog({
                 )
               } else if (event.type === "done") {
                 setConversationId(event.conversationId)
-                // Update the assistant message with HTML
+                // Update the assistant message with HTML and content config
                 setMessages((prev) =>
                   prev.map((m) =>
-                    m.id === assistantMsgId ? { ...m, html: event.html } : m
+                    m.id === assistantMsgId ? { ...m, html: event.html, contentConfig: event.contentConfig } : m
                   )
                 )
               } else if (event.type === "error") {
@@ -163,9 +164,9 @@ export function ThemeGenerateDialog({
     )
   }
 
-  function handleSave(html: string) {
+  function handleSave(html: string, contentConfig?: string) {
     if (onSaved) {
-      onSaved(html)
+      onSaved(html, contentConfig)
       onOpenChange(false)
       reset()
     }
@@ -188,7 +189,9 @@ export function ThemeGenerateDialog({
     if (!nextOpen) reset()
   }
 
-  const latestHtml = [...messages].reverse().find((m) => m.html)?.html
+  const latestMsg = [...messages].reverse().find((m) => m.html)
+  const latestHtml = latestMsg?.html
+  const latestConfig = latestMsg?.contentConfig
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -273,7 +276,7 @@ export function ThemeGenerateDialog({
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleSave(msg.html!)}
+                                onClick={() => handleSave(msg.html!, msg.contentConfig)}
                                 className="h-6 gap-1 text-xs text-[#E5A83D] hover:text-[#D4A035]"
                               >
                                 使用此主题
@@ -363,7 +366,7 @@ export function ThemeGenerateDialog({
               </DialogClose>
               {latestHtml && (
                 <Button
-                  onClick={() => handleSave(latestHtml)}
+                  onClick={() => handleSave(latestHtml, latestConfig)}
                   className="bg-[#E5A83D] text-[#181A1E] hover:bg-[#D4A035]"
                 >
                   保存主题

@@ -2,13 +2,14 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { User, FileText, Palette, Sparkles } from "lucide-react"
+import { User, FileText, Palette, Settings, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navItems = [
   { href: "/admin/personal", label: "个人管理", icon: User },
   { href: "/admin/articles", label: "文章管理", icon: FileText },
   { href: "/admin/themes", label: "主题管理", icon: Palette },
+  { href: "/admin/settings", label: "博客设置", icon: Settings },
 ] as const
 
 export function AdminSidebar() {
