@@ -102,7 +102,10 @@ function extractNavField(el: Element, key: string): NavField {
     const href = link.getAttribute("href") ?? ""
     items.push({ label, href })
     if (!itemTemplate) {
-      itemTemplate = link.outerHTML
+      const clone = link.cloneNode(true) as Element
+      clone.setAttribute("href", "{href}")
+      clone.textContent = "{label}"
+      itemTemplate = clone.outerHTML
     }
   }
 
