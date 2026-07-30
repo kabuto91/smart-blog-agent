@@ -137,7 +137,21 @@ function renderNavField(doc: Document, key: string, field: NavField): void {
 
   if (field.items.length === 0) return
 
-  nav.innerHTML = field.items
-    .map((item) => field.itemTemplate.replace("{href}", item.href).replace("{label}", item.label))
-    .join("")
+  const tempDoc = new JSDOM(field.itemTemplate).window.document
+  const templateEl = tempDoc.body.firstElementChild
+  if (!templateEl) {
+    nav.innerHTML = field.items
+      .map((item) => field.itemTemplate.replace("{href}", item.href).replace("{label}", item.label))
+      .join("")
+    return
+  }
+
+  nav.innerHTML = ""
+
+  for (const item of field.items) {
+    const clone = templateEl.cloneNode(true) as Element
+    clone.setAttribute("href", item.href)
+    clone.textContent = item.label
+    nav.appendChild(clone)
+  }
 }
