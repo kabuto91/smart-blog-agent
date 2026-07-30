@@ -3,6 +3,9 @@ import { EDITABLE_KEYS } from "./field-config"
 
 export async function getSiteConfig(): Promise<Record<string, string>> {
   const config: Record<string, string> = {}
+  for (const key of EDITABLE_KEYS) {
+    config[key] = ""
+  }
 
   try {
     const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
