@@ -53,8 +53,12 @@ export default function SettingsPage() {
     setConfig((prev) => ({ ...prev, [key]: value }))
   }
 
-  const editableEntries = Object.entries(config).filter(([key]) => EDITABLE_KEYS.has(key))
-  const readonlyEntries = Object.entries(config).filter(([key]) => !EDITABLE_KEYS.has(key) && FIELD_DEFINITIONS[key])
+  const editableEntries = Object.entries(FIELD_DEFINITIONS)
+    .filter(([, def]) => !def.readonly)
+    .map(([key]) => [key, config[key] ?? ""] as const)
+  const readonlyEntries = Object.entries(FIELD_DEFINITIONS)
+    .filter(([, def]) => def.readonly)
+    .map(([key]) => [key, config[key] ?? "0"] as const)
 
   return (
     <div className="mx-auto max-w-2xl">
