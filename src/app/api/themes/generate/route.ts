@@ -82,6 +82,14 @@ ${FIELD_REFERENCE}
   <article class="post-card"><h3>文章2</h3></article>
 </section>
 
+类型二点五 - 文章正文（data-content-type="article-body"）：
+适用于单篇文章详情页的正文区域。容器用 data-content="article-body" 标记，文章详情页会把该区域替换为 markdown 渲染后的正文 HTML。页面中应同时包含文章的标题、日期、分类等展示元素。
+示例：
+<article data-content="article-body" data-content-type="article-body">
+  <h2>文章标题</h2>
+  <p>这里的内容会被文章正文替换...</p>
+</article>
+
 类型三 - 导航链接（data-content-type="nav-list"）：
 适用于主导航、底部导航等链接列表。
 每个 <a> 标签代表一个导航项。

@@ -6,7 +6,11 @@ export interface TextField {
   globalKey?: string
 }
 
-export type DynamicFieldType = "dynamic-articles" | "dynamic-categories" | "dynamic-tags"
+export type DynamicFieldType =
+  | "dynamic-articles"
+  | "dynamic-categories"
+  | "dynamic-tags"
+  | "article-body"
 
 export interface DynamicField {
   type: DynamicFieldType

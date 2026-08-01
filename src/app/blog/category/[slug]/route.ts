@@ -1,6 +1,6 @@
-import { getArticleBySlug, getCategories, getTags } from "@/lib/articles"
+import { getArticles, getCategories, getTags } from "@/lib/articles"
 import {
-  toArticleDetailData,
+  toArticleData,
   toCategoryData,
   toTagData,
   renderBlogTheme,
@@ -14,22 +14,22 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params
-  const article = await getArticleBySlug(slug)
+  const [articles, categories, tags] = await Promise.all([
+    getArticles({ publishedOnly: true, categorySlug: slug }),
+    getCategories(true),
+    getTags(),
+  ])
 
-  if (!article || !article.published) {
+  const category = categories.find((c) => c.slug === slug)
+  if (!category) {
     return new Response(blogNotFoundHtml, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
       status: 404,
     })
   }
 
-  const [categories, tags] = await Promise.all([
-    getCategories(true),
-    getTags(),
-  ])
-
   return renderBlogTheme({
-    articles: [toArticleDetailData(article)],
+    articles: articles.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: tags.map(toTagData),
   })

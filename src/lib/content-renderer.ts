@@ -8,6 +8,8 @@ export interface ArticleData {
   date: string
   category?: string
   slug: string
+  contentHtml?: string
+  tags?: string[]
 }
 
 export interface CategoryData {
@@ -114,6 +116,12 @@ function renderDynamicField(
         link: `/${a.slug}`,
       }))
       break
+    case "article-body": {
+      const article = dynamicData.articles?.[0]
+      if (!article?.contentHtml) return
+      container.innerHTML = article.contentHtml
+      return
+    }
     case "dynamic-categories":
       data = (dynamicData.categories ?? []).map((c) => ({
         name: c.name,

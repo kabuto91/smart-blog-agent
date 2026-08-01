@@ -30,7 +30,7 @@ export function extractContentConfig(
 
     if (type === "text") {
       config[unique] = extractTextField(el, unique, siteConfig)
-    } else if (type.startsWith("dynamic-")) {
+    } else if (type.startsWith("dynamic-") || type === "article-body") {
       config[unique] = extractDynamicField(el, unique, type as DynamicField["type"])
     } else if (type === "nav-list") {
       config[unique] = extractNavField(el, unique)
