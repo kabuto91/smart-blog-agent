@@ -4,10 +4,16 @@ import { getMessages, addMessage, getLatestHtml } from "@/lib/theme-session"
 import { extractContentConfig } from "@/lib/content-extractor"
 import { ensureAvatarOverflow } from "@/lib/content-renderer"
 import { getSiteConfig } from "@/lib/site-config"
+import { GLOBAL_FIELDS, STAT_FIELDS } from "@/lib/field-registry"
 import { randomUUID } from "crypto"
 import type { AIMessageChunk } from "@langchain/core/messages"
 
 export const runtime = "nodejs"
+
+const FIELD_REFERENCE = [
+  ...Object.entries(GLOBAL_FIELDS).map(([key, def]) => `- ${key}: ${def.label}`),
+  ...Object.entries(STAT_FIELDS).map(([key, def]) => `- ${key}: ${def.label}（只读）`),
+].join("\n")
 
 const SYSTEM_PROMPT = `你是一个专业的博客页面设计师。
 
@@ -55,16 +61,7 @@ HTML 要求：
 用 data-content 属性命名每个字段。
 
 常用字段命名参考：
-- blog-title: 博客标题
-- blog-subtitle: 博客副标题
-- site-description: 站点描述
-- author-name: 作者名
-- copyright: 版权声明
-- footer-text: 页脚文字
-- site-url: 站点链接
-- total-views: 总访问量
-- total-articles: 文章数
-- total-likes: 总点赞数
+${FIELD_REFERENCE}
 
 其他字段名可以自由命名。
 示例：<h1 data-content="blog-title" data-content-type="text">我的博客</h1>

@@ -1,5 +1,5 @@
 import { prisma } from "./db"
-import { EDITABLE_KEYS } from "./field-config"
+import { EDITABLE_KEYS, STAT_KEYS, STAT_FIELDS } from "./field-registry"
 
 export async function getSiteConfig(): Promise<Record<string, string>> {
   const config: Record<string, string> = {}
@@ -27,9 +27,9 @@ export async function getSiteConfig(): Promise<Record<string, string>> {
       create: { id: 1 },
       update: {},
     })
-    config["total-views"] = String(stats.totalViews)
-    config["total-articles"] = String(stats.totalArticles)
-    config["total-likes"] = String(stats.totalLikes)
+    for (const key of STAT_KEYS) {
+      config[key] = String(stats[STAT_FIELDS[key].statKey])
+    }
   } catch {
     // table may not exist yet
   }

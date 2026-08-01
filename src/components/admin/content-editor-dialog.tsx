@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Plus, Trash2, GripVertical, Loader2, Globe, ExternalLink } from "lucide-react"
 import type { ContentConfig, ContentField, NavItem, TextField, NavField } from "@/lib/types/content-config"
-import { FIELD_DEFINITIONS } from "@/lib/field-config"
+import { FIELD_DEFINITIONS } from "@/lib/field-registry"
 
 interface ContentEditorDialogProps {
   open: boolean

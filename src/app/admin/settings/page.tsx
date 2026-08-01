@@ -4,10 +4,10 @@ import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Save, Loader2, Eye, BookOpen, ThumbsUp } from "lucide-react"
-import { FIELD_DEFINITIONS, EDITABLE_KEYS } from "@/lib/field-config"
-import type { FieldDef } from "@/lib/field-config"
+import { FIELD_DEFINITIONS, EDITABLE_KEYS } from "@/lib/field-registry"
+import type { StatFieldKey } from "@/lib/field-registry"
 
-const READONLY_ICONS: Record<string, React.ReactNode> = {
+const READONLY_ICONS: Record<StatFieldKey, React.ReactNode> = {
   "total-views": <Eye className="size-4 text-[#6B7280]" />,
   "total-articles": <BookOpen className="size-4 text-[#6B7280]" />,
   "total-likes": <ThumbsUp className="size-4 text-[#6B7280]" />,
@@ -58,7 +58,7 @@ export default function SettingsPage() {
     .map(([key]) => [key, config[key] ?? ""] as const)
   const readonlyEntries = Object.entries(FIELD_DEFINITIONS)
     .filter(([, def]) => def.readonly)
-    .map(([key]) => [key, config[key] ?? "0"] as const)
+    .map(([key]) => [key as StatFieldKey, config[key] ?? "0"] as const)
 
   return (
     <div className="mx-auto max-w-2xl">
