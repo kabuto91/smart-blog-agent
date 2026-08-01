@@ -83,7 +83,7 @@ ${FIELD_REFERENCE}
 </section>
 
 类型二点五 - 文章正文（data-content-type="article-body"）：
-适用于单篇文章详情页的正文区域。容器用 data-content="article-body" 标记，文章详情页会把该区域替换为 markdown 渲染后的正文 HTML。页面中应同时包含文章的标题、日期、分类等展示元素。
+【必须】页面中必须包含一个用于文章详情页正文的区域。容器用 data-content="article-body" 标记，文章详情页会把该区域整段替换为 markdown 渲染后的正文 HTML。该区域之外应同时包含文章的标题、日期、分类等展示元素（可用 data-map 绑定或占位文本，详情页同样会被数据覆盖）。
 示例：
 <article data-content="article-body" data-content-type="article-body">
   <h2>文章标题</h2>

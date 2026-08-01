@@ -44,16 +44,39 @@ export function renderContent(
     if (field.type === "text") {
       const value = resolveTextValue(field, siteConfig)
       renderTextField(doc, key, value)
-    } else if (field.type.startsWith("dynamic-")) {
+    } else if (
+      field.type.startsWith("dynamic-") ||
+      field.type === "article-body"
+    ) {
       renderDynamicField(doc, key, field as DynamicField, dynamicData)
     } else if (field.type === "nav-list") {
       renderNavField(doc, key, field as NavField)
     }
   }
 
+  if (dynamicData?.articles?.[0]?.contentHtml) {
+    pruneDetailPage(doc)
+  }
+
   applyAvatarOverflow(doc)
 
   return dom.serialize()
+}
+
+function pruneDetailPage(doc: Document): void {
+  const bodyEl = doc.querySelector('[data-content="article-body"]')
+  if (!bodyEl) return
+
+  let node: Element | null = bodyEl
+  while (node && node.parentElement) {
+    const parent: Element = node.parentElement as Element
+    const tag = parent.tagName.toLowerCase()
+    if (tag === "body" || tag === "html") break
+    for (const child of Array.from(parent.children) as Element[]) {
+      if (child !== node) child.remove()
+    }
+    node = parent
+  }
 }
 
 export function ensureAvatarOverflow(html: string): string {
@@ -107,32 +130,61 @@ function renderDynamicField(
 
   let data: { [key: string]: string }[]
   switch (field.type) {
-    case "dynamic-articles":
+    case "dynamic-articles": {
+      const isDetail = !!dynamicData.articles?.[0]?.contentHtml
+      if (isDetail) {
+        removeListRegion(container)
+        return
+      }
       data = (dynamicData.articles ?? []).map((a) => ({
         title: a.title,
         excerpt: a.excerpt,
         date: a.date,
         category: a.category ?? "",
-        link: `/${a.slug}`,
+        link: `/blog/${a.slug}`,
       }))
       break
+    }
     case "article-body": {
       const article = dynamicData.articles?.[0]
-      if (!article?.contentHtml) return
-      container.innerHTML = article.contentHtml
+      if (!article?.contentHtml) {
+        container.remove()
+        return
+      }
+      for (const el of container.querySelectorAll("[data-map]")) {
+        const name = el.getAttribute("data-map")
+        const value =
+          name === "title"
+            ? article.title
+            : name === "date"
+              ? article.date
+              : name === "category"
+                ? article.category ?? ""
+                : name === "tags"
+                  ? (article.tags ?? []).join(" · ")
+                  : name === "meta"
+                    ? [article.date, article.category, (article.tags ?? []).join(" · ")]
+                        .filter(Boolean)
+                        .join(" · ")
+                    : undefined
+        if (value !== undefined) el.textContent = value
+      }
+      const bodyTarget =
+        container.querySelector('[data-map="body"]') ?? container
+      bodyTarget.innerHTML = article.contentHtml
       return
     }
     case "dynamic-categories":
       data = (dynamicData.categories ?? []).map((c) => ({
         name: c.name,
-        link: `/category/${c.slug}`,
+        link: `/blog/category/${c.slug}`,
         count: String(c.count ?? 0),
       }))
       break
     case "dynamic-tags":
       data = (dynamicData.tags ?? []).map((t) => ({
         name: t.name,
-        link: `/tag/${t.slug}`,
+        link: `/blog/tag/${t.slug}`,
       }))
       break
     default:
@@ -150,18 +202,74 @@ function renderDynamicField(
 
   container.innerHTML = ""
 
+  const mappings: [string, string][] =
+    Object.keys(field.fieldMapping).length > 0
+      ? Object.entries(field.fieldMapping)
+      : Array.from(mappedElements(templateEl)).map((el) => {
+          const name = el.getAttribute("data-map")!
+          return [name, name]
+        })
+
+  const labelKey = field.type === "dynamic-articles" ? "title" : "name"
+
   for (const item of data) {
     const clone = templateEl.cloneNode(true) as Element
-    for (const [mapKey] of Object.entries(field.fieldMapping)) {
-      const target = clone.querySelector(`[data-map="${mapKey}"]`)
-      if (!target) continue
-      const value = item[mapKey]
-      if (value !== undefined) {
-        target.textContent = value
+
+    let linkApplied = false
+    for (const [mapKey, dataKey] of mappings) {
+      const targets = mappedElements(clone, mapKey)
+      if (targets.length === 0) continue
+      const value = item[dataKey]
+      if (value === undefined) continue
+      if (mapKey === "link") {
+        linkApplied = true
+        for (const target of targets) {
+          target.setAttribute("href", value)
+        }
+      } else {
+        for (const target of targets) {
+          target.textContent = value
+        }
       }
     }
+
+    if (!linkApplied && item.link) {
+      if (clone.tagName.toLowerCase() === "a") {
+        clone.setAttribute("href", item.link)
+      } else {
+        const anchors = clone.querySelectorAll("a[href]")
+        if (anchors.length === 1) {
+          anchors[0].setAttribute("href", item.link)
+        }
+      }
+    }
+
+    const labelEl = mappedElements(clone, labelKey)[0]
+    if (!labelEl && item[labelKey]) {
+      const linkEl = mappedElements(clone, "link")[0]
+      if (linkEl) linkEl.textContent = item[labelKey]
+    }
+
     container.appendChild(clone)
   }
+}
+
+function mappedElements(root: Element, mapKey?: string): Element[] {
+  const selector = mapKey ? `[data-map="${mapKey}"]` : "[data-map]"
+  if (root.matches(selector)) return [root]
+  return Array.from(root.querySelectorAll(selector))
+}
+
+function removeListRegion(container: Element): void {
+  const parent = container.parentElement
+  container.remove()
+  if (!parent) return
+  const tag = parent.tagName.toLowerCase()
+  if (tag === "main" || tag === "body" || tag === "html") return
+  const hasContentChild = Array.from(parent.children).some((child) =>
+    child.hasAttribute("data-content")
+  )
+  if (!hasContentChild) parent.remove()
 }
 
 function renderNavField(doc: Document, key: string, field: NavField): void {

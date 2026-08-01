@@ -140,6 +140,17 @@ function extractDynamicField(el: Element, key: string, type: DynamicField["type"
         fieldMapping[fieldName] = fieldName
       }
     }
+
+    if (!fieldMapping.link) {
+      const linkEl =
+        firstChild.tagName.toLowerCase() === "a"
+          ? firstChild
+          : firstChild.querySelector("a[href]")
+      if (linkEl) {
+        linkEl.setAttribute("data-map", "link")
+        fieldMapping.link = "link"
+      }
+    }
   }
 
   return {
