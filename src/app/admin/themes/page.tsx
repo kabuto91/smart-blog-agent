@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { ThemeGenerateDialog } from "@/components/admin/theme-generate-dialog"
 import { ContentEditorDialog } from "@/components/admin/content-editor-dialog"
-import { Plus, Palette, Trash2, Eye, Settings, CheckCircle2, ExternalLink, Loader2 } from "lucide-react"
+import { HtmlEditorDialog } from "@/components/admin/html-editor-dialog"
+import { Plus, Palette, Trash2, Eye, Settings, CheckCircle2, ExternalLink, Loader2, Code } from "lucide-react"
 import type { ContentConfig } from "@/lib/types/content-config"
 
 interface Theme {
@@ -22,6 +23,7 @@ export default function ThemesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [previewHtml, setPreviewHtml] = useState<string | null>(null)
   const [configEditThemeId, setConfigEditThemeId] = useState<string | null>(null)
+  const [htmlEditThemeId, setHtmlEditThemeId] = useState<string | null>(null)
 
   useEffect(() => {
     fetch("/api/themes")
@@ -34,6 +36,7 @@ export default function ThemesPage() {
   }, [])
 
   const configEditTheme = themes.find((t) => t.id === configEditThemeId)
+  const htmlEditTheme = themes.find((t) => t.id === htmlEditThemeId)
 
   async function handleSaved(html: string, contentConfig?: string) {
     const name = `主题 ${themes.length + 1}`
@@ -75,6 +78,31 @@ export default function ThemesPage() {
       )
     )
     setConfigEditThemeId(null)
+  }
+
+  async function handleHtmlSaved(html: string) {
+    if (!htmlEditThemeId) return
+    const res = await fetch(`/api/themes/${htmlEditThemeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html }),
+    })
+    if (!res.ok) return
+    const saved = await res.json()
+    setThemes((prev) =>
+      prev.map((t) =>
+        t.id === htmlEditThemeId
+          ? {
+              ...t,
+              html: saved.html,
+              contentConfig: saved.contentConfig
+                ? JSON.parse(saved.contentConfig)
+                : t.contentConfig,
+            }
+          : t
+      )
+    )
+    setHtmlEditThemeId(null)
   }
 
   const activeTheme = themes.find((t) => t.isActive)
@@ -224,6 +252,14 @@ export default function ThemesPage() {
                     >
                       <Eye className="size-3.5" />
                     </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => setHtmlEditThemeId(theme.id)}
+                      title="编辑HTML"
+                    >
+                      <Code className="size-3.5" />
+                    </Button>
                     {theme.contentConfig && (
                       <Button
                         variant="ghost"
@@ -266,6 +302,17 @@ export default function ThemesPage() {
           htmlTemplate={configEditTheme.html}
           initialConfig={configEditTheme.contentConfig ?? {}}
           onSave={handleConfigSaved}
+        />
+      )}
+
+      {/* HTML source editor */}
+      {htmlEditTheme && (
+        <HtmlEditorDialog
+          open={true}
+          onOpenChange={() => setHtmlEditThemeId(null)}
+          html={htmlEditTheme.html}
+          contentConfig={htmlEditTheme.contentConfig}
+          onSave={handleHtmlSaved}
         />
       )}
 
