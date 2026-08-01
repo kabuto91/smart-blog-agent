@@ -251,6 +251,7 @@ export function ContentEditorDialog({
                   </h3>
                   {navFields.map(([key, field]) => (
                     <div key={key} className="flex flex-col gap-2">
+                      <p className="text-xs text-[#6B7280]">{field.label}</p>
                       {(field as NavField).items.map((item, idx) => (
                         <div key={idx} className="flex items-center gap-2">
                           <GripVertical className="size-3.5 shrink-0 text-[#6B7280]" />

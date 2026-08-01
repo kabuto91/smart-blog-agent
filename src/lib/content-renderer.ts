@@ -49,7 +49,32 @@ export function renderContent(
     }
   }
 
+  applyAvatarOverflow(doc)
+
   return dom.serialize()
+}
+
+export function ensureAvatarOverflow(html: string): string {
+  const dom = new JSDOM(html)
+  applyAvatarOverflow(dom.window.document)
+  return dom.serialize()
+}
+
+function applyAvatarOverflow(doc: Document): void {
+  const elements = Array.from(doc.querySelectorAll<HTMLElement>("[class]")).filter((el) =>
+    (el.getAttribute("class") || "").toLowerCase().includes("avatar")
+  )
+
+  for (const el of elements) {
+    el.style.overflow = "hidden"
+    const img = el.querySelector<HTMLImageElement>("img")
+    if (img) {
+      img.style.width = "100%"
+      img.style.height = "100%"
+      img.style.objectFit = "cover"
+      img.style.display = "block"
+    }
+  }
 }
 
 function resolveTextValue(
@@ -132,26 +157,34 @@ function renderDynamicField(
 }
 
 function renderNavField(doc: Document, key: string, field: NavField): void {
-  const nav = doc.querySelector(`[data-content="${key}"]`)
-  if (!nav) return
-
-  if (field.items.length === 0) return
+  const navs = doc.querySelectorAll(`[data-content="${key}"]`)
+  if (navs.length === 0 || field.items.length === 0) return
 
   const tempDoc = new JSDOM(field.itemTemplate).window.document
   const templateEl = tempDoc.body.firstElementChild
+
   if (!templateEl) {
-    nav.innerHTML = field.items
+    const rendered = field.items
       .map((item) => field.itemTemplate.replace("{href}", item.href).replace("{label}", item.label))
       .join("")
+    for (const nav of navs) {
+      nav.innerHTML = rendered
+    }
     return
   }
 
-  nav.innerHTML = ""
+  for (const nav of navs) {
+    nav.innerHTML = ""
 
-  for (const item of field.items) {
-    const clone = templateEl.cloneNode(true) as Element
-    clone.setAttribute("href", item.href)
-    clone.textContent = item.label
-    nav.appendChild(clone)
+    for (const item of field.items) {
+      const clone = templateEl.cloneNode(true) as Element
+      if (clone.tagName.toLowerCase() === "a") {
+        clone.setAttribute("href", item.href)
+      } else if (clone.hasAttribute("data-href")) {
+        clone.setAttribute("data-href", item.href)
+      }
+      clone.textContent = item.label
+      nav.appendChild(clone)
+    }
   }
 }

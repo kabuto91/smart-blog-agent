@@ -2,6 +2,7 @@ import { createLLM } from "@/lib/llm"
 import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages"
 import { getMessages, addMessage, getLatestHtml } from "@/lib/theme-session"
 import { extractContentConfig } from "@/lib/content-extractor"
+import { ensureAvatarOverflow } from "@/lib/content-renderer"
 import { getSiteConfig } from "@/lib/site-config"
 import { randomUUID } from "crypto"
 import type { AIMessageChunk } from "@langchain/core/messages"
@@ -33,6 +34,7 @@ HTML 要求：
 4. 用中文内容填充占位文字
 5. 样式要精致、现代，具有良好的排版和留白
 6. 如果用户没有特别说明，默认生成一个简约风格的博客页面
+7. 作者/人物介绍区域的头像容器必须设置 overflow: hidden，且头像内图片使用 object-fit: cover 并填满容器，防止图片溢出圆形头像
 
 内容标记规则：
 动态内容区域（文章列表、导航等）必须使用 data-content 和 data-content-type 属性标记。
@@ -77,12 +79,21 @@ HTML 要求：
 类型三 - 导航链接（data-content-type="nav-list"）：
 适用于主导航、底部导航等链接列表。
 每个 <a> 标签代表一个导航项。
-示例：
-<nav data-content="nav-links" data-content-type="nav-list">
+顶部导航和底部导航是两处独立的区域，必须分别标记，并且 data-content 名称不能重复（顶部用 main-nav，底部用 footer-nav）。
+顶部导航示例：
+<nav data-content="main-nav" data-content-type="nav-list">
   <a href="/">首页</a>
   <a href="/blog">博客</a>
   <a href="/about">关于</a>
 </nav>
+底部导航示例（页脚中的链接列表也属于导航）：
+<footer>
+  <ul data-content="footer-nav" data-content-type="nav-list">
+    <li><a href="/">首页</a></li>
+    <li><a href="/about">关于</a></li>
+  </ul>
+</footer>
+如果页面包含底部导航或页脚链接列表，请务必用 data-content-type="nav-list" 标记。
 
 建议为博客标题、正文段落、页脚文字等可编辑文本区域添加 data-content 标记。
 
@@ -178,18 +189,20 @@ export async function POST(request: Request) {
 
           // Extract content config from generated HTML (match against site config)
           let contentConfigJson = ""
+          let normalizedHtml = html
           if (html) {
             const siteConfig = await getSiteConfig()
-            const { contentConfig } = extractContentConfig(html, siteConfig)
-            contentConfigJson = JSON.stringify(contentConfig)
+            const result = extractContentConfig(html, siteConfig)
+            normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
+            contentConfigJson = JSON.stringify(result.contentConfig)
           }
 
           // Save assistant message with HTML snapshot and content config
-          await addMessage(conversationId, "assistant", fullContent, html, contentConfigJson)
+          await addMessage(conversationId, "assistant", fullContent, normalizedHtml, contentConfigJson)
 
           // Send completion signal with conversation ID and content config
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "done", conversationId, html, contentConfig: contentConfigJson })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ type: "done", conversationId, html: normalizedHtml, contentConfig: contentConfigJson })}\n\n`)
           )
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "未知错误"
