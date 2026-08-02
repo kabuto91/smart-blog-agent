@@ -6,9 +6,17 @@ const SOURCE_URL = "https://safebooru.org/index.php?page=dapi&s=post&q=index&jso
 const USER_AGENT = "SmartBlogAgent/1.0 (theme image search)"
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024
 const DOWNLOAD_TIMEOUT_MS = 15000
+const REQUEST_TIMEOUT_MS = 20000
 const MIN_WIDTH = 400
 const MAX_WIDTH = 3000
 const MAX_HEIGHT = 4000
+const SAMPLE_ABOVE_WIDTH = 1400
+const FETCH_PAGE_SIZE = 30
+const MAX_PAGES = 3
+const MAX_RETRIES = 1
+
+/** 当关键词搜索命中为空时，按顺序尝试的通用二次元兜底标签 */
+const FALLBACK_QUERIES = ["landscape scenery", "1girl scenery", "sky clouds"]
 
 interface SafebooruPost {
   id: number
@@ -19,6 +27,8 @@ interface SafebooruPost {
   file_url: string
   rating: string
   tags: string
+  sample_width?: number
+  sample_height?: number
 }
 
 interface SearchResult {
@@ -41,20 +51,32 @@ function guessMimeType(url: string, contentType?: string): string {
   return "image/jpeg"
 }
 
-async function searchPosts(query: string, limit: number): Promise<SafebooruPost[]> {
-  const url = `${SOURCE_URL}&limit=${limit}&tags=${encodeURIComponent(query)}`
-  const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
-    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-  })
-  if (!response.ok) {
-    throw new Error(`图片搜索接口返回 ${response.status}`)
+async function searchPosts(
+  query: string,
+  limit: number,
+  page = 1
+): Promise<SafebooruPost[]> {
+  const url = `${SOURCE_URL}&limit=${limit}&pid=${Math.max(page, 1) - 1}&order=random&tags=${encodeURIComponent(query)}`
+
+  let lastError: unknown = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: { "User-Agent": USER_AGENT },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      if (!response.ok) throw new Error(`图片搜索接口返回 ${response.status}`)
+      const data = (await response.json()) as unknown
+      if (!Array.isArray(data)) throw new Error("图片搜索接口返回了意外的数据格式")
+      return data as SafebooruPost[]
+    } catch (error) {
+      lastError = error
+      if (attempt < MAX_RETRIES) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+    }
   }
-  const data = (await response.json()) as unknown
-  if (!Array.isArray(data)) {
-    throw new Error("图片搜索接口返回了意外的数据格式")
-  }
-  return data as SafebooruPost[]
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("图片搜索请求多次失败")
 }
 
 async function downloadImage(url: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
@@ -81,54 +103,88 @@ async function downloadImage(url: string): Promise<{ buffer: Buffer; mimeType: s
   }
 }
 
+async function collectCandidates(query: string, target: number): Promise<SafebooruPost[]> {
+  const seen = new Set<number>()
+  const posts: SafebooruPost[] = []
+
+  for (let page = 1; page <= MAX_PAGES && posts.length < target; page++) {
+    const batch = await searchPosts(query, FETCH_PAGE_SIZE, page)
+    for (const post of batch) {
+      if (seen.has(post.id)) continue
+      seen.add(post.id)
+      posts.push(post)
+      if (posts.length >= target) break
+    }
+  }
+
+  return posts
+}
+
 async function searchAndSaveImages(input: { query: string; count: number }): Promise<string> {
   const { query, count } = input
   const limit = Math.min(Math.max(count, 1), 6)
 
-  try {
-    const posts = await searchPosts(query, limit * 2)
-    const results: SearchResult[] = []
+  const queriesToTry = [query.trim() || "", ...FALLBACK_QUERIES.filter((q) => q !== query)]
+  const results: SearchResult[] = []
+  let lastError = ""
 
-    for (const post of posts) {
-      if (results.length >= limit) break
+  for (const currentQuery of queriesToTry) {
+    if (results.length >= limit) break
+    if (!currentQuery) continue
 
-      const { width, height } = post
-      if (!width || !height) continue
-      if (width < MIN_WIDTH || width > MAX_WIDTH) continue
-      if (height > MAX_HEIGHT) continue
-      if (post.rating !== "general") continue
+    try {
+      const posts = await collectCandidates(currentQuery, limit * 4)
+      for (const post of posts) {
+        if (results.length >= limit) break
 
-      const imageUrl = post.sample ? post.sample_url : post.file_url
-      const download = await downloadImage(imageUrl)
-      if (!download) continue
+        const { width, height } = post
+        if (!width || !height) continue
+        if (width < MIN_WIDTH || width > MAX_WIDTH) continue
+        if (height > MAX_HEIGHT) continue
+        if (post.rating !== "general") continue
 
-      const ext = imageUrl.split(".").pop()?.toLowerCase() || "jpg"
-      const upload = await saveUpload(
-        `safebooru-${post.id}.${ext}`,
-        download.mimeType,
-        download.buffer.toString("base64")
-      )
+        // 选择下载源：原图很大时才用 sample_url（轻量），否则用原图（高清）
+        const useSample = post.sample && width > SAMPLE_ABOVE_WIDTH
+        const imageUrl = useSample ? post.sample_url : post.file_url
 
-      results.push({
-        url: `/api/uploads/${upload.id}`,
-        width,
-        height,
-        title: post.tags.split(" ").slice(0, 8).join(", "),
-      })
+        const download = await downloadImage(imageUrl)
+        if (!download) continue
+
+        // 报告实际会被使用的尺寸（sample 时为 sample 尺寸，避免与 LLM 实际所见不符）
+        const effectiveWidth = useSample ? post.sample_width || width : width
+        const effectiveHeight = useSample ? post.sample_height || height : height
+
+        const ext = imageUrl.split(".").pop()?.toLowerCase() || "jpg"
+        const upload = await saveUpload(
+          `safebooru-${post.id}.${ext}`,
+          download.mimeType,
+          download.buffer.toString("base64")
+        )
+
+        results.push({
+          url: `/api/uploads/${upload.id}`,
+          width: effectiveWidth,
+          height: effectiveHeight,
+          title: post.tags.split(" ").slice(0, 8).join(", "),
+        })
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
     }
 
-    if (results.length === 0) {
-      return "没有找到符合条件的二次元图片。请尝试更换更常见、更宽泛的英文标签（如 landscape、scenery、original、1girl 等），或减少 count 数量。"
-    }
-
-    return `成功搜索到 ${results.length} 张二次元图片（已自动保存到本站，可直接用于 <img src> 或 CSS background-image）:\n${JSON.stringify(
-      results,
-      null,
-      2
-    )}\n请从中挑选最合适的图片，把 url 直接写入主题 HTML 中。`
-  } catch (error) {
-    return `图片搜索失败: ${error instanceof Error ? error.message : String(error)}`
+    if (results.length >= limit) break
   }
+
+  if (results.length === 0) {
+    const reason = lastError ? `（${lastError}）` : ""
+    return `没有找到符合条件的二次元图片${reason}。请尝试更换更常见、更宽泛的英文标签（如 landscape、scenery、original、1girl 等），或减少 count 数量。`
+  }
+
+  return `成功搜索到 ${results.length} 张二次元图片（已自动保存到本站，可直接用于 <img src> 或 CSS background-image）:\n${JSON.stringify(
+    results,
+    null,
+    2
+  )}\n请从中挑选最合适的图片，把 url 直接写入主题 HTML 中。`
 }
 
 export const searchImageTool = tool(searchAndSaveImages, {
