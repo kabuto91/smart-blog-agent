@@ -41,6 +41,11 @@ HTML 要求：
 5. 样式需精致且具有明确的设计感，遵循下方"设计要求"的风格准则，具有良好的排版与留白
 6. 如果用户没有特别说明，默认生成一个简约风格的博客页面（简约也应精炼克制，注重留白、排版细节与质感，而非平淡无设计感）
 7. 作者/人物介绍区域的头像容器必须设置 overflow: hidden，且头像内图片使用 object-fit: cover 并填满容器，防止图片溢出圆形头像
+8. 主题会同时渲染在三个页面：博客首页 /blog（仅显示少量近期文章）、文章列表页 /blog/archive、/blog/category/{slug}、/blog/tag/{slug}（显示全部文章并自动分页）、文章详情页 /blog/{slug}（正文区域替换为文章内容，且只保留导航与页脚，侧边栏与文章列表会被隐藏）。因此页面之间必须通过 data-page-type 属性彻底分离（详见"内容标记规则-类型二点六"）：
+   - 所有只在首页出现的区域（hero/banner 介绍区、「近期文章/最新文章」标题头、「查看全部/更多文章」按钮、精选文章、首页专属装饰等）必须标记 data-page-type="home"
+   - 「更多文章」按钮应放在文章列表区域之外（不要放在 <nav> 或 <footer> 链接列表中，避免被当作导航项）
+   - 导航中可添加「全部文章」链接到 /blog/archive
+   - 所有链接必须使用完整路由：/blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug}
 
 设计要求（每次生成都需遵循）：
 1. 明确美学方向：先确定一个清晰大胆的设计方向（如极简、杂志编辑风、复古未来、日式侘寂、新艺术几何、工业实用、温柔粉彩、奢雅等），并全程贯彻，避免无风格、千篇一律的"AI 感"设计。简约与华丽都可以，关键是"有意图"而非"强强度"。
@@ -81,14 +86,36 @@ ${FIELD_REFERENCE}
   </article>
   <article class="post-card"><h3>文章2</h3></article>
 </section>
+文章列表区域会自动适配：首页 /blog 仅填充少量近期文章（不分页），文章列表页 /blog/archive、/blog/category/{slug}、/blog/tag/{slug} 填充全部文章并自动附加分页导航，无需额外处理。
+注意：文章列表上方的「近期文章/最新文章」标题头属于首页专属内容，必须标记 data-page-type="home"（否则会出现在列表页）。若希望列表页有独立标题，可用 data-page-type 提供不同页面的变体（见类型二点六）。
 
 类型二点五 - 文章正文（data-content-type="article-body"）：
 【必须】页面中必须包含一个用于文章详情页正文的区域。容器用 data-content="article-body" 标记，文章详情页会把该区域整段替换为 markdown 渲染后的正文 HTML。该区域之外应同时包含文章的标题、日期、分类等展示元素（可用 data-map 绑定或占位文本，详情页同样会被数据覆盖）。
+详情页渲染时会：只保留导航与页脚，自动隐藏侧边栏、文章列表及其他首页/列表专属内容。因此侧边栏请使用 <aside> 标签（便于识别隐藏），导航/页脚为所有页面共享，无需标记。
 示例：
 <article data-content="article-body" data-content-type="article-body">
   <h2>文章标题</h2>
   <p>这里的内容会被文章正文替换...</p>
 </article>
+
+类型二点六 - 页面分区（data-page-type）【强烈建议每个主要区块都声明】：
+主题由同一个 HTML 渲染成首页 /blog、列表页 /blog/archive 等、详情页 /blog/{slug} 三种页面，必须用 data-page-type 声明每个区域属于哪个页面，实现彻底分离：
+- data-page-type="home"：只在首页显示的区域（hero/banner 介绍区、「近期文章/最新文章」标题头、「查看全部/更多文章」按钮、精选文章、首页专属装饰、首页统计等）
+- data-page-type="list"：只在列表页显示的区域（如「全部文章」标题）
+- data-page-type="detail"：只在详情页显示的区域
+- 不标记 = 三个页面共享（导航、页脚、侧边栏、作者卡片、分类、标签等）
+一个元素可同时声明多个页面，用空格分隔，如 data-page-type="home list"。
+示例（首页「近期文章」标题头 + 「查看全部」按钮标记为仅首页）：
+<div class="section-header" data-page-type="home">
+  <h3>近期文章</h3>
+  <a href="/blog/archive">查看全部 →</a>
+</div>
+若希望列表页显示不同标题，可在同一区域为不同页面提供变体：
+<div class="section-header">
+  <h3 data-page-type="home">近期文章</h3>
+  <h3 data-page-type="list">全部文章</h3>
+</div>
+旧写法 data-home-only 等价于 data-page-type="home"，仍然支持。
 
 类型三 - 导航链接（data-content-type="nav-list"）：
 适用于主导航、底部导航等链接列表。
@@ -96,14 +123,14 @@ ${FIELD_REFERENCE}
 顶部导航和底部导航是两处独立的区域，必须分别标记，并且 data-content 名称不能重复（顶部用 main-nav，底部用 footer-nav）。
 顶部导航示例：
 <nav data-content="main-nav" data-content-type="nav-list">
-  <a href="/">首页</a>
-  <a href="/blog">博客</a>
+  <a href="/blog">首页</a>
+  <a href="/blog/archive">全部文章</a>
   <a href="/about">关于</a>
 </nav>
 底部导航示例（页脚中的链接列表也属于导航）：
 <footer>
   <ul data-content="footer-nav" data-content-type="nav-list">
-    <li><a href="/">首页</a></li>
+    <li><a href="/blog">首页</a></li>
     <li><a href="/about">关于</a></li>
   </ul>
 </footer>

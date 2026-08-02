@@ -25,10 +25,17 @@ export interface TagData {
   slug: string
 }
 
+export interface PaginationData {
+  page: number
+  totalPages: number
+  basePath: string
+}
+
 export interface DynamicData {
   articles?: ArticleData[]
   categories?: CategoryData[]
   tags?: TagData[]
+  pagination?: PaginationData
 }
 
 export function renderContent(
@@ -54,8 +61,16 @@ export function renderContent(
     }
   }
 
-  if (dynamicData?.articles?.[0]?.contentHtml) {
+  const pageType = resolvePageType(dynamicData)
+
+  prunePageRegions(doc, pageType)
+
+  if (pageType === "detail") {
     pruneDetailPage(doc)
+  }
+
+  if (pageType === "list" || pageType === "detail") {
+    pruneHomeSections(doc)
   }
 
   applyAvatarOverflow(doc)
@@ -63,9 +78,146 @@ export function renderContent(
   return dom.serialize()
 }
 
+type PageType = "home" | "list" | "detail"
+
+export function resolvePageType(dynamicData?: DynamicData): PageType {
+  if (dynamicData?.articles?.[0]?.contentHtml) return "detail"
+  if (dynamicData?.pagination) return "list"
+  return "home"
+}
+
+function pageTypesOf(el: Element): string[] {
+  return (el.getAttribute("data-page-type") ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function prunePageRegions(doc: Document, pageType: PageType): void {
+  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
+    const types = pageTypesOf(el)
+    if (types.length > 0 && !types.includes(pageType)) {
+      el.remove()
+    }
+  }
+
+  if (pageType !== "home") {
+    for (const el of Array.from(doc.querySelectorAll("[data-home-only]"))) {
+      el.remove()
+    }
+  }
+}
+
+const HOME_SECTION_CLASS_RE = /(^|[\s_\-])(hero|banner|intro)([\s_\-])?/i
+const ARCHIVE_CTA_RE = /(更多文章|查看全部|查看所有|全部文章|全部博文|查看更多)/
+const RECENT_HEADING_RE = /(近期文章|最新文章|最近文章|最新发布)/
+
+function pruneHomeSections(doc: Document): void {
+  for (const el of Array.from(
+    doc.querySelectorAll("section, div, aside, header")
+  )) {
+    if (el.hasAttribute("data-page-type")) continue
+    const tag = el.tagName.toLowerCase()
+    if (tag === "header") continue
+    const cls = el.getAttribute("class") ?? ""
+    const id = el.getAttribute("id") ?? ""
+    if (!HOME_SECTION_CLASS_RE.test(cls) && !HOME_SECTION_CLASS_RE.test(id)) {
+      continue
+    }
+    if (isInside(el, "nav") || isInside(el, "footer")) continue
+    if (el.querySelector('[data-content-type="dynamic-articles"]')) continue
+    el.remove()
+  }
+
+  for (const a of Array.from(doc.querySelectorAll("a"))) {
+    const href = a.getAttribute("href") ?? ""
+    const isArchiveLink =
+      href === "/blog/archive" ||
+      href === "/archive" ||
+      href.endsWith("/blog/archive") ||
+      href.endsWith("/archive")
+    if (!isArchiveLink) continue
+    if (!ARCHIVE_CTA_RE.test(a.textContent ?? "")) continue
+    if (isInside(a, "nav") || isInside(a, "footer")) continue
+    removeWithEmptyWrapper(a)
+  }
+
+  const listContainer = doc.querySelector(
+    '[data-content-type="dynamic-articles"]'
+  )
+  if (listContainer) {
+    let parent = listContainer.parentElement
+    while (
+      parent &&
+      parent.tagName.toLowerCase() !== "body" &&
+      parent.tagName.toLowerCase() !== "html"
+    ) {
+      const heading = findRecentHeading(parent)
+      if (heading) removeWithEmptyWrapper(heading)
+      parent = parent.parentElement
+    }
+  }
+}
+
+function findRecentHeading(parent: Element): Element | null {
+  for (const child of Array.from(parent.children) as Element[]) {
+    if (child.hasAttribute("data-page-type")) continue
+    if (child.querySelector("[data-content]")) continue
+    const text = child.textContent ?? ""
+    if (!RECENT_HEADING_RE.test(text)) continue
+    const heading = findHeadingLike(child)
+    if (heading) return heading
+  }
+  return null
+}
+
+function findHeadingLike(root: Element): Element | null {
+  const tag = root.tagName.toLowerCase()
+  const cls = root.getAttribute("class") ?? ""
+  const id = root.getAttribute("id") ?? ""
+  const selfLike =
+    /^h[1-6]$/.test(tag) ||
+    /(label|title|heading)/i.test(cls) ||
+    /(label|title|heading)/i.test(id)
+  if (selfLike) return root
+  return (
+    root.querySelector(
+      "h1,h2,h3,h4,h5,h6,[class*='label'],[class*='title'],[class*='heading']"
+    ) ?? null
+  )
+}
+
+function isInside(el: Element, selector: string): boolean {
+  return !!el.closest(selector)
+}
+
+function removeWithEmptyWrapper(el: Element): void {
+  let node: Element | null = el
+  while (node) {
+    const parent: Element | null = node.parentElement
+    node.remove()
+    if (!parent) break
+    if (parent.hasAttribute("data-content")) break
+    const tag = parent.tagName.toLowerCase()
+    if (tag === "body" || tag === "html") break
+    if (parent.children.length > 0) break
+    if ((parent.textContent ?? "").trim() !== "") break
+    node = parent
+  }
+}
+
+function isChromeElement(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag === "header" || tag === "footer" || tag === "nav") return true
+  return pageTypesOf(el).includes("detail")
+}
+
 function pruneDetailPage(doc: Document): void {
   const bodyEl = doc.querySelector('[data-content="article-body"]')
   if (!bodyEl) return
+
+  for (const aside of Array.from(doc.querySelectorAll("aside"))) {
+    if (!isChromeElement(aside)) aside.remove()
+  }
 
   let node: Element | null = bodyEl
   while (node && node.parentElement) {
@@ -73,7 +225,7 @@ function pruneDetailPage(doc: Document): void {
     const tag = parent.tagName.toLowerCase()
     if (tag === "body" || tag === "html") break
     for (const child of Array.from(parent.children) as Element[]) {
-      if (child !== node) child.remove()
+      if (child !== node && !isChromeElement(child)) child.remove()
     }
     node = parent
   }
@@ -128,6 +280,7 @@ function renderDynamicField(
   const container = doc.querySelector(`[data-content="${key}"]`)
   if (!container || !dynamicData) return
 
+  let isArticlesList = false
   let data: { [key: string]: string }[]
   switch (field.type) {
     case "dynamic-articles": {
@@ -136,6 +289,7 @@ function renderDynamicField(
         removeListRegion(container)
         return
       }
+      isArticlesList = true
       data = (dynamicData.articles ?? []).map((a) => ({
         title: a.title,
         excerpt: a.excerpt,
@@ -252,6 +406,40 @@ function renderDynamicField(
 
     container.appendChild(clone)
   }
+
+  if (
+    isArticlesList &&
+    dynamicData.pagination &&
+    dynamicData.pagination.totalPages > 1
+  ) {
+    container.insertAdjacentHTML(
+      "beforeend",
+      buildPaginationNav(dynamicData.pagination)
+    )
+  }
+}
+
+function buildPaginationNav(pagination: PaginationData): string {
+  const { page, totalPages, basePath } = pagination
+  const hrefFor = (p: number) => (p <= 1 ? basePath : `${basePath}?page=${p}`)
+  const baseStyle =
+    "display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;"
+  const currentStyle =
+    baseStyle + "background:#E5A83D;border-color:#E5A83D;color:#181A1E;font-weight:600;"
+  const disabledStyle = "color:#9CA3AF;pointer-events:none;"
+
+  const links: string[] = []
+  links.push(
+    `<a href="${hrefFor(page - 1)}" style="${baseStyle}${page <= 1 ? disabledStyle : ""}">上一页</a>`
+  )
+  for (let p = 1; p <= totalPages; p++) {
+    const style = p === page ? currentStyle : baseStyle
+    links.push(`<a href="${hrefFor(p)}" style="${style}">${p}</a>`)
+  }
+  links.push(
+    `<a href="${hrefFor(page + 1)}" style="${baseStyle}${page >= totalPages ? disabledStyle : ""}">下一页</a>`
+  )
+  return `<nav style="display:flex;gap:0.375rem;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:1.5rem;">${links.join("")}</nav>`
 }
 
 function mappedElements(root: Element, mapKey?: string): Element[] {

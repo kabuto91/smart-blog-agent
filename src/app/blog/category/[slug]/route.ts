@@ -1,21 +1,25 @@
-import { getArticles, getCategories, getTags } from "@/lib/articles"
+import { getArticlesPage, getCategories, getTags } from "@/lib/articles"
 import {
   toArticleData,
   toCategoryData,
   toTagData,
   renderBlogTheme,
+  BLOG_PAGE_SIZE,
   blogNotFoundHtml,
 } from "@/lib/blog"
 
 export const runtime = "nodejs"
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params
-  const [articles, categories, tags] = await Promise.all([
-    getArticles({ publishedOnly: true, categorySlug: slug }),
+  const { searchParams } = new URL(request.url)
+  const page = Number(searchParams.get("page")) || 1
+
+  const [result, categories, tags] = await Promise.all([
+    getArticlesPage({ publishedOnly: true, categorySlug: slug }, page, BLOG_PAGE_SIZE),
     getCategories(true),
     getTags(),
   ])
@@ -29,8 +33,13 @@ export async function GET(
   }
 
   return renderBlogTheme({
-    articles: articles.map(toArticleData),
+    articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: tags.map(toTagData),
+    pagination: {
+      page: result.page,
+      totalPages: result.totalPages,
+      basePath: `/blog/category/${slug}`,
+    },
   })
 }

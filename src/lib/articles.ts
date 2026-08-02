@@ -58,6 +58,33 @@ export interface ArticleFilters {
   publishedOnly?: boolean
 }
 
+export interface ArticlePageResult {
+  items: ArticleListItem[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
+function buildArticleWhere(filters: ArticleFilters): Prisma.ArticleWhereInput {
+  const where: Prisma.ArticleWhereInput = {}
+  if (filters.categorySlug) {
+    where.category = { is: { slug: filters.categorySlug } }
+  }
+  if (filters.tagSlug) {
+    where.tags = { some: { tag: { slug: filters.tagSlug } } }
+  }
+  if (filters.search) {
+    where.OR = [
+      { title: { contains: filters.search } },
+      { excerpt: { contains: filters.search } },
+      { content: { contains: filters.search } },
+    ]
+  }
+  if (filters.publishedOnly) where.published = true
+  return where
+}
+
 const ARTICLE_INCLUDE = {
   category: true,
   tags: { include: { tag: true } },
@@ -130,30 +157,48 @@ async function refreshArticleCount(): Promise<void> {
 }
 
 export async function getArticles(
-  filters: ArticleFilters = {}
+  filters: ArticleFilters = {},
+  pagination?: { page?: number; pageSize?: number }
 ): Promise<ArticleListItem[]> {
-  const where: Prisma.ArticleWhereInput = {}
-  if (filters.categorySlug) {
-    where.category = { is: { slug: filters.categorySlug } }
-  }
-  if (filters.tagSlug) {
-    where.tags = { some: { tag: { slug: filters.tagSlug } } }
-  }
-  if (filters.search) {
-    where.OR = [
-      { title: { contains: filters.search } },
-      { excerpt: { contains: filters.search } },
-      { content: { contains: filters.search } },
-    ]
-  }
-  if (filters.publishedOnly) where.published = true
+  const where = buildArticleWhere(filters)
+  const page = pagination?.page ?? 1
+  const pageSize = pagination?.pageSize
 
   const rows = await prisma.article.findMany({
     where,
     include: ARTICLE_INCLUDE,
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    ...(pageSize ? { take: pageSize, skip: (page - 1) * pageSize } : {}),
   })
   return rows.map(mapArticle)
+}
+
+export async function countArticles(
+  filters: ArticleFilters = {}
+): Promise<number> {
+  return prisma.article.count({ where: buildArticleWhere(filters) })
+}
+
+export async function getArticlesPage(
+  filters: ArticleFilters = {},
+  page = 1,
+  pageSize = 10
+): Promise<ArticlePageResult> {
+  const safePageSize = Math.max(1, Math.floor(pageSize))
+  const total = await countArticles(filters)
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize))
+  const safePage = Math.min(Math.max(1, Math.floor(page)), totalPages)
+  const items = await getArticles(filters, {
+    page: safePage,
+    pageSize: safePageSize,
+  })
+  return {
+    items,
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages,
+  }
 }
 
 export async function getArticleBySlug(

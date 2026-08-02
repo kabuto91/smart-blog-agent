@@ -16,6 +16,10 @@ import type {
   ArticleRow,
 } from "./articles"
 
+export const BLOG_PAGE_SIZE = 10
+
+export const HOME_PAGE_ARTICLE_LIMIT = 6
+
 export function formatDate(date: Date): string {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, "0")

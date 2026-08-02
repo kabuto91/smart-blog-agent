@@ -34,6 +34,8 @@ export default function ArticlesPage() {
   const [categoryFilter, setCategoryFilter] = useState("")
   const [tagFilter, setTagFilter] = useState("")
   const [publishedFilter, setPublishedFilter] = useState("")
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
 
   useEffect(() => {
     let cancelled = false
@@ -73,6 +75,10 @@ export default function ArticlesPage() {
       return true
     })
   }, [articles, search, categoryFilter, tagFilter, publishedFilter])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const paged = filtered.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   function openCreate() {
     setEditingArticle(null)
@@ -162,14 +168,20 @@ export default function ArticlesPage() {
             <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-[#6B7280]" />
             <Input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
               placeholder="搜索标题或摘要"
               className="w-56 pl-8"
             />
           </div>
           <select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={(e) => {
+              setCategoryFilter(e.target.value)
+              setPage(1)
+            }}
             className="h-8 rounded-lg border border-input bg-white px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <option value="">全部分类</option>
@@ -181,7 +193,10 @@ export default function ArticlesPage() {
           </select>
           <select
             value={tagFilter}
-            onChange={(e) => setTagFilter(e.target.value)}
+            onChange={(e) => {
+              setTagFilter(e.target.value)
+              setPage(1)
+            }}
             className="h-8 rounded-lg border border-input bg-white px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <option value="">全部标签</option>
@@ -193,7 +208,10 @@ export default function ArticlesPage() {
           </select>
           <select
             value={publishedFilter}
-            onChange={(e) => setPublishedFilter(e.target.value)}
+            onChange={(e) => {
+              setPublishedFilter(e.target.value)
+              setPage(1)
+            }}
             className="h-8 rounded-lg border border-input bg-white px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             <option value="">全部状态</option>
@@ -242,9 +260,9 @@ export default function ArticlesPage() {
         )}
 
         {/* Article list */}
-        {filtered.length > 0 && (
+        {paged.length > 0 && (
           <div className="flex flex-col overflow-hidden rounded-xl border border-black/[0.06] bg-white">
-            {filtered.map((article, index) => (
+            {paged.map((article, index) => (
               <div
                 key={article.id}
                 className={`group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-[#F5F4F1] ${
@@ -324,6 +342,50 @@ export default function ArticlesPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/[0.06] bg-white px-4 py-3">
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage <= 1}
+                onClick={() => setPage(safePage - 1)}
+              >
+                上一页
+              </Button>
+              <span className="px-2 text-sm text-[#6B7280]">
+                第 {safePage} / {totalPages} 页
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage(safePage + 1)}
+              >
+                下一页
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[#6B7280]">每页</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value))
+                  setPage(1)
+                }}
+                className="h-8 rounded-lg border border-input bg-white px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {[10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
       </div>

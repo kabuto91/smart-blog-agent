@@ -4,14 +4,17 @@ import {
   toCategoryData,
   toTagData,
   renderBlogTheme,
-  HOME_PAGE_ARTICLE_LIMIT,
+  BLOG_PAGE_SIZE,
 } from "@/lib/blog"
 
 export const runtime = "nodejs"
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const page = Number(searchParams.get("page")) || 1
+
   const [result, categories, tags] = await Promise.all([
-    getArticlesPage({ publishedOnly: true }, 1, HOME_PAGE_ARTICLE_LIMIT),
+    getArticlesPage({ publishedOnly: true }, page, BLOG_PAGE_SIZE),
     getCategories(true),
     getTags(),
   ])
@@ -20,5 +23,10 @@ export async function GET() {
     articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: tags.map(toTagData),
+    pagination: {
+      page: result.page,
+      totalPages: result.totalPages,
+      basePath: "/blog/archive",
+    },
   })
 }
