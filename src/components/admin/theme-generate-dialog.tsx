@@ -40,6 +40,7 @@ export function ThemeGenerateDialog({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [currentThinking, setCurrentThinking] = useState<string[]>([])
+  const [toolStatus, setToolStatus] = useState("")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -61,6 +62,7 @@ export function ThemeGenerateDialog({
     setError("")
     setInputValue("")
     setCurrentThinking([])
+    setToolStatus("")
 
     const userMsgId = crypto.randomUUID()
     setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: message }])
@@ -133,6 +135,11 @@ export function ThemeGenerateDialog({
                     m.id === assistantMsgId ? { ...m, html: event.html, contentConfig: event.contentConfig } : m
                   )
                 )
+              } else if (event.type === "tool_call") {
+                const query = (event.args && typeof event.args === "object" && "query" in event.args
+                  ? (event.args as { query?: string }).query
+                  : undefined)
+                setToolStatus(query ? `正在搜索图片：${query}` : "正在搜索图片...")
               } else if (event.type === "error") {
                 setError(event.error)
               }
@@ -296,6 +303,12 @@ export function ThemeGenerateDialog({
                 ))}
 
                 {/* Current streaming content */}
+                {loading && toolStatus && (
+                  <div className="flex items-center gap-1.5 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
+                    <Loader2 className="size-3 animate-spin" />
+                    <span>{toolStatus}</span>
+                  </div>
+                )}
                 {loading && currentThinking.length > 0 && (
                   <div className="flex flex-col gap-1.5 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
                     {currentThinking.map((step, i) => (
