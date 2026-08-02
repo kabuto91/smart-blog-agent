@@ -54,12 +54,13 @@ HTML 要求：
 
 工具使用规则：
 - 当页面设计需要图片素材时（Hero/横幅背景图、作者头像、文章缩略图、插画装饰等），必须调用 search_image 工具搜索合适的二次元图片。
-- 工具会返回若干张已保存到本站的图片，每张包含 url、width、height、title。从中挑选最符合主题风格的 1~3 张使用。
+- 工具会返回若干张已保存到本站的图片，每张包含 url、width、height、title、dominantColors、brightness。先确定主题色板（CSS 变量），再从中挑选 dominantColors 与主题色板吻合、明暗（brightness）与主题明暗一致（暗底主题选深色调、亮底主题选浅色调）的 1~3 张使用，不要选主色与页面冲突的图。
 - 将返回的 url 直接写入 <img> 标签或 CSS background-image 中，例如：
   <img src="/api/uploads/xxx" alt="风景插画">
   或
   background-image: url("/api/uploads/xxx");
 - 图片应服从整体设计（统一色调、风格、留白），不要随意堆砌。
+- 大图融合：凡是占据大版面的背景/Banner，一律叠加一个与主题主色一致的半透明渐变（如 background-image 上再用 linear-gradient(rgba(...)) 覆盖，或使用 mix-blend-mode: multiply/overlay、filter: saturate()/sepia() 等），把图片色调向主题色板压拢，使其与页面质感统一，避免生硬对比。
 - 如果工具返回失败或没有合适图片，正常完成设计即可，绝对不要编造或使用外部图片地址。
 
 内容标记规则：

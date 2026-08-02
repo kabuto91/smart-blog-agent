@@ -1,5 +1,7 @@
 import { tool } from "@langchain/core/tools"
 import { z } from "zod"
+import { PNG } from "pngjs"
+import { decode as decodeJpeg } from "jpeg-js"
 import { saveUpload } from "@/lib/uploads"
 
 const SOURCE_URL = "https://safebooru.org/index.php?page=dapi&s=post&q=index&json=1"
@@ -36,6 +38,83 @@ interface SearchResult {
   width: number
   height: number
   title: string
+  dominantColors: string[]
+  brightness: number
+}
+
+interface ColorStats {
+  dominantColors: string[]
+  brightness: number
+}
+
+/** 对 RGBA 像素做降位量化，取占比最高的主色 + 整体明暗。 */
+function colorsFromRgba(
+  rgba: Buffer,
+  width: number,
+  height: number
+): ColorStats {
+  const buckets = new Map<number, number>()
+  let total = 0
+  let brightnessSum = 0
+
+  // 隔行隔列降采样，避免超大图逐个像素计算
+  const step = Math.max(1, Math.ceil(width / 220))
+  for (let y = 0; y < height; y += step) {
+    const rowOffset = y * width * 4
+    for (let x = 0; x < width; x += step) {
+      const i = rowOffset + x * 4
+      const r = rgba[i]
+      const g = rgba[i + 1]
+      const b = rgba[i + 2]
+      const a = rgba[i + 3]
+      if (r === undefined || g === undefined || b === undefined) continue
+      if (a < 128) continue // 跳过透明像素
+
+      // 降到 3bit/通道 的量化桶
+      const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5)
+      buckets.set(key, (buckets.get(key) ?? 0) + 1)
+      brightnessSum += (r + g + b) / 3
+      total++
+    }
+  }
+
+  if (total === 0) return { dominantColors: [], brightness: 0 }
+
+  const sorted = [...buckets.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+  const dominantColors = sorted.map(([key]) => {
+    const r = ((key >> 6) & 0x7) * 32 + 16
+    const g = ((key >> 3) & 0x7) * 32 + 16
+    const b = (key & 0x7) * 32 + 16
+    return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`
+  })
+
+  return {
+    dominantColors,
+    brightness: Number((brightnessSum / total / 255).toFixed(2)),
+  }
+}
+
+function analyzeImageColors(
+  buffer: Buffer,
+  mimeType: string
+): ColorStats {
+  try {
+    if (mimeType === "image/png") {
+      const png = PNG.sync.read(buffer)
+      return colorsFromRgba(png.data, png.width, png.height)
+    }
+    if (mimeType === "image/jpeg" || mimeType === "image/jpg") {
+      const { data, width, height } = decodeJpeg(buffer, {
+        useTArray: true,
+        maxMemoryUsageInMB: 512,
+        formatAsRGBA: true,
+      })
+      return colorsFromRgba(Buffer.from(data), width, height)
+    }
+    return { dominantColors: [], brightness: 0 }
+  } catch {
+    return { dominantColors: [], brightness: 0 }
+  }
 }
 
 function guessMimeType(url: string, contentType?: string): string {
@@ -166,6 +245,7 @@ async function searchAndSaveImages(input: { query: string; count: number }): Pro
           width: effectiveWidth,
           height: effectiveHeight,
           title: post.tags.split(" ").slice(0, 8).join(", "),
+          ...analyzeImageColors(download.buffer, download.mimeType),
         })
       }
     } catch (error) {
@@ -184,7 +264,7 @@ async function searchAndSaveImages(input: { query: string; count: number }): Pro
     results,
     null,
     2
-  )}\n请从中挑选最合适的图片，把 url 直接写入主题 HTML 中。`
+  )}\n每张图片都附加了 dominantColors（主要颜色，[0..1]）与 brightness（整体明暗，0~1，越大越亮）。请优先挑选 dominantColors 与主题色板匹配、明暗与主题一致的图片，把 url 直接写入主题 HTML 中。`
 }
 
 export const searchImageTool = tool(searchAndSaveImages, {
