@@ -1,11 +1,13 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Save, Loader2, Eye, BookOpen, ThumbsUp } from "lucide-react"
+import { Save, Loader2, Eye, BookOpen, ThumbsUp, Upload } from "lucide-react"
 import { FIELD_DEFINITIONS, EDITABLE_KEYS } from "@/lib/field-registry"
 import type { StatFieldKey } from "@/lib/field-registry"
+
+const AVATAR_FIELD_KEY = "author-avatar"
 
 const READONLY_ICONS: Record<StatFieldKey, React.ReactNode> = {
   "total-views": <Eye className="size-4 text-[#6B7280]" />,
@@ -18,6 +20,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetch("/api/site-config")
@@ -53,6 +57,28 @@ export default function SettingsPage() {
     setConfig((prev) => ({ ...prev, [key]: value }))
   }
 
+  async function handleAvatarUpload(file: File) {
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch("/api/uploads", { method: "POST", body: formData })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "上传失败")
+      updateValue(AVATAR_FIELD_KEY, data.url)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "上传失败")
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) handleAvatarUpload(file)
+  }
+
   const editableEntries = Object.entries(FIELD_DEFINITIONS)
     .filter(([, def]) => !def.readonly)
     .map(([key]) => [key, config[key] ?? ""] as const)
@@ -85,12 +111,60 @@ export default function SettingsPage() {
                   {FIELD_DEFINITIONS[key].description}
                 </p>
               )}
-              <Input
-                value={value}
-                onChange={(e) => updateValue(key, e.target.value)}
-                className="w-full"
-                placeholder={`输入${FIELD_DEFINITIONS[key]?.label || key}`}
-              />
+              {key === AVATAR_FIELD_KEY ? (
+                <div className="flex items-start gap-3">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/[0.06] bg-[#F9F9F8]">
+                    {value ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={value}
+                        alt="作者头像"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-xs text-[#9CA3AF]">暂无</span>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <Input
+                      value={value}
+                      onChange={(e) => updateValue(key, e.target.value)}
+                      className="w-full"
+                      placeholder="输入头像图片链接或点击上传"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                      >
+                        {uploading ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="size-3.5" />
+                        )}
+                        上传图片
+                      </Button>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <Input
+                  value={value}
+                  onChange={(e) => updateValue(key, e.target.value)}
+                  className="w-full"
+                  placeholder={`输入${FIELD_DEFINITIONS[key]?.label || key}`}
+                />
+              )}
             </div>
           ))}
 

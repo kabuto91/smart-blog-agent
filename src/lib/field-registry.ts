@@ -13,6 +13,10 @@ export const GLOBAL_FIELDS = {
   "site-description": { label: "站点描述", description: "用于 SEO 的站点描述" },
   "author-name": { label: "作者名" },
   "author-bio": { label: "作者简介" },
+  "author-avatar": {
+    label: "作者头像",
+    description: "头像图片链接（URL），可上传或粘贴图片地址",
+  },
   "copyright": { label: "版权声明" },
   "footer-text": { label: "页脚文字" },
   "site-url": { label: "站点链接", description: "博客的完整 URL" },

@@ -140,6 +140,17 @@ ${FIELD_REFERENCE}
 
 直接输出内容，不要有任何额外的解释性文字。`
 
+function extractHtmlFromContent(content: string): string {
+  const fenced = content.match(/```(?:html|htm)?\s*\n([\s\S]*?)(?:\n)?```\s*$/i)
+  if (fenced && /^<!DOCTYPE/i.test(fenced[1].trim())) {
+    return fenced[1].trim()
+  }
+  const doctype = content.match(/<!DOCTYPE[\s\S]*$/i)
+  return doctype
+    ? doctype[0].replace(/```(?:html|htm)?\s*$/i, "").trim()
+    : ""
+}
+
 interface GenerateRequest {
   conversationId?: string
   message: string
@@ -225,8 +236,7 @@ export async function POST(request: Request) {
           }
 
           // Parse the complete content to extract HTML
-          const htmlMatch = fullContent.match(/<!DOCTYPE[\s\S]*$/i)
-          const html = htmlMatch ? htmlMatch[0].trim() : ""
+          const html = extractHtmlFromContent(fullContent)
 
           // Extract content config from generated HTML (match against site config)
           let contentConfigJson = ""

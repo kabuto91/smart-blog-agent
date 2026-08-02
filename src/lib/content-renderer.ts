@@ -1,5 +1,6 @@
 import { JSDOM } from "jsdom"
 import type { ContentConfig, DynamicField, NavField, TextField } from "./types/content-config"
+import { FIELD_DEFINITIONS } from "./field-registry"
 
 export interface ArticleData {
   id: string | number
@@ -47,7 +48,10 @@ export function renderContent(
   const dom = new JSDOM(htmlTemplate)
   const doc = dom.window.document
 
-  for (const [key, field] of Object.entries(contentConfig)) {
+  const fields = { ...contentConfig }
+  augmentGlobalFields(doc, fields, siteConfig)
+
+  for (const [key, field] of Object.entries(fields)) {
     if (field.type === "text") {
       const value = resolveTextValue(field, siteConfig)
       renderTextField(doc, key, value)
@@ -254,6 +258,28 @@ function applyAvatarOverflow(doc: Document): void {
   }
 }
 
+function augmentGlobalFields(
+  doc: Document,
+  contentConfig: ContentConfig,
+  siteConfig?: Record<string, string>
+): void {
+  if (!siteConfig) return
+  for (const [key, value] of Object.entries(siteConfig)) {
+    if (!value) continue
+    if (contentConfig[key]) continue
+    const el = doc.querySelector(`[data-content="${key}"]`)
+    if (!el) continue
+    const def = FIELD_DEFINITIONS[key]
+    contentConfig[key] = {
+      type: "text",
+      label: def?.label ?? key,
+      value,
+      source: def?.readonly ? "readonly" : "global",
+      globalKey: key,
+    }
+  }
+}
+
 function resolveTextValue(
   field: TextField,
   siteConfig?: Record<string, string>
@@ -266,9 +292,24 @@ function resolveTextValue(
 
 function renderTextField(doc: Document, key: string, value: string): void {
   const el = doc.querySelector(`[data-content="${key}"]`)
-  if (el) {
-    el.textContent = value
+  if (!el) return
+
+  let img: HTMLImageElement | null = null
+  if (el.tagName.toLowerCase() === "img") {
+    img = el as HTMLImageElement
+  } else {
+    const first = el.firstElementChild
+    if (first && first.tagName.toLowerCase() === "img") {
+      img = first as HTMLImageElement
+    }
   }
+
+  if (img) {
+    if (value) img.setAttribute("src", value)
+    return
+  }
+
+  el.textContent = value
 }
 
 function renderDynamicField(
