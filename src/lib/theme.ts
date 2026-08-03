@@ -58,6 +58,22 @@ export async function deleteTheme(id: string): Promise<void> {
   await prisma.theme.delete({ where: { id } })
 }
 
+export async function updateTheme(
+  id: string,
+  data: { html?: string; contentConfig?: string | null }
+): Promise<ThemeData> {
+  const theme = await prisma.theme.update({
+    where: { id },
+    data: {
+      ...(data.html !== undefined ? { html: data.html } : {}),
+      ...(data.contentConfig !== undefined
+        ? { contentConfig: data.contentConfig }
+        : {}),
+    },
+  })
+  return parseTheme(theme)
+}
+
 export async function activateTheme(id: string): Promise<ThemeData> {
   await prisma.theme.updateMany({
     where: { isActive: true },

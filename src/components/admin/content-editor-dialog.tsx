@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Plus, Trash2, GripVertical, Loader2, Globe, ExternalLink } from "lucide-react"
 import type { ContentConfig, ContentField, NavItem, TextField, NavField } from "@/lib/types/content-config"
 import { FIELD_DEFINITIONS } from "@/lib/field-registry"
+import { UrlCombobox, type UrlComboboxOption } from "@/components/admin/url-combobox"
 
 interface ContentEditorDialogProps {
   open: boolean
@@ -29,10 +30,34 @@ export function ContentEditorDialog({
   initialConfig,
   onSave,
 }: ContentEditorDialogProps) {
-  const [config, setConfig] = useState<ContentConfig>(initialConfig)
+  const normalizeConfig = useCallback((cfg: ContentConfig): ContentConfig => {
+    const normalized = { ...cfg }
+    for (const [key, field] of Object.entries(normalized)) {
+      if (isTextConfig(field)) {
+        const tf = field as TextField
+        if (FIELD_DEFINITIONS[key]?.readonly && tf.source !== "readonly") {
+          normalized[key] = { ...tf, source: "readonly" }
+        }
+      }
+    }
+    return normalized
+  }, [])
+
+  const [config, setConfig] = useState<ContentConfig>(() => normalizeConfig(initialConfig))
   const [previewHtml, setPreviewHtml] = useState("")
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [urlOptions, setUrlOptions] = useState<UrlComboboxOption[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const loadUrlOptions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/urls/options")
+      const data = await res.json()
+      if (Array.isArray(data)) setUrlOptions(data)
+    } catch {
+      // options load failed silently
+    }
+  }, [])
 
   const updatePreview = useCallback(async (cfg: ContentConfig) => {
     setPreviewLoading(true)
@@ -54,20 +79,14 @@ export function ContentEditorDialog({
   }, [htmlTemplate])
 
   useEffect(() => {
-    const normalized = { ...initialConfig }
-    for (const [key, field] of Object.entries(normalized)) {
-      if (isTextConfig(field)) {
-        const tf = field as TextField
-        if (FIELD_DEFINITIONS[key]?.readonly && tf.source !== "readonly") {
-          normalized[key] = { ...tf, source: "readonly" }
-        }
-      }
-    }
-    setConfig(normalized)
-    if (open) {
-      updatePreview(normalized)
-    }
-  }, [open, initialConfig, updatePreview]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!open) return
+    const t = window.setTimeout(() => {
+      updatePreview(config)
+      loadUrlOptions()
+    }, 0)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, updatePreview])
 
   function handleConfigChange(newConfig: ContentConfig) {
     setConfig(newConfig)
@@ -253,28 +272,32 @@ export function ContentEditorDialog({
                     <div key={key} className="flex flex-col gap-2">
                       <p className="text-xs text-[#6B7280]">{field.label}</p>
                       {(field as NavField).items.map((item, idx) => (
-                        <div key={idx} className="flex items-center gap-2">
-                          <GripVertical className="size-3.5 shrink-0 text-[#6B7280]" />
-                          <Input
-                            placeholder="名称"
-                            value={item.label}
-                            onChange={(e) => updateNavItem(key, idx, "label", e.target.value)}
-                            className="flex-1"
-                          />
-                          <Input
-                            placeholder="/link"
-                            value={item.href}
-                            onChange={(e) => updateNavItem(key, idx, "href", e.target.value)}
-                            className="flex-1"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => removeNavItem(key, idx)}
-                            className="text-red-400 hover:text-red-500"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
+                        <div key={idx} className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <GripVertical className="size-3.5 shrink-0 text-[#6B7280]" />
+                            <Input
+                              placeholder="名称"
+                              value={item.label}
+                              onChange={(e) => updateNavItem(key, idx, "label", e.target.value)}
+                              className="flex-1"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => removeNavItem(key, idx)}
+                              className="text-red-400 hover:text-red-500"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                          <div className="pl-6">
+                            <UrlCombobox
+                              value={item.href}
+                              onChange={(v) => updateNavItem(key, idx, "href", v)}
+                              options={urlOptions}
+                              onPageGenerated={loadUrlOptions}
+                            />
+                          </div>
                         </div>
                       ))}
                       <Button

@@ -65,7 +65,7 @@ export function toTagData(t: TagListItem): TagData {
   return { id: t.id, name: t.name, slug: t.slug }
 }
 
-const blogNotConfiguredHtml = `<!DOCTYPE html>
+export const blogNotConfiguredHtml = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">

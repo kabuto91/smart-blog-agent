@@ -1,6 +1,7 @@
 import { JSDOM } from "jsdom"
 import type { ContentConfig, DynamicField, NavField, TextField } from "./types/content-config"
 import { FIELD_DEFINITIONS } from "./field-registry"
+import { normalizeRoute } from "./custom-pages"
 
 export interface ArticleData {
   id: string | number
@@ -66,6 +67,10 @@ export function renderContent(
   }
 
   const pageType = resolvePageType(dynamicData)
+
+  for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
+    el.remove()
+  }
 
   prunePageRegions(doc, pageType)
 
@@ -499,6 +504,63 @@ function removeListRegion(container: Element): void {
     child.hasAttribute("data-content")
   )
   if (!hasContentChild) parent.remove()
+}
+
+export function getCustomRoutes(html: string): string[] {
+  const dom = new JSDOM(html)
+  const doc = dom.window.document
+  const routes = Array.from(doc.querySelectorAll("[data-route]"))
+    .map((el) => el.getAttribute("data-route") ?? "")
+    .map(normalizeRoute)
+    .filter((r) => r !== "/")
+  return Array.from(new Set(routes))
+}
+
+export function renderCustomPage(
+  htmlTemplate: string,
+  route: string,
+  contentConfig: ContentConfig,
+  siteConfig?: Record<string, string>
+): string {
+  const dom = new JSDOM(htmlTemplate)
+  const doc = dom.window.document
+  const target = normalizeRoute(route)
+
+  let found = false
+  for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
+    if (normalizeRoute(el.getAttribute("data-route") ?? "") === target) {
+      found = true
+      el.removeAttribute("data-route")
+    } else {
+      el.remove()
+    }
+  }
+
+  if (!found) return htmlTemplate
+
+  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
+    el.remove()
+  }
+
+  const fields = { ...contentConfig }
+  augmentGlobalFields(doc, fields, siteConfig)
+
+  for (const [key, field] of Object.entries(fields)) {
+    if (field.type === "text") {
+      renderTextField(doc, key, resolveTextValue(field, siteConfig))
+    } else if (
+      field.type.startsWith("dynamic-") ||
+      field.type === "article-body"
+    ) {
+      renderDynamicField(doc, key, field as DynamicField, undefined)
+    } else if (field.type === "nav-list") {
+      renderNavField(doc, key, field as NavField)
+    }
+  }
+
+  applyAvatarOverflow(doc)
+
+  return dom.serialize()
 }
 
 function renderNavField(doc: Document, key: string, field: NavField): void {
