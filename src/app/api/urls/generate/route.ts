@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
     const prompt = GENERATE_PROMPT.replace("{links}", links)
 
-    const llm = createLLM(false)
+    const llm = await createLLM(false)
     const response = await llm.invoke([
       { role: "system", content: prompt },
       { role: "user", content: `用户需求：${q}` },

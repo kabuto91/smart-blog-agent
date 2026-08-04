@@ -26,8 +26,8 @@ const StateAnnotation = Annotation.Root({
   }),
 })
 
-export function createBlogAgent(conversationId: string) {
-  const llm = createLLM().bindTools(tools)
+export async function createBlogAgent(conversationId: string) {
+  const llm = (await createLLM()).bindTools(tools)
   const checkpointer = new MemorySaver()
 
   const callModel = async (state: typeof StateAnnotation.State) => {

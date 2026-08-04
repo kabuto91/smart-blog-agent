@@ -179,8 +179,8 @@ const StateAnnotation = Annotation.Root({
   }),
 })
 
-export function createThemeAgent() {
-  const llm = createLLM(true).bindTools([searchImageTool])
+export async function createThemeAgent() {
+  const llm = (await createLLM(true)).bindTools([searchImageTool])
 
   const callModel = async (state: typeof StateAnnotation.State) => {
     const messages = [new SystemMessage(SYSTEM_PROMPT), ...state.messages]

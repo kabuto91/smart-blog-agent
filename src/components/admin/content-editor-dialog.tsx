@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Plus, Trash2, GripVertical, Loader2, Globe, ExternalLink } from "lucide-react"
+import Link from "next/link"
 import type { ContentConfig, ContentField, NavItem, TextField, NavField } from "@/lib/types/content-config"
 import { FIELD_DEFINITIONS } from "@/lib/field-registry"
 import { UrlCombobox, type UrlComboboxOption } from "@/components/admin/url-combobox"
@@ -189,13 +190,13 @@ export function ContentEditorDialog({
                           <p className="mt-0.5 text-sm text-[#1C1C1E]">
                             {tf.value}
                           </p>
-                          <a
+                          <Link
                             href="/admin/settings"
                             className="mt-1 inline-flex items-center gap-0.5 text-[11px] text-[#6B7280] hover:text-[#E5A83D] transition-colors"
                           >
                             前往修改
                             <ExternalLink className="size-2.5" />
-                          </a>
+                          </Link>
                         </div>
                       )
                     })}

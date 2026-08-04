@@ -17,7 +17,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "消息不能为空" }, { status: 400 })
     }
 
-    const agent = createBlogAgent(conversationId)
+    const agent = await createBlogAgent(conversationId)
 
     const stream = new ReadableStream({
       async start(controller) {

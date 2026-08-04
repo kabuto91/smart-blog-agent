@@ -114,3 +114,13 @@ model ArticleTag {
   @@id([articleId, tagId])
   @@map("article_tags")
 }
+
+model LLMConfig {
+  id        Int      @id @default(1)
+  baseUrl   String   @default("") @map("base_url")
+  model     String   @default("")
+  apiKey    String   @default("") @map("api_key")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("llm_config")
+}

@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         const encoder = new TextEncoder()
 
         try {
-          const graph = createThemeAgent()
+          const graph = await createThemeAgent()
 
           const streamIterable = await graph.stream(
             { messages: llmMessages },
