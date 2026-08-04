@@ -7,6 +7,10 @@ import {
   BLOG_PAGE_SIZE,
   blogNotFoundHtml,
 } from "@/lib/blog"
+import { getActiveTheme } from "@/lib/theme"
+import { getCustomRoutes, normalizeRoute } from "@/lib/custom-pages"
+import { renderCustomPage } from "@/lib/content-renderer"
+import { getSiteConfig } from "@/lib/site-config"
 
 export const runtime = "nodejs"
 
@@ -15,6 +19,25 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params
+
+  const theme = await getActiveTheme()
+  if (theme) {
+    const route = normalizeRoute(`/blog/category/${slug}`)
+    const customRoutes = getCustomRoutes(theme.html)
+    if (customRoutes.includes(route)) {
+      const siteConfig = await getSiteConfig()
+      const html = renderCustomPage(
+        theme.html,
+        route,
+        theme.contentConfig ?? {},
+        siteConfig
+      )
+      return new Response(html, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      })
+    }
+  }
+
   const { searchParams } = new URL(request.url)
   const page = Number(searchParams.get("page")) || 1
 

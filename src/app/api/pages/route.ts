@@ -1,10 +1,10 @@
 import { getActiveTheme, updateTheme } from "@/lib/theme"
 import {
   buildCustomPageSection,
+  insertCustomPageSection,
   mergeContentConfig,
   normalizeRoute,
 } from "@/lib/custom-pages"
-import { JSDOM } from "jsdom"
 
 export const runtime = "nodejs"
 
@@ -30,22 +30,10 @@ export async function POST(request: Request) {
 
     const sectionHtml = buildCustomPageSection(route, payload.html)
 
-    const dom = new JSDOM(theme.html)
-    const doc = dom.window.document
-    const bodyEl = doc.body
-
-    for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
-      if (normalizeRoute(el.getAttribute("data-route") ?? "") === route) {
-        el.remove()
-      }
-    }
-
-    if (bodyEl) {
-      bodyEl.insertAdjacentHTML("beforeend", sectionHtml)
-    }
+    const updatedHtml = insertCustomPageSection(theme.html, route, sectionHtml)
 
     const updated = await updateTheme(theme.id, {
-      html: dom.serialize(),
+      html: updatedHtml,
       contentConfig: mergeContentConfig(
         theme.contentConfig as string | null,
         payload.contentConfig

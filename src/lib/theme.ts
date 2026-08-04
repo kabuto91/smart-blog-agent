@@ -39,8 +39,19 @@ export async function getThemeById(id: string): Promise<ThemeData | null> {
 }
 
 export async function getActiveTheme(): Promise<ThemeData | null> {
-  const theme = await prisma.theme.findFirst({ where: { isActive: true } })
-  return theme ? parseTheme(theme) : null
+  const themes = await prisma.theme.findMany({
+    where: { isActive: true },
+  })
+  if (themes.length === 0) return null
+  if (themes.length > 1) {
+    const [first, ...rest] = themes
+    await prisma.theme.updateMany({
+      where: { id: { in: rest.map((t) => t.id) } },
+      data: { isActive: false },
+    })
+    return parseTheme(first)
+  }
+  return parseTheme(themes[0])
 }
 
 export async function saveTheme(
@@ -48,8 +59,18 @@ export async function saveTheme(
   html: string,
   contentConfig?: string
 ): Promise<ThemeData> {
+  const existing = await prisma.theme.findMany({
+    where: { name },
+  })
+  let uniqueName = name
+  if (existing.length > 0) {
+    const match = name.match(/^(.*?)(\s*#\d+)?$/)
+    const base = match?.[1] ?? name
+    const suffix = existing.length + 1
+    uniqueName = `${base} #${suffix}`
+  }
   const theme = await prisma.theme.create({
-    data: { name, html, contentConfig: contentConfig ?? null },
+    data: { name: uniqueName, html, contentConfig: contentConfig ?? null },
   })
   return parseTheme(theme)
 }
@@ -75,13 +96,16 @@ export async function updateTheme(
 }
 
 export async function activateTheme(id: string): Promise<ThemeData> {
-  await prisma.theme.updateMany({
-    where: { isActive: true },
-    data: { isActive: false },
-  })
-  const theme = await prisma.theme.update({
-    where: { id },
-    data: { isActive: true },
+  const theme = await prisma.$transaction(async (tx) => {
+    await tx.theme.updateMany({
+      where: { isActive: true },
+      data: { isActive: false },
+    })
+    const updated = await tx.theme.update({
+      where: { id },
+      data: { isActive: true },
+    })
+    return updated
   })
   return parseTheme(theme)
 }

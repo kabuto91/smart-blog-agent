@@ -25,6 +25,7 @@ export function UrlGenerateDialog({
 }: UrlGenerateDialogProps) {
   const [loading, setLoading] = useState(false)
   const [html, setHtml] = useState("")
+  const [previewHtml, setPreviewHtml] = useState("")
   const [contentConfig, setContentConfig] = useState("")
   const [reasoning, setReasoning] = useState("")
   const [error, setError] = useState("")
@@ -35,6 +36,7 @@ export function UrlGenerateDialog({
     setLoading(true)
     setError("")
     setHtml("")
+    setPreviewHtml("")
     setContentConfig("")
     setReasoning("")
 
@@ -82,6 +84,7 @@ export function UrlGenerateDialog({
             } else if (event.type === "done") {
               gotHtml = !!event.html
               setHtml(event.html)
+              setPreviewHtml(event.previewHtml || "")
               setContentConfig(event.contentConfig || "")
             } else if (event.type === "error") {
               streamError = event.error
@@ -94,7 +97,7 @@ export function UrlGenerateDialog({
       }
 
       if (!gotHtml && !streamError) {
-        setError("生成失败，请重试")
+        setError("未能从生成内容中提取 HTML，请重试")
       }
     } catch {
       setError("网络错误，请重试")
@@ -183,7 +186,7 @@ export function UrlGenerateDialog({
                   </Button>
                 </div>
                 <iframe
-                  srcDoc={html}
+                  srcDoc={previewHtml || html}
                   sandbox="allow-scripts"
                   className="h-[400px] w-full"
                   title="页面预览"

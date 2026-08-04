@@ -149,14 +149,27 @@ ${FIELD_REFERENCE}
 
 /** 从模型输出中提取完整的 HTML 页面（含 DOCTYPE）。 */
 export function extractHtmlFromContent(content: string): string {
-  const fenced = content.match(/```(?:html|htm)?\s*\n([\s\S]*?)(?:\n)?```\s*$/i)
-  if (fenced && /^<!DOCTYPE/i.test(fenced[1].trim())) {
-    return fenced[1].trim()
-  }
+  const pick = (s: string | undefined): string => (s ? s.trim() : "")
+
+  const fencedAtEnd = content.match(/```(?:html|htm)?\s*\n([\s\S]*?)(?:\n)?```\s*$/i)
+  if (fencedAtEnd && /<[a-zA-Z!\/]/.test(fencedAtEnd[1])) return pick(fencedAtEnd[1])
+
   const doctype = content.match(/<!DOCTYPE[\s\S]*$/i)
-  return doctype
-    ? doctype[0].replace(/```(?:html|htm)?\s*$/i, "").trim()
-    : ""
+  if (doctype) return pick(doctype[0].replace(/```(?:html|htm)?\s*$/i, ""))
+
+  const htmlTag = content.match(/<html[\s>][\s\S]*$/i)
+  if (htmlTag) return pick(htmlTag[0])
+
+  const bodyTag = content.match(/<body[\s>][\s\S]*$/i)
+  if (bodyTag) return pick(bodyTag[0])
+
+  const anyFenced = content.match(/```(?:html|htm)?\s*\n([\s\S]*?)\n```/i)
+  if (anyFenced && /<[a-zA-Z!\/]/.test(anyFenced[1])) return pick(anyFenced[1])
+
+  const anyTag = content.match(/<[a-zA-Z][\s\S]*$/i)
+  if (anyTag) return pick(anyTag[0].replace(/```(?:html|htm)?\s*$/i, ""))
+
+  return ""
 }
 
 const StateAnnotation = Annotation.Root({

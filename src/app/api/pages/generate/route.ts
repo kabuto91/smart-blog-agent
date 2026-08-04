@@ -2,8 +2,13 @@ import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
 import { HumanMessage } from "@langchain/core/messages"
 import { getActiveTheme } from "@/lib/theme"
 import { extractContentConfig } from "@/lib/content-extractor"
-import { ensureAvatarOverflow } from "@/lib/content-renderer"
+import {
+  ensureAvatarOverflow,
+  renderCustomPagePreview,
+} from "@/lib/content-renderer"
+import { buildCustomPageSection, insertCustomPageSection } from "@/lib/custom-pages"
 import { getSiteConfig } from "@/lib/site-config"
+import type { ContentConfig } from "@/lib/types/content-config"
 import { createThemeAgent, extractHtmlFromContent } from "@/agents/theme-agent"
 
 export const runtime = "nodejs"
@@ -101,19 +106,47 @@ export async function POST(request: Request) {
           // Parse the complete content to extract HTML
           const html = extractHtmlFromContent(fullContent)
 
+          if (!html) {
+            console.error(
+              "[pages/generate] 未能从模型输出提取 HTML。输出长度:",
+              fullContent.length,
+              "\n--- 输出尾部 ---\n",
+              fullContent.slice(-3000)
+            )
+          }
+
           // Extract content config from generated HTML (match against site config)
           let contentConfigJson = ""
+          let previewHtml = ""
           let normalizedHtml = html
           if (html) {
             const siteConfig = await getSiteConfig()
             const result = extractContentConfig(html, siteConfig)
             normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
             contentConfigJson = JSON.stringify(result.contentConfig)
+
+            try {
+              const sectionHtml = buildCustomPageSection(route, normalizedHtml)
+              const mergedHtml = insertCustomPageSection(
+                theme.html,
+                route,
+                sectionHtml
+              )
+              const config = (JSON.parse(contentConfigJson) ?? {}) as ContentConfig
+              previewHtml = renderCustomPagePreview(
+                mergedHtml,
+                route,
+                config,
+                siteConfig
+              )
+            } catch {
+              // preview building failed, fall back to raw generated html
+            }
           }
 
           // Send completion signal with generated HTML and content config
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "done", html: normalizedHtml, contentConfig: contentConfigJson })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ type: "done", html: normalizedHtml, previewHtml, contentConfig: contentConfigJson })}\n\n`)
           )
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "未知错误"

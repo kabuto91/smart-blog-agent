@@ -563,6 +563,74 @@ export function renderCustomPage(
   return dom.serialize()
 }
 
+export function renderCustomPagePreview(
+  htmlTemplate: string,
+  route: string,
+  contentConfig: ContentConfig,
+  siteConfig?: Record<string, string>
+): string {
+  const dom = new JSDOM(htmlTemplate)
+  const doc = dom.window.document
+  const target = normalizeRoute(route)
+
+  let targetEl: Element | null = null
+  for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
+    if (normalizeRoute(el.getAttribute("data-route") ?? "") === target) {
+      targetEl = el
+      el.removeAttribute("data-route")
+    } else {
+      el.remove()
+    }
+  }
+
+  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
+    el.remove()
+  }
+
+  const kept = new Set<Element>()
+  if (targetEl) kept.add(targetEl)
+  for (const el of Array.from(doc.querySelectorAll("nav, footer"))) {
+    kept.add(el)
+  }
+
+  for (const el of Array.from(kept)) {
+    let parent = el.parentElement
+    while (parent && parent.tagName.toLowerCase() !== "body") {
+      kept.add(parent)
+      parent = parent.parentElement
+    }
+  }
+
+  const bodyEl = doc.body
+  if (bodyEl) {
+    for (const child of Array.from(bodyEl.children) as Element[]) {
+      if (!kept.has(child)) {
+        child.remove()
+      }
+    }
+  }
+
+  const fields = { ...contentConfig }
+  augmentGlobalFields(doc, fields, siteConfig)
+
+  for (const [key, field] of Object.entries(fields)) {
+    if (field.type === "text") {
+      renderTextField(doc, key, resolveTextValue(field, siteConfig))
+    } else if (
+      field.type.startsWith("dynamic-") ||
+      field.type === "article-body"
+    ) {
+      renderDynamicField(doc, key, field as DynamicField, undefined)
+    } else if (field.type === "nav-list") {
+      renderNavField(doc, key, field as NavField)
+    }
+  }
+
+  applyAvatarOverflow(doc)
+
+  return dom.serialize()
+}
+
 function renderNavField(doc: Document, key: string, field: NavField): void {
   const navs = doc.querySelectorAll(`[data-content="${key}"]`)
   if (navs.length === 0 || field.items.length === 0) return

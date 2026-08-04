@@ -43,6 +43,28 @@ export function buildCustomPageSection(
   return section.outerHTML
 }
 
+export function insertCustomPageSection(
+  themeHtml: string,
+  route: string,
+  sectionHtml: string
+): string {
+  const dom = new JSDOM(themeHtml)
+  const doc = dom.window.document
+  const bodyEl = doc.body
+
+  for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
+    if (normalizeRoute(el.getAttribute("data-route") ?? "") === route) {
+      el.remove()
+    }
+  }
+
+  if (bodyEl) {
+    bodyEl.insertAdjacentHTML("beforeend", sectionHtml)
+  }
+
+  return dom.serialize()
+}
+
 export function mergeContentConfig(
   existing: string | null,
   incoming?: string
