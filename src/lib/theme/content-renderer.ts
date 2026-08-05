@@ -1,7 +1,6 @@
 import { JSDOM } from "jsdom"
 import type { ContentConfig, DynamicField, NavField, TextField } from "../types/content-config"
 import { FIELD_DEFINITIONS } from "../field-registry"
-import { normalizeRoute } from "./custom-pages"
 
 export interface ArticleData {
   id: string | number
@@ -87,7 +86,7 @@ export function renderContent(
   return dom.serialize()
 }
 
-type PageType = "home" | "list" | "detail"
+export type PageType = "home" | "list" | "detail"
 
 export function resolvePageType(dynamicData?: DynamicData): PageType {
   if (dynamicData?.articles?.[0]?.contentHtml) return "detail"
@@ -101,8 +100,7 @@ function pageTypesOf(el: Element): string[] {
     .filter(Boolean)
 }
 
-function prunePageRegions(doc: Document, pageType: PageType): void {
-  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
+export function prunePageRegions(doc: Document, pageType: PageType): void {  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
     const types = pageTypesOf(el)
     if (types.length > 0 && !types.includes(pageType)) {
       el.remove()
@@ -120,7 +118,7 @@ const HOME_SECTION_CLASS_RE = /(^|[\s_\-])(hero|banner|intro)([\s_\-])?/i
 const ARCHIVE_CTA_RE = /(更多文章|查看全部|查看所有|全部文章|全部博文|查看更多)/
 const RECENT_HEADING_RE = /(近期文章|最新文章|最近文章|最新发布)/
 
-function pruneHomeSections(doc: Document): void {
+export function pruneHomeSections(doc: Document): void {
   for (const el of Array.from(
     doc.querySelectorAll("section, div, aside, header")
   )) {
@@ -220,7 +218,7 @@ function isChromeElement(el: Element): boolean {
   return pageTypesOf(el).includes("detail")
 }
 
-function pruneDetailPage(doc: Document): void {
+export function pruneDetailPage(doc: Document): void {
   const bodyEl = doc.querySelector('[data-content="article-body"]')
   if (!bodyEl) return
 
@@ -504,131 +502,6 @@ function removeListRegion(container: Element): void {
     child.hasAttribute("data-content")
   )
   if (!hasContentChild) parent.remove()
-}
-
-export function getCustomRoutes(html: string): string[] {
-  const dom = new JSDOM(html)
-  const doc = dom.window.document
-  const routes = Array.from(doc.querySelectorAll("[data-route]"))
-    .map((el) => el.getAttribute("data-route") ?? "")
-    .map(normalizeRoute)
-    .filter((r) => r !== "/")
-  return Array.from(new Set(routes))
-}
-
-export function renderCustomPage(
-  htmlTemplate: string,
-  route: string,
-  contentConfig: ContentConfig,
-  siteConfig?: Record<string, string>
-): string {
-  const dom = new JSDOM(htmlTemplate)
-  const doc = dom.window.document
-  const target = normalizeRoute(route)
-
-  let found = false
-  for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
-    if (normalizeRoute(el.getAttribute("data-route") ?? "") === target) {
-      found = true
-      el.removeAttribute("data-route")
-    } else {
-      el.remove()
-    }
-  }
-
-  if (!found) return htmlTemplate
-
-  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
-    el.remove()
-  }
-
-  const fields = { ...contentConfig }
-  augmentGlobalFields(doc, fields, siteConfig)
-
-  for (const [key, field] of Object.entries(fields)) {
-    if (field.type === "text") {
-      renderTextField(doc, key, resolveTextValue(field, siteConfig))
-    } else if (
-      field.type.startsWith("dynamic-") ||
-      field.type === "article-body"
-    ) {
-      renderDynamicField(doc, key, field as DynamicField, undefined)
-    } else if (field.type === "nav-list") {
-      renderNavField(doc, key, field as NavField)
-    }
-  }
-
-  applyAvatarOverflow(doc)
-
-  return dom.serialize()
-}
-
-export function renderCustomPagePreview(
-  htmlTemplate: string,
-  route: string,
-  contentConfig: ContentConfig,
-  siteConfig?: Record<string, string>
-): string {
-  const dom = new JSDOM(htmlTemplate)
-  const doc = dom.window.document
-  const target = normalizeRoute(route)
-
-  let targetEl: Element | null = null
-  for (const el of Array.from(doc.querySelectorAll("[data-route]"))) {
-    if (normalizeRoute(el.getAttribute("data-route") ?? "") === target) {
-      targetEl = el
-      el.removeAttribute("data-route")
-    } else {
-      el.remove()
-    }
-  }
-
-  for (const el of Array.from(doc.querySelectorAll("[data-page-type]"))) {
-    el.remove()
-  }
-
-  const kept = new Set<Element>()
-  if (targetEl) kept.add(targetEl)
-  for (const el of Array.from(doc.querySelectorAll("nav, footer"))) {
-    kept.add(el)
-  }
-
-  for (const el of Array.from(kept)) {
-    let parent = el.parentElement
-    while (parent && parent.tagName.toLowerCase() !== "body") {
-      kept.add(parent)
-      parent = parent.parentElement
-    }
-  }
-
-  const bodyEl = doc.body
-  if (bodyEl) {
-    for (const child of Array.from(bodyEl.children) as Element[]) {
-      if (!kept.has(child)) {
-        child.remove()
-      }
-    }
-  }
-
-  const fields = { ...contentConfig }
-  augmentGlobalFields(doc, fields, siteConfig)
-
-  for (const [key, field] of Object.entries(fields)) {
-    if (field.type === "text") {
-      renderTextField(doc, key, resolveTextValue(field, siteConfig))
-    } else if (
-      field.type.startsWith("dynamic-") ||
-      field.type === "article-body"
-    ) {
-      renderDynamicField(doc, key, field as DynamicField, undefined)
-    } else if (field.type === "nav-list") {
-      renderNavField(doc, key, field as NavField)
-    }
-  }
-
-  applyAvatarOverflow(doc)
-
-  return dom.serialize()
 }
 
 function renderNavField(doc: Document, key: string, field: NavField): void {

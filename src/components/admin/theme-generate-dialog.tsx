@@ -13,11 +13,17 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Loader2, Sparkles, Send, Trash2 } from "lucide-react"
 
+interface GeneratedPage {
+  type: string
+  html: string
+}
+
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
-  html?: string
+  layoutHtml?: string
+  pages?: GeneratedPage[]
   contentConfig?: string
   thinking?: string[]
   thinkingVisible?: boolean
@@ -26,8 +32,18 @@ interface Message {
 interface ThemeGenerateDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSaved?: (html: string, contentConfig?: string) => void
+  onSaved?: (payload: {
+    layoutHtml: string
+    pages: GeneratedPage[]
+    contentConfig?: string
+  }) => void
 }
+
+const PAGE_TABS = [
+  { type: "home", label: "首页" },
+  { type: "list", label: "文章列表页" },
+  { type: "detail", label: "文章详情页" },
+]
 
 export function ThemeGenerateDialog({
   open,
@@ -41,6 +57,7 @@ export function ThemeGenerateDialog({
   const [error, setError] = useState("")
   const [currentThinking, setCurrentThinking] = useState<string[]>([])
   const [toolStatus, setToolStatus] = useState("")
+  const [activePageType, setActivePageType] = useState("home")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -129,10 +146,12 @@ export function ThemeGenerateDialog({
                 )
               } else if (event.type === "done") {
                 setConversationId(event.conversationId)
-                // Update the assistant message with HTML and content config
+                // Update the assistant message with layout and page bodies
                 setMessages((prev) =>
                   prev.map((m) =>
-                    m.id === assistantMsgId ? { ...m, html: event.html, contentConfig: event.contentConfig } : m
+                    m.id === assistantMsgId
+                      ? { ...m, layoutHtml: event.layoutHtml, pages: event.pages, contentConfig: event.contentConfig }
+                      : m
                   )
                 )
               } else if (event.type === "tool_call") {
@@ -171,9 +190,27 @@ export function ThemeGenerateDialog({
     )
   }
 
-  function handleSave(html: string, contentConfig?: string) {
+  function mergedPreviewHtml(msg: Message): string {
+    const layout = msg.layoutHtml ?? ""
+    const page =
+      msg.pages?.find((p) => p.type === activePageType) ?? msg.pages?.[0]
+    if (!page) return layout
+    // 把页正文插入布局中的占位节点
+    const placeholder = `<div data-page-host=""></div>`
+    if (layout.includes(placeholder)) {
+      return layout.replace(placeholder, `<div data-page-host="">${page.html}</div>`)
+    }
+    // 兜底：直接拼接在 </body> 前
+    return layout.replace("</body>", `<div data-page-host="">${page.html}</div></body>`)
+  }
+
+  function handleSave(payload: {
+    layoutHtml: string
+    pages: GeneratedPage[]
+    contentConfig?: string
+  }) {
     if (onSaved) {
-      onSaved(html, contentConfig)
+      onSaved(payload)
       onOpenChange(false)
       reset()
     }
@@ -196,8 +233,9 @@ export function ThemeGenerateDialog({
     if (!nextOpen) reset()
   }
 
-  const latestMsg = [...messages].reverse().find((m) => m.html)
-  const latestHtml = latestMsg?.html
+  const latestMsg = [...messages].reverse().find((m) => m.layoutHtml)
+  const latestLayoutHtml = latestMsg?.layoutHtml
+  const latestPages = latestMsg?.pages ?? []
   const latestConfig = latestMsg?.contentConfig
 
   return (
@@ -240,7 +278,7 @@ export function ThemeGenerateDialog({
                     ) : (
                       <div className="flex flex-col gap-2">
                         {/* Streaming content */}
-                        {loading && !msg.html && msg.content && (
+                        {loading && !msg.layoutHtml && msg.content && (
                           <div className="ml-1">
                             <div className="flex items-center gap-1.5 text-xs text-[#6B7280]">
                               <span className="i-lucide-brain size-3" />
@@ -275,24 +313,44 @@ export function ThemeGenerateDialog({
                           </div>
                         )}
 
-                        {/* HTML preview */}
-                        {msg.html && (
+                        {/* Theme preview: layout + tabbed pages */}
+                        {msg.layoutHtml && (
                           <div className="overflow-hidden rounded-lg border border-black/[0.06] bg-white">
                             <div className="flex items-center justify-between border-b border-black/[0.06] bg-[#F5F4F1] px-3 py-1.5">
-                              <span className="text-xs text-[#6B7280]">预览</span>
+                              <div className="flex items-center gap-1">
+                                {PAGE_TABS.map((tab) => (
+                                  <button
+                                    key={tab.type}
+                                    onClick={() => setActivePageType(tab.type)}
+                                    className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                                      activePageType === tab.type
+                                        ? "bg-[#E5A83D] text-[#181A1E]"
+                                        : "text-[#6B7280] hover:bg-black/[0.04]"
+                                    }`}
+                                  >
+                                    {tab.label}
+                                  </button>
+                                ))}
+                              </div>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => handleSave(msg.html!, msg.contentConfig)}
+                                onClick={() =>
+                                  handleSave({
+                                    layoutHtml: msg.layoutHtml!,
+                                    pages: msg.pages ?? [],
+                                    contentConfig: msg.contentConfig,
+                                  })
+                                }
                                 className="h-6 gap-1 text-xs text-[#E5A83D] hover:text-[#D4A035]"
                               >
                                 使用此主题
                               </Button>
                             </div>
                             <iframe
-                              srcDoc={msg.html}
+                              srcDoc={mergedPreviewHtml(msg)}
                               sandbox="allow-scripts"
-                              className="h-[300px] w-full"
+                              className="h-[320px] w-full"
                               title="主题预览"
                             />
                           </div>
@@ -377,9 +435,15 @@ export function ThemeGenerateDialog({
               <DialogClose render={<Button variant="outline" onClick={reset} />}>
                 取消
               </DialogClose>
-              {latestHtml && (
+              {latestLayoutHtml && (
                 <Button
-                  onClick={() => handleSave(latestHtml, latestConfig)}
+                  onClick={() =>
+                    handleSave({
+                      layoutHtml: latestLayoutHtml,
+                      pages: latestPages,
+                      contentConfig: latestConfig,
+                    })
+                  }
                   className="bg-[#E5A83D] text-[#181A1E] hover:bg-[#D4A035]"
                 >
                   保存主题

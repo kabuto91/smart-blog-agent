@@ -3,6 +3,7 @@ import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
 import { getMessages, addMessage, getLatestHtml } from "@/lib/theme/theme-session"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
 import { ensureAvatarOverflow } from "@/lib/theme/content-renderer"
+import { splitGeneratedTheme } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
 import { createThemeAgent, extractHtmlFromContent } from "@/agents/theme-agent"
 import { randomUUID } from "crypto"
@@ -111,20 +112,24 @@ export async function POST(request: Request) {
 
           // Extract content config from generated HTML (match against site config)
           let contentConfigJson = ""
-          let normalizedHtml = html
+          let layoutHtml = ""
+          let pages: { type: string; html: string }[] = []
           if (html) {
             const siteConfig = await getSiteConfig()
             const result = extractContentConfig(html, siteConfig)
-            normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
+            const normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
+            const split = splitGeneratedTheme(normalizedHtml)
+            layoutHtml = split.layoutHtml
+            pages = split.pages
             contentConfigJson = JSON.stringify(result.contentConfig)
           }
 
           // Save assistant message with HTML snapshot and content config
-          await addMessage(conversationId, "assistant", fullContent, normalizedHtml, contentConfigJson)
+          await addMessage(conversationId, "assistant", fullContent, html, contentConfigJson)
 
-          // Send completion signal with conversation ID and content config
+          // Send completion signal with conversation ID, layout and page bodies
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "done", conversationId, html: normalizedHtml, contentConfig: contentConfigJson })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ type: "done", conversationId, layoutHtml, pages, contentConfig: contentConfigJson })}\n\n`)
           )
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "未知错误"

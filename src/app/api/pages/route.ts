@@ -1,12 +1,13 @@
-import { getActiveTheme, updateTheme } from "@/lib/theme/theme"
-import {
-  buildCustomPageSection,
-  insertCustomPageSection,
-  mergeContentConfig,
-  normalizeRoute,
-} from "@/lib/theme/custom-pages"
+import { getActiveTheme, upsertThemePage } from "@/lib/theme/theme"
+import { normalizeRoute } from "@/lib/theme/custom-pages"
 
 export const runtime = "nodejs"
+
+function pageNameFromRoute(route: string): string {
+  const seg = route.split("/").filter(Boolean).pop()
+  if (seg) return `页面 ${seg}`
+  return "自定义页面"
+}
 
 interface SavePageRequest {
   url: string
@@ -28,19 +29,15 @@ export async function POST(request: Request) {
       return Response.json({ error: "请先创建并启用一个主题" }, { status: 400 })
     }
 
-    const sectionHtml = buildCustomPageSection(route, payload.html)
-
-    const updatedHtml = insertCustomPageSection(theme.html, route, sectionHtml)
-
-    const updated = await updateTheme(theme.id, {
-      html: updatedHtml,
-      contentConfig: mergeContentConfig(
-        theme.contentConfig as string | null,
-        payload.contentConfig
-      ),
+    const page = await upsertThemePage(theme.id, {
+      type: "custom",
+      route,
+      name: pageNameFromRoute(route),
+      html: payload.html,
+      contentConfig: payload.contentConfig ?? null,
     })
 
-    return Response.json(updated, { status: 200 })
+    return Response.json(page, { status: 200 })
   } catch (error) {
     const msg = error instanceof Error ? error.message : "未知错误"
     return Response.json({ error: msg }, { status: 500 })

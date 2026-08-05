@@ -47,15 +47,34 @@ model ThemeMessage {
 }
 
 model Theme {
+  id            String       @id @default(uuid())
+  name          String
+  layoutHtml    String       @map("layout_html")
+  contentConfig String?
+  isActive      Boolean      @default(false)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  pages         ThemePage[]
+
+  @@map("themes")
+}
+
+model ThemePage {
   id            String   @id @default(uuid())
+  themeId       String   @map("theme_id")
+  type          String
+  route         String?
   name          String
   html          String
   contentConfig String?
-  isActive      Boolean  @default(false)
+  sortOrder     Int      @default(0) @map("sort_order")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
+  theme         Theme    @relation(fields: [themeId], references: [id], onDelete: Cascade)
 
-  @@map("themes")
+  @@unique([themeId, type, route])
+  @@index([themeId])
+  @@map("theme_pages")
 }
 
 model Upload {

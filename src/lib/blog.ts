@@ -1,7 +1,9 @@
 import { renderMarkdown } from "./markdown"
-import { getActiveTheme } from "./theme/theme"
+import { getActiveTheme, pageContentConfig } from "./theme/theme"
 import { getSiteConfig } from "./site-config"
-import { renderContent } from "./theme/content-renderer"
+import { renderContent, resolvePageType } from "./theme/content-renderer"
+import { mergeThemePage } from "./theme/theme-splitter"
+import { normalizeRoute } from "./theme/custom-pages"
 import type {
   ArticleData,
   CategoryData,
@@ -157,11 +159,22 @@ export async function renderBlogTheme(
       })
     }
 
+    const pageType = resolvePageType(dynamicData)
+    const page = activeTheme.pages.find((p) => p.type === pageType)
+    if (!page) {
+      return new Response(blogNotConfiguredHtml, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      })
+    }
+
     const siteConfig = await getSiteConfig()
-    const contentConfig: ContentConfig = activeTheme.contentConfig ?? {}
+    const contentConfig: ContentConfig =
+      pageContentConfig(activeTheme, pageType) ?? {}
+
+    const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html)
 
     const renderedHtml = renderContent(
-      activeTheme.html,
+      mergedHtml,
       contentConfig,
       dynamicData,
       siteConfig
@@ -180,4 +193,25 @@ export async function renderBlogTheme(
       }
     )
   }
+}
+
+/** 按 route 渲染某个自定义页面行（主题内存在则返回 HTML，否则返回 null）。 */
+export async function renderCustomThemePage(
+  route: string
+): Promise<string | null> {
+  const activeTheme = await getActiveTheme()
+  if (!activeTheme) return null
+
+  const target = normalizeRoute(route)
+  const page = activeTheme.pages.find(
+    (p) => p.type === "custom" && normalizeRoute(p.route ?? "") === target
+  )
+  if (!page) return null
+
+  const siteConfig = await getSiteConfig()
+  const contentConfig: ContentConfig =
+    pageContentConfig(activeTheme, "custom") ?? {}
+
+  const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html)
+  return renderContent(mergedHtml, contentConfig, undefined, siteConfig)
 }

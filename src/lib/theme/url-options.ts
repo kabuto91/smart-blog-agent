@@ -1,6 +1,5 @@
 import { getArticles, getCategories, getTags } from "@/lib/articles"
 import { getActiveTheme } from "@/lib/theme/theme"
-import { getCustomRoutes } from "@/lib/theme/content-renderer"
 
 export interface UrlOption {
   url: string
@@ -50,10 +49,11 @@ export async function getUrlOptions(): Promise<UrlOption[]> {
   }
 
   if (activeTheme) {
-    for (const route of getCustomRoutes(activeTheme.html)) {
+    for (const page of activeTheme.pages) {
+      if (page.type !== "custom" || !page.route) continue
       options.push({
-        url: route,
-        label: `自定义页面：${route}`,
+        url: page.route,
+        label: `自定义页面：${page.route}`,
         type: "custom",
       })
     }

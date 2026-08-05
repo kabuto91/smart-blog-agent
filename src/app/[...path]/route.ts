@@ -1,8 +1,5 @@
 import { getActiveTheme } from "@/lib/theme/theme"
-import { getSiteConfig } from "@/lib/site-config"
-import { renderCustomPage } from "@/lib/theme/content-renderer"
-import { getCustomRoutes, normalizeRoute } from "@/lib/theme/custom-pages"
-import { blogNotFoundHtml, blogNotConfiguredHtml } from "@/lib/blog"
+import { renderCustomThemePage, blogNotFoundHtml, blogNotConfiguredHtml } from "@/lib/blog"
 
 export const runtime = "nodejs"
 
@@ -11,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ path: string[] }> }
 ) {
   const { path } = await params
-  const route = normalizeRoute(`/${(path ?? []).join("/")}`)
+  const route = `/${(path ?? []).join("/")}`
 
   const theme = await getActiveTheme()
   if (!theme) {
@@ -20,21 +17,13 @@ export async function GET(
     })
   }
 
-  const routes = getCustomRoutes(theme.html)
-  if (!routes.includes(route)) {
+  const html = await renderCustomThemePage(route)
+  if (!html) {
     return new Response(blogNotFoundHtml, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
       status: 404,
     })
   }
-
-  const siteConfig = await getSiteConfig()
-  const html = renderCustomPage(
-    theme.html,
-    route,
-    theme.contentConfig ?? {},
-    siteConfig
-  )
 
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },

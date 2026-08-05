@@ -4,9 +4,9 @@ import { getActiveTheme } from "@/lib/theme/theme"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
 import {
   ensureAvatarOverflow,
-  renderCustomPagePreview,
+  renderContent,
 } from "@/lib/theme/content-renderer"
-import { buildCustomPageSection, insertCustomPageSection } from "@/lib/theme/custom-pages"
+import { mergeThemePage } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
 import type { ContentConfig } from "@/lib/types/content-config"
 import { createThemeAgent, extractHtmlFromContent } from "@/agents/theme-agent"
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
       return Response.json({ error: "请先创建并启用一个主题" }, { status: 400 })
     }
 
-    const prompt = buildPrompt(route, theme.html)
+    const prompt = buildPrompt(route, theme.layoutHtml)
     const llmMessages = [new HumanMessage(prompt)]
 
     // Create streaming response
@@ -138,19 +138,10 @@ export async function POST(request: Request) {
             contentConfigJson = JSON.stringify(result.contentConfig)
 
             try {
-              const sectionHtml = buildCustomPageSection(route, normalizedHtml)
-              const mergedHtml = insertCustomPageSection(
-                theme.html,
-                route,
-                sectionHtml
-              )
               const config = (JSON.parse(contentConfigJson) ?? {}) as ContentConfig
-              previewHtml = renderCustomPagePreview(
-                mergedHtml,
-                route,
-                config,
-                siteConfig
-              )
+              const siteConfig = await getSiteConfig()
+              const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml)
+              previewHtml = renderContent(mergedHtml, config, undefined, siteConfig)
             } catch {
               // preview building failed, fall back to raw generated html
             }

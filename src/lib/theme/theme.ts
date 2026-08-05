@@ -1,46 +1,123 @@
 import { prisma } from "../db/client"
 import type { ContentConfig } from "../types/content-config"
 
+export interface ThemePageData {
+  id: string
+  type: string
+  route: string | null
+  name: string
+  html: string
+  contentConfig: ContentConfig | null
+  sortOrder: number
+  createdAt: Date
+  updatedAt: Date
+}
+
 export interface ThemeData {
   id: string
   name: string
-  html: string
+  layoutHtml: string
   contentConfig: ContentConfig | null
   isActive: boolean
   createdAt: Date
   updatedAt: Date
+  pages: ThemePageData[]
+}
+
+function parseContentConfig(raw: string | null): ContentConfig | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as ContentConfig
+  } catch {
+    return null
+  }
+}
+
+function parsePage(page: {
+  id: string
+  type: string
+  route: string | null
+  name: string
+  html: string
+  contentConfig: string | null
+  sortOrder: number
+  createdAt: Date
+  updatedAt: Date
+}): ThemePageData {
+  return {
+    ...page,
+    contentConfig: parseContentConfig(page.contentConfig),
+  }
 }
 
 function parseTheme(theme: {
   id: string
   name: string
-  html: string
+  layoutHtml: string
   contentConfig: string | null
   isActive: boolean
   createdAt: Date
   updatedAt: Date
+  pages: {
+    id: string
+    type: string
+    route: string | null
+    name: string
+    html: string
+    contentConfig: string | null
+    sortOrder: number
+    createdAt: Date
+    updatedAt: Date
+  }[]
 }): ThemeData {
   return {
-    ...theme,
-    contentConfig: theme.contentConfig ? JSON.parse(theme.contentConfig) : null,
+    id: theme.id,
+    name: theme.name,
+    layoutHtml: theme.layoutHtml,
+    contentConfig: parseContentConfig(theme.contentConfig),
+    isActive: theme.isActive,
+    createdAt: theme.createdAt,
+    updatedAt: theme.updatedAt,
+    pages: theme.pages.map(parsePage),
   }
+}
+
+const PAGE_INCLUDE = {
+  pages: { orderBy: { sortOrder: "asc" as const } },
+}
+
+export function pageContentConfig(
+  theme: ThemeData,
+  pageType: string
+): ContentConfig | null {
+  const page = theme.pages.find((p) => p.type === pageType)
+  const merged: ContentConfig = { ...(theme.contentConfig ?? {}) }
+  if (page?.contentConfig) {
+    Object.assign(merged, page.contentConfig)
+  }
+  return Object.keys(merged).length > 0 ? merged : null
 }
 
 export async function getThemes(): Promise<ThemeData[]> {
   const themes = await prisma.theme.findMany({
     orderBy: { createdAt: "desc" },
+    include: PAGE_INCLUDE,
   })
   return themes.map(parseTheme)
 }
 
 export async function getThemeById(id: string): Promise<ThemeData | null> {
-  const theme = await prisma.theme.findUnique({ where: { id } })
+  const theme = await prisma.theme.findUnique({
+    where: { id },
+    include: PAGE_INCLUDE,
+  })
   return theme ? parseTheme(theme) : null
 }
 
 export async function getActiveTheme(): Promise<ThemeData | null> {
   const themes = await prisma.theme.findMany({
     where: { isActive: true },
+    include: PAGE_INCLUDE,
   })
   if (themes.length === 0) return null
   if (themes.length > 1) {
@@ -54,14 +131,22 @@ export async function getActiveTheme(): Promise<ThemeData | null> {
   return parseTheme(themes[0])
 }
 
+export interface ThemePageInput {
+  type: string
+  route?: string | null
+  name: string
+  html: string
+  contentConfig?: string | null
+  sortOrder?: number
+}
+
 export async function saveTheme(
   name: string,
-  html: string,
+  layoutHtml: string,
+  pages: ThemePageInput[],
   contentConfig?: string
 ): Promise<ThemeData> {
-  const existing = await prisma.theme.findMany({
-    where: { name },
-  })
+  const existing = await prisma.theme.findMany({ where: { name } })
   let uniqueName = name
   if (existing.length > 0) {
     const match = name.match(/^(.*?)(\s*#\d+)?$/)
@@ -70,7 +155,22 @@ export async function saveTheme(
     uniqueName = `${base} #${suffix}`
   }
   const theme = await prisma.theme.create({
-    data: { name: uniqueName, html, contentConfig: contentConfig ?? null },
+    data: {
+      name: uniqueName,
+      layoutHtml,
+      contentConfig: contentConfig ?? null,
+      pages: {
+        create: pages.map((p, i) => ({
+          type: p.type,
+          route: p.route ?? null,
+          name: p.name,
+          html: p.html,
+          contentConfig: p.contentConfig ?? null,
+          sortOrder: p.sortOrder ?? i,
+        })),
+      },
+    },
+    include: PAGE_INCLUDE,
   })
   return parseTheme(theme)
 }
@@ -81,16 +181,18 @@ export async function deleteTheme(id: string): Promise<void> {
 
 export async function updateTheme(
   id: string,
-  data: { html?: string; contentConfig?: string | null }
+  data: { name?: string; layoutHtml?: string; contentConfig?: string | null }
 ): Promise<ThemeData> {
   const theme = await prisma.theme.update({
     where: { id },
     data: {
-      ...(data.html !== undefined ? { html: data.html } : {}),
+      ...(data.name !== undefined ? { name: data.name } : {}),
+      ...(data.layoutHtml !== undefined ? { layoutHtml: data.layoutHtml } : {}),
       ...(data.contentConfig !== undefined
         ? { contentConfig: data.contentConfig }
         : {}),
     },
+    include: PAGE_INCLUDE,
   })
   return parseTheme(theme)
 }
@@ -107,5 +209,55 @@ export async function activateTheme(id: string): Promise<ThemeData> {
     })
     return updated
   })
-  return parseTheme(theme)
+  const withPages = await prisma.theme.findUnique({
+    where: { id: theme.id },
+    include: PAGE_INCLUDE,
+  })
+  if (withPages) return parseTheme(withPages)
+  return {
+    id: theme.id,
+    name: theme.name,
+    layoutHtml: theme.layoutHtml,
+    contentConfig: parseContentConfig(theme.contentConfig),
+    isActive: theme.isActive,
+    createdAt: theme.createdAt,
+    updatedAt: theme.updatedAt,
+    pages: [],
+  }
+}
+
+/** Upsert 一个页面行（type+route 唯一）。 */
+export async function upsertThemePage(
+  themeId: string,
+  input: ThemePageInput
+): Promise<ThemePageData> {
+  const page = await prisma.themePage.upsert({
+    where: {
+      themeId_type_route: {
+        themeId,
+        type: input.type,
+        route: (input.route ?? null) as string,
+      },
+    },
+    update: {
+      name: input.name,
+      html: input.html,
+      contentConfig: input.contentConfig ?? null,
+      sortOrder: input.sortOrder ?? 0,
+    },
+    create: {
+      themeId,
+      type: input.type,
+      route: (input.route ?? null) as string,
+      name: input.name,
+      html: input.html,
+      contentConfig: input.contentConfig ?? null,
+      sortOrder: input.sortOrder ?? 0,
+    },
+  })
+  return parsePage(page)
+}
+
+export async function deleteThemePage(id: string): Promise<void> {
+  await prisma.themePage.delete({ where: { id } })
 }

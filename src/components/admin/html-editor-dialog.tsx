@@ -19,6 +19,10 @@ interface HtmlEditorDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   html: string
+  /** 共享布局（用于合并预览单页正文） */
+  layoutHtml?: string
+  /** 是否为共享布局编辑（此时不合并） */
+  isLayout?: boolean
   contentConfig?: ContentConfig | null
   onSave: (html: string) => void
 }
@@ -68,6 +72,8 @@ export function HtmlEditorDialog({
   open,
   onOpenChange,
   html,
+  layoutHtml,
+  isLayout,
   contentConfig,
   onSave,
 }: HtmlEditorDialogProps) {
@@ -85,11 +91,19 @@ export function HtmlEditorDialog({
     async (value: string) => {
       setPreviewLoading(true)
       try {
+        // 单页编辑时把正文合并进共享布局预览
+        let template = value
+        if (!isLayout && layoutHtml) {
+          template = layoutHtml.replace(
+            `<div data-page-host=""></div>`,
+            `<div data-page-host="">${value}</div>`
+          )
+        }
         const res = await fetch("/api/themes/render", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            htmlTemplate: value,
+            htmlTemplate: template,
             contentConfig: contentConfig ?? {},
           }),
         })
@@ -103,7 +117,7 @@ export function HtmlEditorDialog({
         setPreviewLoading(false)
       }
     },
-    [contentConfig]
+    [contentConfig, isLayout, layoutHtml]
   )
 
   useEffect(() => {
@@ -181,7 +195,7 @@ export function HtmlEditorDialog({
           showCloseButton={false}
         >
           <DialogTitle className="pb-3 text-[#1C1C1E]">
-            编辑 HTML 源码
+            {isLayout ? "编辑共享布局 / 样式" : "编辑 HTML 源码"}
           </DialogTitle>
 
           <div className="flex max-h-[75vh] gap-4 overflow-hidden">
@@ -242,7 +256,7 @@ export function HtmlEditorDialog({
                 </span>
               </div>
               <iframe
-                srcDoc={previewHtml || html}
+                srcDoc={previewHtml || (isLayout ? html : layoutHtml ? layoutHtml.replace(`<div data-page-host=""></div>`, `<div data-page-host="">${html}</div>`) : html)}
                 sandbox="allow-scripts"
                 className="flex-1"
                 title="源码预览"

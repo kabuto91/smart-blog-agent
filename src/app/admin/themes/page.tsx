@@ -1,29 +1,44 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { ThemeGenerateDialog } from "@/components/admin/theme-generate-dialog"
 import { ContentEditorDialog } from "@/components/admin/content-editor-dialog"
 import { HtmlEditorDialog } from "@/components/admin/html-editor-dialog"
-import { Plus, Palette, Trash2, Eye, Settings, CheckCircle2, ExternalLink, Loader2, Code } from "lucide-react"
+import { Plus, Palette, Trash2, Eye, Settings, CheckCircle2, ExternalLink, Loader2, Code, LayoutTemplate } from "lucide-react"
 import type { ContentConfig } from "@/lib/types/content-config"
+
+interface ThemePage {
+  id: string
+  type: string
+  route: string | null
+  name: string
+  html: string
+  contentConfig: ContentConfig | null
+}
 
 interface Theme {
   id: string
   name: string
-  html: string
+  layoutHtml: string
   contentConfig: ContentConfig | null
   isActive: boolean
   createdAt: string
+  pages: ThemePage[]
+}
+
+interface GeneratedPage {
+  type: string
+  html: string
 }
 
 export default function ThemesPage() {
   const [themes, setThemes] = useState<Theme[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [previewHtml, setPreviewHtml] = useState<string | null>(null)
-  const [configEditThemeId, setConfigEditThemeId] = useState<string | null>(null)
-  const [htmlEditThemeId, setHtmlEditThemeId] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{ theme: Theme; page: ThemePage } | null>(null)
+  const [configEdit, setConfigEdit] = useState<{ theme: Theme; page: ThemePage | null } | null>(null)
+  const [htmlEdit, setHtmlEdit] = useState<{ theme: Theme; page: ThemePage | null } | null>(null)
 
   useEffect(() => {
     fetch("/api/themes")
@@ -35,15 +50,26 @@ export default function ThemesPage() {
       .catch(() => setLoading(false))
   }, [])
 
-  const configEditTheme = themes.find((t) => t.id === configEditThemeId)
-  const htmlEditTheme = themes.find((t) => t.id === htmlEditThemeId)
-
-  async function handleSaved(html: string, contentConfig?: string) {
+  async function handleSaved(payload: {
+    layoutHtml: string
+    pages: GeneratedPage[]
+    contentConfig?: string
+  }) {
     const name = `主题 ${themes.length + 1}`
     const res = await fetch("/api/themes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, html, contentConfig }),
+      body: JSON.stringify({
+        name,
+        layoutHtml: payload.layoutHtml,
+        pages: payload.pages.map((p, i) => ({
+          type: p.type,
+          name: p.type === "home" ? "首页" : p.type === "list" ? "文章列表页" : "文章详情页",
+          html: p.html,
+          sortOrder: i,
+        })),
+        contentConfig: payload.contentConfig,
+      }),
     })
     if (!res.ok) return
     const saved = await res.json()
@@ -64,45 +90,50 @@ export default function ThemesPage() {
     )
   }
 
-  async function handleConfigSaved(config: ContentConfig) {
-    if (!configEditThemeId) return
-    const res = await fetch(`/api/themes/${configEditThemeId}`, {
+  async function handlePageSaved(themeId: string, page: ThemePage | null, html: string) {
+    if (!page) {
+      // 编辑共享布局
+      const res = await fetch(`/api/themes/${themeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ layoutHtml: html }),
+      })
+      if (!res.ok) return
+      const saved = await res.json()
+      setThemes((prev) => prev.map((t) => (t.id === themeId ? saved : t)))
+      setHtmlEdit(null)
+      return
+    }
+    const res = await fetch(`/api/themes/${themeId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pages: [
+          {
+            type: page.type,
+            route: page.route,
+            name: page.name,
+            html,
+          },
+        ],
+      }),
+    })
+    if (!res.ok) return
+    const saved = await res.json()
+    setThemes((prev) => prev.map((t) => (t.id === themeId ? saved : t)))
+    setHtmlEdit(null)
+  }
+
+  async function handleConfigSaved(theme: Theme, page: ThemePage | null, config: ContentConfig) {
+    const res = await fetch(`/api/themes/${theme.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contentConfig: JSON.stringify(config) }),
     })
     if (!res.ok) return
-    setThemes((prev) =>
-      prev.map((t) =>
-        t.id === configEditThemeId ? { ...t, contentConfig: config } : t
-      )
-    )
-    setConfigEditThemeId(null)
-  }
-
-  async function handleHtmlSaved(html: string) {
-    if (!htmlEditThemeId) return
-    const res = await fetch(`/api/themes/${htmlEditThemeId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ html }),
-    })
-    if (!res.ok) return
     const saved = await res.json()
-    setThemes((prev) =>
-      prev.map((t) =>
-        t.id === htmlEditThemeId
-          ? {
-              ...t,
-              html: saved.html,
-              contentConfig: saved.contentConfig
-                ? JSON.parse(saved.contentConfig)
-                : t.contentConfig,
-            }
-          : t
-      )
-    )
-    setHtmlEditThemeId(null)
+    setThemes((prev) => prev.map((t) => (t.id === theme.id ? saved : t)))
+    setConfigEdit(null)
   }
 
   const activeTheme = themes.find((t) => t.isActive)
@@ -115,7 +146,7 @@ export default function ThemesPage() {
           <div>
             <h1 className="text-xl font-semibold text-[#1C1C1E]">主题管理</h1>
             <p className="mt-1 text-sm text-[#6B7280]">
-              通过自然语言描述生成博客主题并预览
+              通过自然语言描述生成博客主题并预览（每个页面一行管理）
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -212,73 +243,110 @@ export default function ThemesPage() {
                   </div>
                 )}
 
-                {/* Thumbnail */}
-                <div className="h-40 overflow-hidden border-b border-black/[0.06] bg-[#F5F4F1]">
-                  <iframe
-                    srcDoc={theme.html}
-                    sandbox="allow-scripts"
-                    className="pointer-events-none h-[600px] w-full origin-top scale-[0.42] transform"
-                    title={theme.name}
-                  />
+                {/* Info */}
+                <div className="px-4 pt-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-[#1C1C1E]">
+                        {theme.name}
+                      </p>
+                      <p className="mt-0.5 text-xs text-[#6B7280]">
+                        {theme.createdAt
+                          ? new Date(theme.createdAt).toLocaleDateString("zh-CN")
+                          : ""}
+                      </p>
+                    </div>
+                    <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      {!theme.isActive && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => handleActivate(theme.id)}
+                          title="设为主题"
+                        >
+                          <CheckCircle2 className="size-3.5" />
+                        </Button>
+                      )}
+                      {!theme.isActive && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => handleDelete(theme.id)}
+                          className="text-red-400 hover:text-red-500"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
-                {/* Info */}
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <p className="text-sm font-medium text-[#1C1C1E]">
-                      {theme.name}
-                    </p>
-                    <p className="text-xs text-[#6B7280]">
-                      {theme.createdAt
-                        ? new Date(theme.createdAt).toLocaleDateString("zh-CN")
-                        : ""}
-                    </p>
-                  </div>
-                  <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    {!theme.isActive && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleActivate(theme.id)}
-                        title="设为主题"
-                      >
-                        <CheckCircle2 className="size-3.5" />
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setPreviewHtml(theme.html)}
+                {/* Page rows */}
+                <div className="mt-3 flex flex-col border-t border-black/[0.06]">
+                  {theme.pages.map((page) => (
+                    <div
+                      key={page.id}
+                      className="flex items-center justify-between border-b border-black/[0.04] px-4 py-2 last:border-b-0"
                     >
-                      <Eye className="size-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setHtmlEditThemeId(theme.id)}
-                      title="编辑HTML"
-                    >
-                      <Code className="size-3.5" />
-                    </Button>
-                    {theme.contentConfig && (
+                      <span className="text-xs font-medium text-[#1C1C1E]">
+                        {page.name}
+                      </span>
+                      <div className="flex gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setPreview({ theme, page })}
+                          title="预览页面"
+                        >
+                          <Eye className="size-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setHtmlEdit({ theme, page })}
+                          title="编辑HTML"
+                        >
+                          <Code className="size-3" />
+                        </Button>
+                        {page.contentConfig && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setConfigEdit({ theme, page })}
+                            title="内容配置"
+                          >
+                            <Settings className="size-3" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Layout / styles row */}
+                  <div className="flex items-center justify-between bg-[#F5F4F1] px-4 py-2">
+                    <span className="text-xs font-medium text-[#6B7280]">
+                      共享布局 / 样式
+                    </span>
+                    <div className="flex gap-0.5">
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => setConfigEditThemeId(theme.id)}
+                        onClick={() => setHtmlEdit({ theme, page: null })}
+                        title="编辑共享布局与样式"
                       >
-                        <Settings className="size-3.5" />
+                        <LayoutTemplate className="size-3" />
                       </Button>
-                    )}
-                    {!theme.isActive && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleDelete(theme.id)}
-                        className="text-red-400 hover:text-red-500"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    )}
+                      {theme.contentConfig && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setConfigEdit({ theme, page: null })}
+                          title="内容配置"
+                        >
+                          <Settings className="size-3" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -295,52 +363,75 @@ export default function ThemesPage() {
       />
 
       {/* Content config editor */}
-      {configEditTheme && (
+      {configEdit && (
         <ContentEditorDialog
           open={true}
-          onOpenChange={() => setConfigEditThemeId(null)}
-          htmlTemplate={configEditTheme.html}
-          initialConfig={configEditTheme.contentConfig ?? {}}
-          onSave={handleConfigSaved}
+          onOpenChange={() => setConfigEdit(null)}
+          htmlTemplate={
+            configEdit.page
+              ? `${configEdit.theme.layoutHtml}<div data-page-host="">${configEdit.page.html}</div>`
+              : configEdit.theme.layoutHtml
+          }
+          initialConfig={
+            configEdit.page?.contentConfig ??
+            configEdit.theme.contentConfig ??
+            {}
+          }
+          onSave={(config) =>
+            handleConfigSaved(configEdit.theme, configEdit.page, config)
+          }
         />
       )}
 
       {/* HTML source editor */}
-      {htmlEditTheme && (
+      {htmlEdit && (
         <HtmlEditorDialog
           open={true}
-          onOpenChange={() => setHtmlEditThemeId(null)}
-          html={htmlEditTheme.html}
-          contentConfig={htmlEditTheme.contentConfig}
-          onSave={handleHtmlSaved}
+          onOpenChange={() => setHtmlEdit(null)}
+          html={
+            htmlEdit.page
+              ? htmlEdit.page.html
+              : htmlEdit.theme.layoutHtml
+          }
+          layoutHtml={htmlEdit.theme.layoutHtml}
+          isLayout={htmlEdit.page === null}
+          contentConfig={
+            htmlEdit.page?.contentConfig ??
+            htmlEdit.theme.contentConfig
+          }
+          onSave={(html) =>
+            handlePageSaved(htmlEdit.theme.id, htmlEdit.page, html)
+          }
         />
       )}
 
       {/* Full preview modal */}
-      {previewHtml && (
+      {preview && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
-          onClick={() => setPreviewHtml(null)}
+          onClick={() => setPreview(null)}
         >
           <div
             className="mx-4 flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
-              <span className="text-sm font-medium text-[#1C1C1E]">主题预览</span>
+              <span className="text-sm font-medium text-[#1C1C1E]">
+                {preview.theme.name} · {preview.page.name}
+              </span>
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setPreviewHtml(null)}
+                onClick={() => setPreview(null)}
               >
                 关闭
               </Button>
             </div>
             <iframe
-              srcDoc={previewHtml}
+              srcDoc={`${preview.theme.layoutHtml}<div data-page-host="">${preview.page.html}</div>`}
               sandbox="allow-scripts"
               className="flex-1"
-              title="主题预览"
+              title="页面预览"
             />
           </div>
         </div>
