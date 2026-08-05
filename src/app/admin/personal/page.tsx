@@ -21,6 +21,8 @@ export default function PersonalPage() {
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{success: boolean; message: string} | null>(null)
 
   useEffect(() => {
     fetch("/api/llm-config")
@@ -49,6 +51,24 @@ export default function PersonalPage() {
       setSaving(false)
     }
   }, [config])
+
+  const handleTest = useCallback(async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res = await fetch("/api/llm-config/test", {
+        method: "POST",
+      })
+      const data = await res.json()
+      setTestResult(data)
+      setTimeout(() => setTestResult(null), 2000)
+    } catch {
+      setTestResult({ success: false, message: "网络请求失败" })
+      setTimeout(() => setTestResult(null), 2000)
+    } finally {
+      setTesting(false)
+    }
+  }, [])
 
   function updateValue(key: keyof LLMConfig, value: string) {
     setConfig((prev) => ({ ...prev, [key]: value }))
@@ -158,6 +178,23 @@ export default function PersonalPage() {
             )}
             保存配置
           </Button>
+          <Button
+            onClick={handleTest}
+            disabled={testing}
+            variant="outline"
+          >
+            {testing ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Bot className="size-4" />
+            )}
+            测试连接
+          </Button>
+          {testResult && (
+            <span className={`text-sm ${testResult.success ? 'text-green-600' : 'text-red-600'} animate-in fade-in`}>
+              {testResult.message}
+            </span>
+          )}
           {success && (
             <span className="text-sm text-green-600 animate-in fade-in">
               已保存
