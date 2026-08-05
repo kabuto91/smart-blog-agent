@@ -21,26 +21,50 @@ export function buildCustomPageSection(
   route: string,
   generatedHtml: string
 ): string {
-  const genDom = new JSDOM(generatedHtml)
-  const genDoc = genDom.window.document
+  const normalizedRoute = normalizeRoute(route)
 
-  const styles = Array.from(genDoc.querySelectorAll("style"))
-    .map((s) => s.outerHTML)
-    .join("")
+  // 尝试解析生成的 HTML
+  const dom = new JSDOM(generatedHtml)
+  const doc = dom.window.document
 
-  for (const selector of ["header", "footer", "nav"]) {
-    for (const el of Array.from(genDoc.querySelectorAll(selector))) {
-      el.remove()
+  // 检查是否是完整的 HTML 页面（包含 DOCTYPE 或 html 标签）
+  const isFullPage = doc.doctype !== null || doc.querySelector("html") !== null
+
+  if (isFullPage) {
+    // 向后兼容：旧格式（完整 HTML 页面）
+    // 提取样式
+    const styles = Array.from(doc.querySelectorAll("style"))
+      .map((s) => s.outerHTML)
+      .join("")
+
+    // 删除 header、footer、nav
+    for (const selector of ["header", "footer", "nav"]) {
+      for (const el of Array.from(doc.querySelectorAll(selector))) {
+        el.remove()
+      }
     }
+
+    const bodyInner = doc.body?.innerHTML ?? ""
+
+    const sectionDom = new JSDOM("<!DOCTYPE html><body></body>")
+    const section = sectionDom.window.document.createElement("section")
+    section.setAttribute("data-route", normalizedRoute)
+    section.innerHTML = `${styles}${bodyInner}`
+    return section.outerHTML
   }
 
-  const bodyInner = genDoc.body?.innerHTML ?? ""
+  // 新格式：只生成了内容区域
+  // 获取根元素（section 或 div）
+  const root = doc.body?.firstElementChild
 
-  const dom = new JSDOM("<!DOCTYPE html><body></body>")
-  const section = dom.window.document.createElement("section")
-  section.setAttribute("data-route", normalizeRoute(route))
-  section.innerHTML = `${styles}${bodyInner}`
-  return section.outerHTML
+  if (root) {
+    // 如果根元素已经是 section 或 div，直接添加 data-route 属性
+    root.setAttribute("data-route", normalizedRoute)
+    return root.outerHTML
+  }
+
+  // 兜底：包装在 section 中
+  return `<section data-route="${normalizedRoute}">${generatedHtml}</section>`
 }
 
 export function insertCustomPageSection(

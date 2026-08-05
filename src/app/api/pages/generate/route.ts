@@ -26,14 +26,26 @@ function pageNameFromUrl(url: string): string {
 
 function buildPrompt(url: string, themeHtml: string): string {
   const name = pageNameFromUrl(url)
-  return `请为链接 ${url || "/"} 生成对应的页面（路径解析为「${name}」）。根据链接路径推断页面用途并设计合适的页面内容，用中文填充内容。
+  return `请为链接 ${url || "/"} 生成对应的页面内容区域（路径解析为「${name}」）。根据链接路径推断页面用途并设计合适的页面内容，用中文填充内容。
+
+【重要】你只需要输出页面的正文内容 HTML，不要包含：
+- 不要包含 <!DOCTYPE html>、<html>、<head>、<body> 标签
+- 不要包含 <style> 标签或任何 CSS 样式定义
+- 不要包含 <header>、<footer>、<nav> 等导航元素（这些由主题统一提供）
+
+输出格式：
+直接输出一个 <section> 或 <div> 包裹的内容区域，例如：
+<section class="custom-page">
+  <h1>页面标题</h1>
+  <p>页面内容...</p>
+</section>
 
 要求：
-1. 严格遵循下面当前主题 HTML 的视觉风格（配色、字体、排版、间距、背景质感、动效与微交互等），使新页面与主题融为一体，不要另起炉灶。
-2. 只生成该页面独有的正文内容，不要重复生成导航（nav）、页脚（footer）和页头（header），这些会由主题统一提供。
-3. 直接输出完整的 HTML 页面（包含 <!DOCTYPE html>、<head> 内联样式、<body> 内容）。
+1. 严格遵循下面当前主题 HTML 的视觉风格（配色、字体、排版、间距、背景质感、动效与微交互等），使新页面与主题融为一体。
+2. 使用主题 HTML 中已有的 CSS 类名来保持视觉风格一致。
+3. 可以使用 data-content 属性标记可编辑的文本区域。
 
-当前主题 HTML：
+当前主题 HTML 结构参考：
 \`\`\`html
 ${themeHtml}
 \`\`\``
