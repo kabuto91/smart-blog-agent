@@ -2,7 +2,7 @@ import { StateGraph, Annotation, START, END, MemorySaver } from "@langchain/lang
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt"
 import { AIMessage, SystemMessage } from "@langchain/core/messages"
 import type { BaseMessage } from "@langchain/core/messages"
-import { createLLM } from "@/lib/llm"
+import { createLLM } from "@/lib/llm/client"
 import { getCurrentTimeTool } from "./tools/example"
 import { callExternalApiTool } from "./tools/api-integration"
 import { searchImageTool } from "./tools/image-search"

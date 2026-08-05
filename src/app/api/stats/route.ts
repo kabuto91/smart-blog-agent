@@ -1,4 +1,4 @@
-import { getSiteStats } from "@/lib/stats"
+import { getSiteStats } from "@/lib/db/stats"
 import { STAT_KEYS, STAT_FIELDS } from "@/lib/field-registry"
 
 export const runtime = "nodejs"

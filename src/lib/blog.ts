@@ -1,13 +1,13 @@
 import { renderMarkdown } from "./markdown"
-import { getActiveTheme } from "./theme"
+import { getActiveTheme } from "./theme/theme"
 import { getSiteConfig } from "./site-config"
-import { renderContent } from "./content-renderer"
+import { renderContent } from "./theme/content-renderer"
 import type {
   ArticleData,
   CategoryData,
   TagData,
   DynamicData,
-} from "./content-renderer"
+} from "./theme/content-renderer"
 import type { ContentConfig } from "./types/content-config"
 import type {
   ArticleListItem,

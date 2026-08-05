@@ -1,7 +1,7 @@
-import { getActiveTheme } from "@/lib/theme"
+import { getActiveTheme } from "@/lib/theme/theme"
 import { getSiteConfig } from "@/lib/site-config"
-import { renderCustomPage } from "@/lib/content-renderer"
-import { getCustomRoutes, normalizeRoute } from "@/lib/custom-pages"
+import { renderCustomPage } from "@/lib/theme/content-renderer"
+import { getCustomRoutes, normalizeRoute } from "@/lib/theme/custom-pages"
 import { blogNotFoundHtml, blogNotConfiguredHtml } from "@/lib/blog"
 
 export const runtime = "nodejs"

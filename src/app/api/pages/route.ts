@@ -1,10 +1,10 @@
-import { getActiveTheme, updateTheme } from "@/lib/theme"
+import { getActiveTheme, updateTheme } from "@/lib/theme/theme"
 import {
   buildCustomPageSection,
   insertCustomPageSection,
   mergeContentConfig,
   normalizeRoute,
-} from "@/lib/custom-pages"
+} from "@/lib/theme/custom-pages"
 
 export const runtime = "nodejs"
 

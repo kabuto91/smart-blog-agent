@@ -1,4 +1,4 @@
-import { prisma } from "./db"
+import { prisma } from "../db/client"
 import type { ThemeMessage, ThemeSession } from "@/generated/prisma/client"
 
 export type { ThemeMessage, ThemeSession }

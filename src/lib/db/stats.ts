@@ -1,4 +1,4 @@
-import { prisma } from "./db"
+import { prisma } from "./client"
 
 export async function getSiteStats() {
   const stats = await prisma.siteStats.upsert({

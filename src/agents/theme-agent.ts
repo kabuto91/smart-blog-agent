@@ -1,4 +1,4 @@
-import { createLLM } from "@/lib/llm"
+import { createLLM } from "@/lib/llm/client"
 import { StateGraph, Annotation, START, END } from "@langchain/langgraph"
 import { ToolNode, toolsCondition } from "@langchain/langgraph/prebuilt"
 import { SystemMessage } from "@langchain/core/messages"

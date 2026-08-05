@@ -1,6 +1,6 @@
 import { getArticles, getCategories, getTags } from "@/lib/articles"
-import { getActiveTheme } from "@/lib/theme"
-import { getCustomRoutes } from "@/lib/content-renderer"
+import { getActiveTheme } from "@/lib/theme/theme"
+import { getCustomRoutes } from "@/lib/theme/content-renderer"
 
 export interface UrlOption {
   url: string

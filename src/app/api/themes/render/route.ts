@@ -1,4 +1,4 @@
-import { renderContent } from "@/lib/content-renderer"
+import { renderContent } from "@/lib/theme/content-renderer"
 import { getSiteConfig } from "@/lib/site-config"
 import type { ContentConfig } from "@/lib/types/content-config"
 

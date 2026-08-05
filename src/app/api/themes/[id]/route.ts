@@ -1,5 +1,5 @@
-import { deleteTheme, getThemeById } from "@/lib/theme"
-import { prisma } from "@/lib/db"
+import { deleteTheme, getThemeById } from "@/lib/theme/theme"
+import { prisma } from "@/lib/db/client"
 
 export const runtime = "nodejs"
 

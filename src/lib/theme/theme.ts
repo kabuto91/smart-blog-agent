@@ -1,5 +1,5 @@
-import { prisma } from "./db"
-import type { ContentConfig } from "./types/content-config"
+import { prisma } from "../db/client"
+import type { ContentConfig } from "../types/content-config"
 
 export interface ThemeData {
   id: string

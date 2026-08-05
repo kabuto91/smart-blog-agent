@@ -1,4 +1,4 @@
-import { getThemes, saveTheme } from "@/lib/theme"
+import { getThemes, saveTheme } from "@/lib/theme/theme"
 
 export const runtime = "nodejs"
 

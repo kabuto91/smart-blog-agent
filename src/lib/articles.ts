@@ -1,5 +1,5 @@
-import { prisma } from "./db"
-import { setArticleCount } from "./stats"
+import { prisma } from "./db/client"
+import { setArticleCount } from "./db/stats"
 import type { Prisma } from "@/generated/prisma/client"
 
 export interface CategoryMeta {

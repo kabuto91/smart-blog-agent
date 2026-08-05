@@ -1,12 +1,12 @@
 import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
 import { HumanMessage } from "@langchain/core/messages"
-import { getActiveTheme } from "@/lib/theme"
-import { extractContentConfig } from "@/lib/content-extractor"
+import { getActiveTheme } from "@/lib/theme/theme"
+import { extractContentConfig } from "@/lib/theme/content-extractor"
 import {
   ensureAvatarOverflow,
   renderCustomPagePreview,
-} from "@/lib/content-renderer"
-import { buildCustomPageSection, insertCustomPageSection } from "@/lib/custom-pages"
+} from "@/lib/theme/content-renderer"
+import { buildCustomPageSection, insertCustomPageSection } from "@/lib/theme/custom-pages"
 import { getSiteConfig } from "@/lib/site-config"
 import type { ContentConfig } from "@/lib/types/content-config"
 import { createThemeAgent, extractHtmlFromContent } from "@/agents/theme-agent"

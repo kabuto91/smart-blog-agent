@@ -1,4 +1,4 @@
-import { activateTheme } from "@/lib/theme"
+import { activateTheme } from "@/lib/theme/theme"
 
 export const runtime = "nodejs"
 

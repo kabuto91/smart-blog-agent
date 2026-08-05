@@ -1,4 +1,4 @@
-import { getUrlOptions } from "@/lib/url-options"
+import { getUrlOptions } from "@/lib/theme/url-options"
 
 export const runtime = "nodejs"
 

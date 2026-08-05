@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom"
-import type { ContentConfig, TextField, DynamicField, NavField } from "./types/content-config"
-import { FIELD_DEFINITIONS } from "./field-registry"
+import type { ContentConfig, TextField, DynamicField, NavField } from "../types/content-config"
+import { FIELD_DEFINITIONS } from "../field-registry"
 
 export interface ExtractionResult {
   htmlTemplate: string

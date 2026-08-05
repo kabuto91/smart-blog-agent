@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom"
-import type { ContentConfig, DynamicField, NavField, TextField } from "./types/content-config"
-import { FIELD_DEFINITIONS } from "./field-registry"
+import type { ContentConfig, DynamicField, NavField, TextField } from "../types/content-config"
+import { FIELD_DEFINITIONS } from "../field-registry"
 import { normalizeRoute } from "./custom-pages"
 
 export interface ArticleData {

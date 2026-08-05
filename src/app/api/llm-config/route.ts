@@ -1,6 +1,6 @@
-import { prisma } from "@/lib/db"
+import { prisma } from "@/lib/db/client"
 import { encrypt, decrypt } from "@/lib/crypto"
-import { invalidateLLMConfigCache } from "@/lib/llm"
+import { invalidateLLMConfigCache } from "@/lib/llm/client"
 
 export const runtime = "nodejs"
 

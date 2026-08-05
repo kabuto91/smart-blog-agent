@@ -1,6 +1,6 @@
 import { ChatOpenAI } from "@langchain/openai"
-import { prisma } from "./db"
-import { decrypt } from "./crypto"
+import { prisma } from "../db/client"
+import { decrypt } from "../crypto"
 
 let cachedConfig: { baseUrl: string; model: string; apiKey: string } | null = null
 

@@ -1,4 +1,4 @@
-﻿import { createLLM } from "@/lib/llm"
+import { createLLM } from "@/lib/llm/client"
 import { HumanMessage } from "@langchain/core/messages"
 
 export const runtime = "nodejs"

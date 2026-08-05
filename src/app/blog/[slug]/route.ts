@@ -6,9 +6,9 @@ import {
   renderBlogTheme,
   blogNotFoundHtml,
 } from "@/lib/blog"
-import { getActiveTheme } from "@/lib/theme"
-import { getCustomRoutes, normalizeRoute } from "@/lib/custom-pages"
-import { renderCustomPage } from "@/lib/content-renderer"
+import { getActiveTheme } from "@/lib/theme/theme"
+import { getCustomRoutes, normalizeRoute } from "@/lib/theme/custom-pages"
+import { renderCustomPage } from "@/lib/theme/content-renderer"
 import { getSiteConfig } from "@/lib/site-config"
 
 export const runtime = "nodejs"

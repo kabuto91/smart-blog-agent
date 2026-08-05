@@ -1,4 +1,4 @@
-import { prisma } from "./db"
+import { prisma } from "./db/client"
 import { EDITABLE_KEYS, STAT_KEYS, STAT_FIELDS } from "./field-registry"
 
 export async function getSiteConfig(): Promise<Record<string, string>> {

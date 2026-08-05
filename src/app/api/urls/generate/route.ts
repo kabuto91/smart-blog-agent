@@ -1,5 +1,5 @@
-import { createLLM } from "@/lib/llm"
-import { getUrlOptions } from "@/lib/url-options"
+import { createLLM } from "@/lib/llm/client"
+import { getUrlOptions } from "@/lib/theme/url-options"
 
 export const runtime = "nodejs"
 
