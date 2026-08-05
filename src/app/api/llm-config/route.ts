@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db"
 import { encrypt, decrypt } from "@/lib/crypto"
+import { invalidateLLMConfigCache } from "@/lib/llm"
 
 export const runtime = "nodejs"
 
@@ -49,6 +50,8 @@ export async function PUT(request: Request) {
         apiKey: encryptedApiKey,
       },
     })
+
+    invalidateLLMConfigCache()
 
     return Response.json({ success: true })
   } catch (error) {
