@@ -61,10 +61,11 @@ export default function PersonalPage() {
       })
       const data = await res.json()
       setTestResult(data)
-      setTimeout(() => setTestResult(null), 2000)
+      const duration = data.success ? 2000 : 5000
+      setTimeout(() => setTestResult(null), duration)
     } catch {
       setTestResult({ success: false, message: "网络请求失败" })
-      setTimeout(() => setTestResult(null), 2000)
+      setTimeout(() => setTestResult(null), 5000)
     } finally {
       setTesting(false)
     }
