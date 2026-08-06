@@ -38,6 +38,7 @@ model ThemeMessage {
   role           String
   content        String
   htmlSnapshot   String?  @map("html_snapshot")
+  pageSnapshots  String?  @map("page_snapshots")
   contentConfig  String?  @map("content_config")
   createdAt      DateTime @default(now()) @map("created_at")
   session        ThemeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)

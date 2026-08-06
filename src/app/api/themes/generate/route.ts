@@ -1,11 +1,19 @@
-import { HumanMessage, AIMessage } from "@langchain/core/messages"
 import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
-import { getMessages, addMessage, getLatestHtml } from "@/lib/theme/theme-session"
+import { HumanMessage } from "@langchain/core/messages"
+import {
+  addMessage,
+  getLatestSnapshot,
+} from "@/lib/theme/theme-session"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
 import { ensureAvatarOverflow } from "@/lib/theme/content-renderer"
-import { splitGeneratedTheme } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
-import { createThemeAgent, extractHtmlFromContent } from "@/agents/theme-agent"
+import {
+  createSkeletonAgent,
+  createPageAgent,
+  buildPagePromptContext,
+  extractHtmlFromContent,
+  type ThemePageType,
+} from "@/agents/theme-agent"
 import { randomUUID } from "crypto"
 
 export const runtime = "nodejs"
@@ -13,128 +21,287 @@ export const runtime = "nodejs"
 interface GenerateRequest {
   conversationId?: string
   message: string
+  targetPage?: "skeleton" | ThemePageType
+}
+
+interface PageResult {
+  type: ThemePageType
+  html: string
+  contentConfig: string
+}
+
+const PAGE_TYPES: ThemePageType[] = ["home", "list", "detail"]
+
+function pageHtmlLabel(pageType: ThemePageType): string {
+  switch (pageType) {
+    case "home":
+      return "首页"
+    case "list":
+      return "文章列表页"
+    case "detail":
+      return "文章详情页"
+  }
+}
+
+type AgentGraph = Awaited<ReturnType<typeof createSkeletonAgent>>
+
+/** 流式运行一个 agent，把文本/工具事件转发到 SSE，并累计完整输出。 */
+async function runAgentStream(
+  graph: AgentGraph,
+  messages: { role: "user" | "assistant"; content: string }[],
+  page: "skeleton" | ThemePageType,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder
+): Promise<{ content: string; html: string }> {
+  const llmMessages = messages.map((m) =>
+    m.role === "user"
+      ? new HumanMessage(m.content)
+      : new HumanMessage(m.content)
+  )
+
+  const iterable = await graph.stream(
+    { messages: llmMessages },
+    { streamMode: "messages" }
+  )
+
+  let fullContent = ""
+  for await (const event of iterable) {
+    const chunk = event[0] as BaseMessage
+    if (chunk._getType() !== "ai") continue
+    const aiChunk = chunk as AIMessageChunk
+    const content = aiChunk.content
+
+    const send = (text: string) => {
+      fullContent += text
+      controller.enqueue(
+        encoder.encode(
+          `data: ${JSON.stringify({ type: "text", page, content: text })}\n\n`
+        )
+      )
+    }
+
+    if (typeof content === "string" && content) {
+      send(content)
+    } else if (Array.isArray(content)) {
+      for (const block of content as { type?: string; text?: string }[]) {
+        if (block.type === "text" && block.text) send(block.text)
+      }
+    }
+
+    if (aiChunk.tool_calls?.length) {
+      for (const tc of aiChunk.tool_calls) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "tool_call", page, name: tc.name, args: tc.args })}\n\n`
+          )
+        )
+      }
+    }
+  }
+
+  const html = extractHtmlFromContent(fullContent)
+  return { content: fullContent, html }
+}
+
+/** 把某页正文标准化：提取正文、防头像溢出，并生成其 contentConfig。 */
+async function extractPageResult(
+  pageType: ThemePageType,
+  rawHtml: string,
+  siteConfig: Record<string, string> | undefined
+): Promise<PageResult> {
+  let html = extractHtmlFromContent(rawHtml)
+  if (!html) html = rawHtml
+  html = ensureAvatarOverflow(html)
+  const result = extractContentConfig(html, siteConfig)
+  return {
+    type: pageType,
+    html: result.htmlTemplate,
+    contentConfig: JSON.stringify(result.contentConfig),
+  }
+}
+
+/** 运行单个页面 agent 并流式转发，返回该页结果。 */
+async function runPageAgent(
+  pageType: ThemePageType,
+  userMessage: string,
+  context: string,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  siteConfig: Record<string, string> | undefined
+): Promise<PageResult> {
+  const graph = await createPageAgent(pageType, context)
+  const { html } = await runAgentStream(
+    graph,
+    [{ role: "user", content: userMessage }],
+    pageType,
+    controller,
+    encoder
+  )
+  return extractPageResult(pageType, html, siteConfig)
 }
 
 export async function POST(request: Request) {
   try {
-    const { conversationId: providedId, message } = (await request.json()) as GenerateRequest
+    const { conversationId: providedId, message, targetPage } =
+      (await request.json()) as GenerateRequest
 
     if (!message?.trim()) {
       return Response.json({ error: "请输入消息内容" }, { status: 400 })
     }
 
     const conversationId = providedId || randomUUID()
-
-    // Save user message
     await addMessage(conversationId, "user", message)
 
-    // Load history messages
-    const historyMessages = await getMessages(conversationId)
-
-    // Get latest HTML for context
-    const latestHtml = await getLatestHtml(conversationId)
-
-    // Build LLM messages (the theme agent injects its own system prompt)
-    const llmMessages: (HumanMessage | AIMessage)[] = []
-
-    // Add history (skip the just-added user message)
-    const historyForLlm = historyMessages.slice(0, -1)
-    for (const msg of historyForLlm) {
-      if (msg.role === "user") {
-        llmMessages.push(new HumanMessage(msg.content))
-      } else if (msg.role === "assistant") {
-        // Include HTML context in assistant messages
-        const content = msg.htmlSnapshot
-          ? `${msg.content}\n\n之前生成的 HTML：\n\`\`\`html\n${msg.htmlSnapshot}\n\`\`\``
-          : msg.content
-        llmMessages.push(new AIMessage(content))
-      }
-    }
-
-    // Add current user message with HTML context if exists
-    let currentMessage = message
-    if (latestHtml) {
-      currentMessage = `${message}\n\n当前页面的 HTML：\n\`\`\`html\n${latestHtml}\n\`\`\``
-    }
-    llmMessages.push(new HumanMessage(currentMessage))
-
-    // Create streaming response
+    const snapshot = await getLatestSnapshot(conversationId)
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder()
 
         try {
-          const graph = await createThemeAgent()
+          const siteConfig = await getSiteConfig()
 
-          const streamIterable = await graph.stream(
-            { messages: llmMessages },
-            { streamMode: "messages" }
+          // 迭代场景：已有骨架，仅重生成目标页面。
+          if (snapshot?.layout && targetPage && targetPage !== "skeleton") {
+            const pageType = targetPage
+            const context = buildPagePromptContext(snapshot.layout)
+            const prev = snapshot.pages[pageType]
+            const userMessage = prev
+              ? `${message}\n\n当前「${pageHtmlLabel(pageType)}」正文状态：\n\`\`\`html\n${prev}\n\`\`\``
+              : message
+
+            const result = await runPageAgent(
+              pageType,
+              userMessage,
+              context,
+              controller,
+              encoder,
+              siteConfig
+            )
+
+            const nextPages: Record<string, string> = {
+              ...snapshot.pages,
+              [pageType]: result.html,
+            }
+            const layoutForMerge = ensureAvatarOverflow(snapshot.layout)
+            await addMessage(
+              conversationId,
+              "assistant",
+              userMessage,
+              layoutForMerge,
+              snapshot.contentConfig ?? undefined,
+              JSON.stringify(nextPages)
+            )
+
+            for (const t of PAGE_TYPES) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    type: "page",
+                    conversationId,
+                    page: {
+                      type: t,
+                      html: nextPages[t] ?? "",
+                      contentConfig: t === pageType ? result.contentConfig : "{}",
+                    },
+                  })}\n\n`
+                )
+              )
+            }
+
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "done",
+                  conversationId,
+                  layoutHtml: layoutForMerge,
+                  contentConfig: "{}",
+                })}\n\n`
+              )
+            )
+            return
+          }
+
+          // ---------- 骨架阶段 ----------
+          const skeletonGraph = await createSkeletonAgent()
+          const skeletonInput = [
+            { role: "user" as const, content: message },
+            ...(snapshot?.layout
+              ? [
+                  {
+                    role: "assistant" as const,
+                    content: `之前的骨架：\n\`\`\`html\n${snapshot.layout}\n\`\`\``,
+                  },
+                ]
+              : []),
+          ]
+          const skeletonOut = await runAgentStream(
+            skeletonGraph,
+            skeletonInput,
+            "skeleton",
+            controller,
+            encoder
+          )
+          if (!skeletonOut.html) {
+            throw new Error("骨架生成失败：未能提取 HTML")
+          }
+          const layoutHtml = ensureAvatarOverflow(skeletonOut.html)
+
+          // ---------- 并行页面阶段 ----------
+          const bodyContext = buildPagePromptContext(layoutHtml)
+          const pages = await Promise.all(
+            PAGE_TYPES.map((pt) =>
+              runPageAgent(pt, message, bodyContext, controller, encoder, siteConfig)
+            )
           )
 
-          let fullContent = ""
+          const pageMap: Record<string, string> = {}
+          const pageConfigMap: Record<string, string> = {}
+          for (const p of pages) {
+            pageMap[p.type] = p.html
+            pageConfigMap[p.type] = p.contentConfig
+          }
 
-          for await (const event of streamIterable) {
-            const messageChunk = event[0] as BaseMessage
+          await addMessage(
+            conversationId,
+            "assistant",
+            "已生成主题骨架与三个页面",
+            layoutHtml,
+            undefined,
+            JSON.stringify(pageMap)
+          )
 
-            if (messageChunk._getType() !== "ai") continue
-
-            const aiChunk = messageChunk as AIMessageChunk
-            const content = aiChunk.content
-
-            if (typeof content === "string" && content) {
-              fullContent += content
-              // Send each chunk to the client
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ type: "text", content })}\n\n`)
+          for (const t of PAGE_TYPES) {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({
+                  type: "page",
+                  conversationId,
+                  page: {
+                    type: t,
+                    html: pageMap[t] ?? "",
+                    contentConfig: pageConfigMap[t] ?? "{}",
+                  },
+                })}\n\n`
               )
-            } else if (Array.isArray(content)) {
-              for (const block of content) {
-                if (block.type === "text" && block.text) {
-                  fullContent += block.text
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ type: "text", content: block.text })}\n\n`)
-                  )
-                }
-              }
-            }
-
-            if (aiChunk.tool_calls?.length) {
-              for (const tc of aiChunk.tool_calls) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ type: "tool_call", name: tc.name, args: tc.args })}\n\n`)
-                )
-              }
-            }
+            )
           }
 
-          // Parse the complete content to extract HTML
-          const html = extractHtmlFromContent(fullContent)
-
-          // Extract content config from generated HTML (match against site config)
-          let contentConfigJson = ""
-          let layoutHtml = ""
-          let pages: { type: string; html: string }[] = []
-          if (html) {
-            const siteConfig = await getSiteConfig()
-            const result = extractContentConfig(html, siteConfig)
-            const normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
-            const split = splitGeneratedTheme(normalizedHtml)
-            layoutHtml = split.layoutHtml
-            pages = split.pages
-            contentConfigJson = JSON.stringify(result.contentConfig)
-          }
-
-          // Save assistant message with HTML snapshot and content config
-          await addMessage(conversationId, "assistant", fullContent, html, contentConfigJson)
-
-          // Send completion signal with conversation ID, layout and page bodies
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "done", conversationId, layoutHtml, pages, contentConfig: contentConfigJson })}\n\n`)
+            encoder.encode(
+              `data: ${JSON.stringify({
+                type: "done",
+                conversationId,
+                layoutHtml,
+                contentConfig: "{}",
+              })}\n\n`
+            )
           )
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : "未知错误"
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "error", error: errorMsg })}\n\n`)
+            encoder.encode(
+              `data: ${JSON.stringify({ type: "error", error: errorMsg })}\n\n`
+            )
           )
         } finally {
           controller.close()

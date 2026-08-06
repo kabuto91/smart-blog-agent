@@ -16,6 +16,7 @@ import { Loader2, Sparkles, Send, Trash2 } from "lucide-react"
 interface GeneratedPage {
   type: string
   html: string
+  contentConfig?: string
 }
 
 interface Message {
@@ -25,6 +26,8 @@ interface Message {
   layoutHtml?: string
   pages?: GeneratedPage[]
   contentConfig?: string
+  pageContents?: Record<string, string>
+  pagesDone?: string[]
   thinking?: string[]
   thinkingVisible?: boolean
 }
@@ -58,6 +61,7 @@ export function ThemeGenerateDialog({
   const [currentThinking, setCurrentThinking] = useState<string[]>([])
   const [toolStatus, setToolStatus] = useState("")
   const [activePageType, setActivePageType] = useState("home")
+  const [targetPage, setTargetPage] = useState<"skeleton" | "home" | "list" | "detail">("skeleton")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -88,7 +92,11 @@ export function ThemeGenerateDialog({
       const res = await fetch("/api/themes/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, message }),
+        body: JSON.stringify({
+          conversationId,
+          message,
+          targetPage,
+        }),
       })
 
       if (!res.ok) {
@@ -105,7 +113,8 @@ export function ThemeGenerateDialog({
         return
       }
 
-      let fullContent = ""
+      let pageContents: Record<string, string> = {}
+      const pendingPages: Record<string, GeneratedPage> = {}
       const assistantMsgId = crypto.randomUUID()
 
       // Create an empty assistant message to be updated during streaming
@@ -116,57 +125,89 @@ export function ThemeGenerateDialog({
           role: "assistant",
           content: "",
           thinkingVisible: false,
+          pageContents: {},
+          pagesDone: [],
         },
       ])
 
+      const updateMsg = (patch: Partial<Message>) =>
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMsgId ? { ...m, ...patch } : m))
+        )
+
+      const handleEvent = (data: string) => {
+        if (data === "[DONE]") return
+
+        try {
+          const event = JSON.parse(data)
+
+          if (event.type === "text") {
+            const page = (event.page as string) ?? "skeleton"
+            pageContents = {
+              ...pageContents,
+              [page]: (pageContents[page] ?? "") + event.content,
+            }
+            updateMsg({ pageContents: { ...pageContents } })
+          } else if (event.type === "page") {
+            const p = event.page as GeneratedPage
+            if (p?.type && typeof p.html === "string") {
+              pendingPages[p.type] = p
+            }
+          } else if (event.type === "done") {
+            setConversationId(event.conversationId)
+            const pages: GeneratedPage[] = PAGE_TABS.map((t) => {
+              const pending = pendingPages[t.type]
+              if (pending) return pending
+              const html = pageContents[t.type] ?? ""
+              return { type: t.type, html, contentConfig: "{}" }
+            })
+            updateMsg({
+              layoutHtml: event.layoutHtml,
+              pages,
+              contentConfig: event.contentConfig,
+              pageContents: pages.reduce(
+                (acc: Record<string, string>, p: GeneratedPage) => {
+                  acc[p.type] = p.html
+                  return acc
+                },
+                {}
+              ),
+              pagesDone: PAGE_TABS.map((t) => t.type),
+            })
+          } else if (event.type === "tool_call") {
+            const query = (event.args && typeof event.args === "object" && "query" in event.args
+              ? (event.args as { query?: string }).query
+              : undefined)
+            setToolStatus(query ? `正在搜索图片：${query}` : "正在搜索图片...")
+          } else if (event.type === "error") {
+            setError(event.error)
+          }
+        } catch {
+          // Skip invalid JSON lines
+        }
+      }
+
+      let buffer = ""
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split("\n")
+        buffer += decoder.decode(value, { stream: true })
 
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6)
-            if (data === "[DONE]") {
-              break
-            }
-
-            try {
-              const event = JSON.parse(data)
-
-              if (event.type === "text") {
-                fullContent += event.content
-                // Update the assistant message with the streamed content
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsgId ? { ...m, content: fullContent } : m
-                  )
-                )
-              } else if (event.type === "done") {
-                setConversationId(event.conversationId)
-                // Update the assistant message with layout and page bodies
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsgId
-                      ? { ...m, layoutHtml: event.layoutHtml, pages: event.pages, contentConfig: event.contentConfig }
-                      : m
-                  )
-                )
-              } else if (event.type === "tool_call") {
-                const query = (event.args && typeof event.args === "object" && "query" in event.args
-                  ? (event.args as { query?: string }).query
-                  : undefined)
-                setToolStatus(query ? `正在搜索图片：${query}` : "正在搜索图片...")
-              } else if (event.type === "error") {
-                setError(event.error)
-              }
-            } catch {
-              // Skip invalid JSON lines
-            }
-          }
+        let eventEnd: number
+        while ((eventEnd = buffer.indexOf("\n\n")) !== -1) {
+          const block = buffer.slice(0, eventEnd).trim()
+          buffer = buffer.slice(eventEnd + 2)
+          const data = block.startsWith("data: ") ? block.slice(6) : block
+          handleEvent(data)
         }
+      }
+
+      buffer += decoder.decode()
+      buffer = buffer.trim()
+      if (buffer) {
+        const data = buffer.startsWith("data: ") ? buffer.slice(6) : buffer
+        handleEvent(data)
       }
     } catch {
       setError("网络错误，请重试")
@@ -226,6 +267,7 @@ export function ThemeGenerateDialog({
     setInputValue("")
     setError("")
     setCurrentThinking([])
+    setTargetPage("skeleton")
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -278,14 +320,59 @@ export function ThemeGenerateDialog({
                     ) : (
                       <div className="flex flex-col gap-2">
                         {/* Streaming content */}
-                        {loading && !msg.layoutHtml && msg.content && (
+                        {loading && !msg.layoutHtml && (
                           <div className="ml-1">
                             <div className="flex items-center gap-1.5 text-xs text-[#6B7280]">
                               <span className="i-lucide-brain size-3" />
                               <span>正在生成...</span>
                             </div>
-                            <div className="mt-2 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280] whitespace-pre-wrap">
-                              {msg.content}
+                            {toolStatus && (
+                              <div className="mt-2 flex items-center gap-1.5 text-xs text-[#6B7280]">
+                                <Loader2 className="size-3 animate-spin" />
+                                <span>{toolStatus}</span>
+                              </div>
+                            )}
+                            <div className="mt-2 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
+                              <div className="flex flex-col gap-0.5 py-0.5">
+                                <div className="flex items-center gap-2">
+                                  {loading && !msg.pageContents?.["skeleton"] ? (
+                                    <Loader2 className="size-3 animate-spin" />
+                                  ) : (
+                                    <span className="text-[#16A34A]">✓</span>
+                                  )}
+                                  <span className="font-medium">骨架布局</span>
+                                  {msg.pageContents?.["skeleton"] && (
+                                    <span className="text-[#16A34A]">已生成</span>
+                                  )}
+                                </div>
+                              </div>
+                              {PAGE_TABS.map((tab) => {
+                                const content = msg.pageContents?.[tab.type] ?? ""
+                                const done = msg.pagesDone?.includes(tab.type)
+                                const running = loading && !done && content.length === 0
+                                return (
+                                  <div key={tab.type} className="flex flex-col gap-0.5 py-0.5">
+                                    <div className="flex items-center gap-2">
+                                      {done ? (
+                                        <span className="text-[#16A34A]">✓</span>
+                                      ) : running ? (
+                                        <Loader2 className="size-3 animate-spin" />
+                                      ) : (
+                                        <span className="text-[#E5A83D]">●</span>
+                                      )}
+                                      <span className="font-medium">
+                                        {tab.label}
+                                      </span>
+                                      {done && <span className="text-[#16A34A]">已生成</span>}
+                                    </div>
+                                    {content && (
+                                      <div className="mt-1 whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] leading-relaxed text-[#6B7280]">
+                                        {content.slice(-300)}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
                             </div>
                           </div>
                         )}
@@ -385,6 +472,29 @@ export function ThemeGenerateDialog({
             {/* Input area */}
             <div className="mt-4 border-t border-black/[0.06] pt-4">
               {error && <p className="mb-2 text-sm text-red-500">{error}</p>}
+
+              {messages.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[#6B7280]">修改范围：</span>
+                  {[
+                    { value: "skeleton", label: "整体" },
+                    ...PAGE_TABS.map((t) => ({ value: t.type, label: t.label })),
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setTargetPage(opt.value as typeof targetPage)}
+                      disabled={loading}
+                      className={`rounded-md px-2 py-0.5 text-xs transition-colors ${
+                        targetPage === opt.value
+                          ? "bg-[#E5A83D] text-[#181A1E]"
+                          : "text-[#6B7280] hover:bg-black/[0.04]"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <Textarea

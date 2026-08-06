@@ -16,12 +16,23 @@ export async function sessionExists(id: string): Promise<boolean> {
   return session !== null
 }
 
+export interface PageSnapshot {
+  /** 骨架/布局 HTML（含 <head> 样式、导航、页脚）。 */
+  layout: string | null
+  /** 各页面正文 HTML，key 为页面类型（home/list/detail）。 */
+  pages: Record<string, string>
+  /** pageSnapshots 列原始 JSON。 */
+  pagesJson: string | null
+  contentConfig: string | null
+}
+
 export async function addMessage(
   sessionId: string,
   role: ThemeMessage["role"],
   content: string,
   htmlSnapshot?: string,
-  contentConfig?: string
+  contentConfig?: string,
+  pageSnapshots?: string
 ): Promise<void> {
   // Ensure session exists
   const exists = await sessionExists(sessionId)
@@ -35,6 +46,7 @@ export async function addMessage(
       role,
       content,
       htmlSnapshot: htmlSnapshot || null,
+      pageSnapshots: pageSnapshots || null,
       contentConfig: contentConfig || null,
     },
   })
@@ -64,6 +76,35 @@ export async function getLatestHtml(sessionId: string): Promise<string | null> {
     select: { htmlSnapshot: true },
   })
   return message?.htmlSnapshot ?? null
+}
+
+/** 取最近一次含骨架/页面快照的消息，用于迭代时把签名上下文回填给页面 agent。 */
+export async function getLatestSnapshot(
+  sessionId: string
+): Promise<PageSnapshot | null> {
+  const message = await prisma.themeMessage.findFirst({
+    where: {
+      sessionId,
+      OR: [{ htmlSnapshot: { not: null } }, { pageSnapshots: { not: null } }],
+    },
+    orderBy: { id: "desc" },
+    select: { htmlSnapshot: true, pageSnapshots: true, contentConfig: true },
+  })
+  if (!message) return null
+  let pages: Record<string, string> = {}
+  if (message.pageSnapshots) {
+    try {
+      pages = JSON.parse(message.pageSnapshots) as Record<string, string>
+    } catch {
+      pages = {}
+    }
+  }
+  return {
+    layout: message.htmlSnapshot ?? null,
+    pages,
+    pagesJson: message.pageSnapshots ?? null,
+    contentConfig: message.contentConfig ?? null,
+  }
 }
 
 export async function getLatestContentConfig(sessionId: string): Promise<string | null> {

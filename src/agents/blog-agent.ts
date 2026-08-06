@@ -5,7 +5,6 @@ import type { BaseMessage } from "@langchain/core/messages"
 import { createLLM } from "@/lib/llm/client"
 import { getCurrentTimeTool } from "./tools/example"
 import { callExternalApiTool } from "./tools/api-integration"
-import { searchImageTool } from "./tools/image-search"
 
 const SYSTEM_PROMPT = `你是一个智能博客助手 Agent，可以帮助用户：
 1. 获取当前时间
@@ -16,7 +15,6 @@ const SYSTEM_PROMPT = `你是一个智能博客助手 Agent，可以帮助用户
 const tools = [
   getCurrentTimeTool,
   callExternalApiTool,
-  searchImageTool,
 ]
 
 const StateAnnotation = Annotation.Root({

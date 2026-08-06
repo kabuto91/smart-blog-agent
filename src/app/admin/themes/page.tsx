@@ -30,6 +30,7 @@ interface Theme {
 interface GeneratedPage {
   type: string
   html: string
+  contentConfig?: string
 }
 
 export default function ThemesPage() {
@@ -66,6 +67,7 @@ export default function ThemesPage() {
           type: p.type,
           name: p.type === "home" ? "首页" : p.type === "list" ? "文章列表页" : "文章详情页",
           html: p.html,
+          contentConfig: p.contentConfig,
           sortOrder: i,
         })),
         contentConfig: payload.contentConfig,
