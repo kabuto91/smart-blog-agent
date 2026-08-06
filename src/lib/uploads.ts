@@ -24,6 +24,8 @@ export async function saveUpload(
   mimeType: string,
   data: string
 ): Promise<UploadData> {
+  const existing = await prisma.upload.findFirst({ where: { filename } })
+  if (existing) return existing
   const size = Buffer.byteLength(data, "base64")
   const upload = await prisma.upload.create({
     data: { filename, mimeType, size, data },

@@ -262,12 +262,16 @@ export function ThemeGenerateDialog({
   }
 
   function reset() {
+    const id = conversationId
     setConversationId(null)
     setMessages([])
     setInputValue("")
     setError("")
     setCurrentThinking([])
     setTargetPage("skeleton")
+    if (id) {
+      fetch(`/api/themes/sessions/${id}`, { method: "DELETE" }).catch(() => {})
+    }
   }
 
   function handleOpenChange(nextOpen: boolean) {
