@@ -7,6 +7,7 @@ import { ContentEditorDialog } from "@/components/admin/content-editor-dialog"
 import { HtmlEditorDialog } from "@/components/admin/html-editor-dialog"
 import { Plus, Palette, Trash2, Eye, Settings, CheckCircle2, ExternalLink, Loader2, Code, LayoutTemplate } from "lucide-react"
 import type { ContentConfig } from "@/lib/types/content-config"
+import { injectPageIntoLayout } from "@/lib/theme/layout-inject"
 
 interface ThemePage {
   id: string
@@ -371,7 +372,10 @@ export default function ThemesPage() {
           onOpenChange={() => setConfigEdit(null)}
           htmlTemplate={
             configEdit.page
-              ? `${configEdit.theme.layoutHtml}<div data-page-host="">${configEdit.page.html}</div>`
+              ? injectPageIntoLayout(
+                  configEdit.theme.layoutHtml,
+                  configEdit.page.html
+                )
               : configEdit.theme.layoutHtml
           }
           initialConfig={
@@ -430,7 +434,10 @@ export default function ThemesPage() {
               </Button>
             </div>
             <iframe
-              srcDoc={`${preview.theme.layoutHtml}<div data-page-host="">${preview.page.html}</div>`}
+              srcDoc={injectPageIntoLayout(
+                preview.theme.layoutHtml,
+                preview.page.html
+              )}
               sandbox="allow-scripts"
               className="flex-1"
               title="页面预览"

@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Loader2, Sparkles, Send, Trash2 } from "lucide-react"
+import { injectPageIntoLayout } from "@/lib/theme/layout-inject"
 
 interface GeneratedPage {
   type: string
@@ -236,13 +237,7 @@ export function ThemeGenerateDialog({
     const page =
       msg.pages?.find((p) => p.type === activePageType) ?? msg.pages?.[0]
     if (!page) return layout
-    // 把页正文插入布局中的占位节点
-    const placeholder = `<div data-page-host=""></div>`
-    if (layout.includes(placeholder)) {
-      return layout.replace(placeholder, `<div data-page-host="">${page.html}</div>`)
-    }
-    // 兜底：直接拼接在 </body> 前
-    return layout.replace("</body>", `<div data-page-host="">${page.html}</div></body>`)
+    return injectPageIntoLayout(layout, page.html)
   }
 
   function handleSave(payload: {
