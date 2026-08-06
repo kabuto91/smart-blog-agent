@@ -374,7 +374,8 @@ export default function ThemesPage() {
             configEdit.page
               ? injectPageIntoLayout(
                   configEdit.theme.layoutHtml,
-                  configEdit.page.html
+                  configEdit.page.html,
+                  { navClearance: configEdit.page.type !== "home" }
                 )
               : configEdit.theme.layoutHtml
           }
@@ -436,7 +437,8 @@ export default function ThemesPage() {
             <iframe
               srcDoc={injectPageIntoLayout(
                 preview.theme.layoutHtml,
-                preview.page.html
+                preview.page.html,
+                { navClearance: preview.page.type !== "home" }
               )}
               sandbox="allow-scripts"
               className="flex-1"

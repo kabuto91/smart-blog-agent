@@ -180,7 +180,7 @@ const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计师，任
 【骨架应包含】
 1. <head> 中的完整 <style>：这是整站设计系统，所有页面共享。
    - 用 CSS 变量（:root）统一管理配色、字体、字号阶梯、行高、间距、圆角、阴影、动效参数
-   - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、标签等
+   - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body/.article-cover）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
 2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
@@ -221,7 +221,8 @@ const PAGE_SPEC: Record<
   <span data-map="category">分类</span>
   <div data-map="body">这里会被渲染后的正文替换</div>
 </article>
-详情页只会保留导航、页脚与该正文区域（侧边栏、列表会被隐藏），因此正文不要写侧边栏。`,
+详情页只会保留导航、页脚与该正文区域（侧边栏、列表会被隐藏），因此正文不要写侧边栏。
+标题/排版/容器直接用骨架已有的类（如 .container/.article-header/.article-body/.post-title）；不要自建 .article-hero 之类的独立类。`,
   },
 }
 
@@ -251,7 +252,12 @@ export function buildPagePromptContext(skeletonHtml: string): string {
   if (navLinks.length) {
     parts.push(`骨架导航链接（在正文中复用，保证路由一致）：\n${navLinks.join("\n")}`)
   }
-  parts.push(`注意：<head>、<style>、导航 <nav>、页脚 <footer> 均由骨架统一提供，正文部分【不要】输出这些，只输出 body 内的页面正文。`)
+  parts.push(`硬性约束（必须严格遵守）：
+- 只输出 body 内的页面正文，不要输出 <!DOCTYPE html>、<html>、<head>、<body>；
+- 不要输出任何 <style>、<script>、<link>、<meta>、<title> 标签；
+- 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；
+- 正文的类名必须从骨架的 CSS 类库中选取，不要自创独立的页面类名或设计系统，否则会失去样式；
+- 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已统一处理该间距。`)
   return parts.join("\n\n")
 }
 

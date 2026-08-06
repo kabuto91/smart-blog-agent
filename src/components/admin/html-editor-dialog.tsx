@@ -96,7 +96,7 @@ export function HtmlEditorDialog({
         if (!isLayout && layoutHtml) {
           template = layoutHtml.replace(
             `<div data-page-host=""></div>`,
-            `<div data-page-host="">${value}</div>`
+            `<div data-page-host="" style="padding-top:var(--nav-h,0px)">${value}</div>`
           )
         }
         const res = await fetch("/api/themes/render", {
@@ -256,7 +256,7 @@ export function HtmlEditorDialog({
                 </span>
               </div>
               <iframe
-                srcDoc={previewHtml || (isLayout ? html : layoutHtml ? layoutHtml.replace(`<div data-page-host=""></div>`, `<div data-page-host="">${html}</div>`) : html)}
+                srcDoc={previewHtml || (isLayout ? html : layoutHtml ? layoutHtml.replace(`<div data-page-host=""></div>`, `<div data-page-host="" style="padding-top:var(--nav-h,0px)">${html}</div>`) : html)}
                 sandbox="allow-scripts"
                 className="flex-1"
                 title="源码预览"

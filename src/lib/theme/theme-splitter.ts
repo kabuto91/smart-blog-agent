@@ -53,7 +53,8 @@ export function splitGeneratedTheme(fullHtml: string): SplitResult {
 /** 根据布局占位标记拼装完整页面 HTML（正文插入占位处）。 */
 export function mergeThemePage(
   layoutHtml: string,
-  pageHtml: string
+  pageHtml: string,
+  options?: { navClearance?: boolean }
 ): string {
   const dom = new JSDOM(layoutHtml)
   const doc = dom.window.document
@@ -61,9 +62,57 @@ export function mergeThemePage(
   const host = doc.querySelector("[data-page-host]")
   if (host) {
     host.innerHTML = pageHtml
+    if (options?.navClearance) {
+      ;(host as HTMLElement).style.paddingTop = "var(--nav-h, 0px)"
+    }
   }
 
   return dom.serialize()
+}
+
+/**
+ * 把单页生成器输出的"完整独立文档"净化为可直接注入布局的正文片段：
+ * - 丢弃 <html>/<head>/<body> 包裹，以及页面自带的 <script>/<style> 等；
+ * - 丢弃页面自带的固定导航类型组件（reading-progress / back-to-top 等）；
+ * - 把常见的"页面专属容器类"桥接到共享设计系统类，避免剥离样式后页面变裸。
+ */
+const PAGE_CHROME_SELECTORS =
+  ".reading-progress, .back-to-top, .to-top, #readingProgress"
+const CLASS_BRIDGE: Record<string, string> = {
+  "article-hero": "article-header",
+  "article-hero__title": "post-title",
+  "article-hero__excerpt": "article-header__desc",
+  "article-hero__meta": "article-header__meta",
+  "article-hero__image-wrap": "article-cover",
+  "article-hero__image": "article-cover-img",
+  "article-hero__content": "article-header",
+  "article-main": "article-body",
+  "author-card": "container",
+}
+
+export function sanitizePageFragment(rawHtml: string): string {
+  const dom = new JSDOM(rawHtml)
+  const doc = dom.window.document
+  const body = doc.body
+
+  for (const el of Array.from(
+    body.querySelectorAll("script, style, link, meta, title, template, noscript")
+  )) {
+    el.remove()
+  }
+  for (const el of Array.from(body.querySelectorAll(PAGE_CHROME_SELECTORS))) {
+    el.remove()
+  }
+
+  for (const el of Array.from(body.querySelectorAll<HTMLElement>("[class]"))) {
+    const classes = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
+    for (const cls of classes) {
+      const target = CLASS_BRIDGE[cls]
+      if (target) el.classList.add(target)
+    }
+  }
+
+  return body.innerHTML
 }
 
 /**

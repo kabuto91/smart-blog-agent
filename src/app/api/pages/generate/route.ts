@@ -140,7 +140,9 @@ export async function POST(request: Request) {
             try {
               const config = (JSON.parse(contentConfigJson) ?? {}) as ContentConfig
               const siteConfig = await getSiteConfig()
-              const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml)
+              const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml, {
+                navClearance: true,
+              })
               previewHtml = renderContent(mergedHtml, config, undefined, siteConfig)
             } catch {
               // preview building failed, fall back to raw generated html

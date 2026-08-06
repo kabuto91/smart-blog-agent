@@ -237,7 +237,9 @@ export function ThemeGenerateDialog({
     const page =
       msg.pages?.find((p) => p.type === activePageType) ?? msg.pages?.[0]
     if (!page) return layout
-    return injectPageIntoLayout(layout, page.html)
+    return injectPageIntoLayout(layout, page.html, {
+      navClearance: page.type !== "home",
+    })
   }
 
   function handleSave(payload: {

@@ -171,7 +171,9 @@ export async function renderBlogTheme(
     const contentConfig: ContentConfig =
       pageContentConfig(activeTheme, pageType) ?? {}
 
-    const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html)
+const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
+      navClearance: pageType !== "home",
+    })
 
     const renderedHtml = renderContent(
       mergedHtml,
@@ -212,6 +214,8 @@ export async function renderCustomThemePage(
   const contentConfig: ContentConfig =
     pageContentConfig(activeTheme, "custom") ?? {}
 
-  const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html)
+  const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
+    navClearance: true,
+  })
   return renderContent(mergedHtml, contentConfig, undefined, siteConfig)
 }

@@ -6,6 +6,7 @@ import {
 } from "@/lib/theme/theme-session"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
 import { ensureAvatarOverflow } from "@/lib/theme/content-renderer"
+import { sanitizePageFragment } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
 import {
   createSkeletonAgent,
@@ -115,7 +116,7 @@ async function extractPageResult(
   const result = extractContentConfig(html, siteConfig)
   return {
     type: pageType,
-    html: result.htmlTemplate,
+    html: sanitizePageFragment(result.htmlTemplate),
     contentConfig: JSON.stringify(result.contentConfig),
   }
 }
