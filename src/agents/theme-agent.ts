@@ -35,7 +35,7 @@ HTML 要求：
 4. 用中文内容填充占位文字
 5. 样式需精致且具有明确的设计感，遵循下方"设计要求"的风格准则，具有良好的排版与留白
 6. 如果用户没有特别说明，默认生成一个简约风格的博客页面（简约也应精炼克制，注重留白、排版细节与质感，而非平淡无设计感）
-7. 作者/人物介绍区域的头像容器必须设置 overflow: hidden，且头像内图片使用 object-fit: cover 并填满容器，防止图片溢出圆形头像
+7. 作者/人物介绍区域的头像容器必须设置 overflow: hidden，且头像内图片使用 object-fit: cover 并填满容器，防止图片溢出圆形头像。作者头像用 <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像"> 标记（src 留空，渲染时自动填充真实头像）。
 8. 主题会同时渲染在三个页面：博客首页 /blog（仅显示少量近期文章）、文章列表页 /blog/archive、/blog/category/{slug}、/blog/tag/{slug}（显示全部文章并自动分页）、文章详情页 /blog/{slug}（正文区域替换为文章内容，且只保留导航与页脚，侧边栏与文章列表会被隐藏）。页面之间必须通过 data-page-type 属性彻底分离（详见"内容标记规则-类型二点六"）：
    - 导航（<nav>）、页脚（<footer>）与 <head> 中的样式是三个页面共享的布局，不要打 data-page-type（其它区块必须标记）
    - 所有只在首页出现的区域（hero/banner 介绍区、「近期文章/最新文章」标题头、「查看全部/更多文章」按钮、精选文章、首页专属装饰等）必须标记 data-page-type="home"
@@ -53,7 +53,8 @@ HTML 要求：
 7. 差异化与迭代：根据用户描述选择对应的明暗主题与风格，避免每次生成雷同；迭代修改时保持既有视觉语言，仅按用户要求调整。
 
 工具使用规则：
-- 不使用任何外部图片 URL，也不要编造图片地址；没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计即可。
+- 不使用任何外部图片 URL，也不要编造图片地址；唯一允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充真实头像）。
+- 除作者头像外，没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计即可。
 
 内容标记规则：
 动态内容区域（文章列表、导航等）必须使用 data-content 和 data-content-type 属性标记。
@@ -183,14 +184,15 @@ const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计师，任
    - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body/.article-cover）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
    - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。若导航为 position: fixed，页面正文将由布局读取该变量自动让位，.data-page-host 无需、也不应自行写 padding-top。
-2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把：root 中的 --nav-h 定义为导航真实高度。
+2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把：root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）需放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充），并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
 4. body 中【必须】包含一个正文占位节点，且仅此一个：
    <div data-page-host=""></div>
    后续三个页面的正文会被依次填入这里。除该占位节点外，骨架不要包含其它正文内容。
 
 【图片规则】
-- 不使用任何外部图片 URL，也不要编造图片地址；没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计即可。
+- 不使用任何外部图片 URL，也不要编造图片地址；唯一允许的例外是作者头像占位 <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充，见上方导航要求）。
+- 除作者头像外，没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计即可。
 
 【内容标记规则】
 - 导航/页脚等链接列表用 data-content + data-content-type="nav-list" 标记。
@@ -335,7 +337,8 @@ ${FIELD_REFERENCE}
 示例：<h1 data-content="blog-title" data-content-type="text">我的博客</h1>
 
 【图片规则】
-不使用任何外部图片 URL，也不要编造图片地址；没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
+不使用任何外部图片 URL，也不要编造图片地址；唯一允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；首页 hero/作者简介栏可放置，与骨架导航中的头像共用同一 data-content，会同时填充）。
+除作者头像外，没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
 
 用中文填充占位内容，保持精致设计与骨架视觉语言完全一致。直接输出正文 HTML，不要额外解释性文字。`
 

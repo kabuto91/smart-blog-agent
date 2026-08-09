@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Loader2, Sparkles, Send, Trash2 } from "lucide-react"
+import { Loader2, Sparkles, Send, Trash2, ImagePlus, X } from "lucide-react"
 import { injectPageIntoLayout } from "@/lib/theme/layout-inject"
 
 interface GeneratedPage {
@@ -31,6 +31,8 @@ interface Message {
   pagesDone?: string[]
   thinking?: string[]
   thinkingVisible?: boolean
+  imageId?: string
+  imageUrl?: string
 }
 
 interface ThemeGenerateDialogProps {
@@ -64,8 +66,11 @@ export function ThemeGenerateDialog({
   const [warnings, setWarnings] = useState<string[]>([])
   const [activePageType, setActivePageType] = useState("home")
   const [targetPage, setTargetPage] = useState<"skeleton" | "home" | "list" | "detail">("skeleton")
+  const [selectedImage, setSelectedImage] = useState<{ id: string; url: string } | null>(null)
+  const [uploadingImage, setUploadingImage] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -87,9 +92,10 @@ export function ThemeGenerateDialog({
     setCurrentThinking([])
     setToolStatus("")
     setWarnings([])
+    setSelectedImage(null)
 
     const userMsgId = crypto.randomUUID()
-    setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: message }])
+    setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: message, imageId: selectedImage?.id, imageUrl: selectedImage?.url }])
 
     try {
       const res = await fetch("/api/themes/generate", {
@@ -99,6 +105,7 @@ export function ThemeGenerateDialog({
           conversationId,
           message,
           targetPage,
+          imageId: selectedImage?.id,
         }),
       })
 
@@ -232,6 +239,36 @@ export function ThemeGenerateDialog({
     }
   }
 
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setUploadingImage(true)
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch("/api/uploads", {
+        method: "POST",
+        body: formData,
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSelectedImage({ id: data.id, url: data.url })
+      }
+    } catch {
+      // ignore upload error
+    } finally {
+      setUploadingImage(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+    }
+  }
+
+  function removeSelectedImage() {
+    setSelectedImage(null)
+  }
+
   function toggleThinking(msgId: string) {
     setMessages((prev) =>
       prev.map((m) =>
@@ -324,6 +361,15 @@ export function ThemeGenerateDialog({
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
                         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-[#E5A83D] px-4 py-2.5 text-sm text-[#181A1E]">
+                          {msg.imageUrl && (
+                            <div className="mb-2">
+                              <img
+                                src={msg.imageUrl}
+                                alt="上传的图片"
+                                className="max-h-[120px] rounded-md object-cover"
+                              />
+                            </div>
+                          )}
                           {msg.content}
                         </div>
                       </div>
@@ -516,22 +562,64 @@ export function ThemeGenerateDialog({
               )}
 
               <div className="flex gap-2">
-                <Textarea
-                  ref={textareaRef}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    messages.length === 0
-                      ? "描述你想要的博客风格，例如：我想要一个极简风格的博客页面..."
-                      : "输入修改意见，例如：把背景改成深色、字体再大一点..."
-                  }
-                  rows={2}
-                  className="min-h-[60px] resize-none border-black/[0.08] bg-white placeholder:text-[#6B7280]/60 focus-visible:border-[#E5A83D]/40 focus-visible:ring-[#E5A83D]/20"
-                  disabled={loading}
-                />
+                <div className="flex-1">
+                  {selectedImage && (
+                    <div className="mb-2 flex items-center gap-2">
+                      <div className="relative">
+                        <img
+                          src={selectedImage.url}
+                          alt="待上传图片"
+                          className="h-16 rounded-md object-cover"
+                        />
+                        <button
+                          onClick={removeSelectedImage}
+                          className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </div>
+                      <span className="text-xs text-[#6B7280]">图片已选择，发送时将分析</span>
+                    </div>
+                  )}
+                  <Textarea
+                    ref={textareaRef}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      messages.length === 0
+                        ? "描述你想要的博客风格，例如：我想要一个极简风格的博客页面..."
+                        : "输入修改意见，例如：把背景改成深色、字体再大一点..."
+                    }
+                    rows={2}
+                    className="min-h-[60px] resize-none border-black/[0.08] bg-white placeholder:text-[#6B7280]/60 focus-visible:border-[#E5A83D]/40 focus-visible:ring-[#E5A83D]/20"
+                    disabled={loading}
+                  />
+                </div>
 
                 <div className="flex flex-col gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={loading || uploadingImage}
+                    className="text-[#6B7280] hover:text-[#E5A83D]"
+                    title="上传参考图片"
+                  >
+                    {uploadingImage ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <ImagePlus className="size-4" />
+                    )}
+                  </Button>
+
                   <Button
                     onClick={handleSend}
                     disabled={!inputValue.trim() || loading}

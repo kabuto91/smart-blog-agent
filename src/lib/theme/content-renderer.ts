@@ -93,7 +93,8 @@ export function renderContent(
     }
   }
 
-  applyAvatarOverflow(doc)
+  applyAvatarOverflow(doc, siteConfig?.["author-avatar"])
+  fillGradientAvatarPlaceholders(doc, siteConfig?.["author-avatar"])
 
   return dom.serialize()
 }
@@ -256,19 +257,78 @@ export function ensureAvatarOverflow(html: string): string {
   return dom.serialize()
 }
 
-function applyAvatarOverflow(doc: Document): void {
+/**
+ * 兜底：把「圆形 + 渐变背景」的纯 CSS 头像占位（无 <img>、无 data-content）
+ * 用上传的作者头像填充，覆盖生成器只愿用渐变圆圈的情况。
+ */
+function fillGradientAvatarPlaceholders(
+  doc: Document,
+  avatarUrl?: string
+): void {
+  if (!avatarUrl) return
+  for (const el of Array.from(doc.querySelectorAll<HTMLElement>("div, span"))) {
+    if (el.hasAttribute("data-content")) continue
+    if (el.querySelector("img")) continue
+    if (el.closest('[data-content="article-body"]')) continue
+    if ((el.textContent ?? "").trim() !== "") continue
+    const style = (el.getAttribute("style") ?? "")
+      .replace(/\s/g, "")
+      .toLowerCase()
+    if (!style) continue
+    const isRound =
+      /(?:^|;)border-radius:\s*(?:var\(--radius-full\)|50%|100%|9999px)(?:;|$)/.test(
+        style
+      )
+    if (!isRound) continue
+    if (!/(linear|radial)-gradient/.test(style)) continue
+    const w = /(?:^|;)width:(\d+(?:\.\d+)?)px(?:;|$)/.exec(style)
+    const h = /(?:^|;)height:(\d+(?:\.\d+)?)px(?:;|$)/.exec(style)
+    if (!w || !h) continue
+    const width = Number(w[1])
+    const height = Number(h[1])
+    if (Math.abs(width - height) > 1) continue
+    if (width < 24 || width > 200) continue
+    el.style.backgroundImage = `url("${avatarUrl}")`
+    el.style.backgroundSize = "cover"
+    el.style.backgroundPosition = "center"
+    el.style.backgroundRepeat = "no-repeat"
+  }
+}
+
+function applyAvatarOverflow(doc: Document, avatarUrl?: string): void {
   const elements = Array.from(doc.querySelectorAll<HTMLElement>("[class]")).filter((el) =>
     (el.getAttribute("class") || "").toLowerCase().includes("avatar")
   )
 
   for (const el of elements) {
+    const isImgEl = el.tagName.toLowerCase() === "img"
     el.style.overflow = "hidden"
-    const img = el.querySelector<HTMLImageElement>("img")
-    if (img) {
+    const img = isImgEl
+      ? null
+      : el.querySelector<HTMLImageElement>("img")
+    if (isImgEl) {
+      const self = el as HTMLImageElement
+      self.style.objectFit = "cover"
+      self.style.display = "block"
+      if (
+        avatarUrl &&
+        !el.hasAttribute("data-content") &&
+        (!self.getAttribute("src") || self.getAttribute("src")?.trim() === "")
+      ) {
+        self.setAttribute("src", avatarUrl)
+      }
+    } else if (img) {
       img.style.width = "100%"
       img.style.height = "100%"
       img.style.objectFit = "cover"
       img.style.display = "block"
+      if (
+        avatarUrl &&
+        !el.hasAttribute("data-content") &&
+        (!img.getAttribute("src") || img.getAttribute("src")?.trim() === "")
+      ) {
+        img.setAttribute("src", avatarUrl)
+      }
     }
   }
 }

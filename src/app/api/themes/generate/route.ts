@@ -20,6 +20,8 @@ import {
   extractHtmlFromContent,
   type ThemePageType,
 } from "@/agents/theme-agent"
+import { getUpload } from "@/lib/uploads"
+import { analyzeImage } from "@/lib/llm/vision-analyze"
 import { randomUUID } from "crypto"
 
 export const runtime = "nodejs"
@@ -28,6 +30,7 @@ interface GenerateRequest {
   conversationId?: string
   message: string
   targetPage?: "skeleton" | ThemePageType
+  imageId?: string
 }
 
 interface PageResult {
@@ -172,15 +175,29 @@ async function runPageAgent(
 
 export async function POST(request: Request) {
   try {
-    const { conversationId: providedId, message, targetPage } =
+    const { conversationId: providedId, message, targetPage, imageId } =
       (await request.json()) as GenerateRequest
 
     if (!message?.trim()) {
       return Response.json({ error: "请输入消息内容" }, { status: 400 })
     }
 
+    let finalMessage = message
+
+    if (imageId) {
+      const upload = await getUpload(imageId)
+      if (upload) {
+        try {
+          const analysis = await analyzeImage(upload.data, upload.mimeType)
+          finalMessage = `[图片分析结果]\n${analysis}\n\n[用户需求]\n${message}`
+        } catch {
+          // 如果视觉模型配置有问题，忽略图片分析，仅使用用户消息
+        }
+      }
+    }
+
     const conversationId = providedId || randomUUID()
-    await addMessage(conversationId, "user", message)
+    await addMessage(conversationId, "user", finalMessage)
 
     const snapshot = await getLatestSnapshot(conversationId)
     const stream = new ReadableStream({
@@ -198,8 +215,8 @@ export async function POST(request: Request) {
             const layoutClasses = collectThemeClasses(contractedLayout)
             const prev = snapshot.pages[pageType]
             const userMessage = prev
-              ? `${message}\n\n当前「${pageHtmlLabel(pageType)}」正文状态：\n\`\`\`html\n${prev}\n\`\`\``
-              : message
+              ? `${finalMessage}\n\n当前「${pageHtmlLabel(pageType)}」正文状态：\n\`\`\`html\n${prev}\n\`\`\``
+              : finalMessage
 
             const result = await runPageAgent(
               pageType,
@@ -257,7 +274,7 @@ export async function POST(request: Request) {
           // ---------- 骨架阶段 ----------
           const skeletonGraph = await createSkeletonAgent()
           const skeletonInput = [
-            { role: "user" as const, content: message },
+            { role: "user" as const, content: finalMessage },
             ...(snapshot?.layout
               ? [
                   {
@@ -288,7 +305,7 @@ export async function POST(request: Request) {
             PAGE_TYPES.map((pt) =>
               runPageAgent(
                 pt,
-                message,
+                finalMessage,
                 bodyContext,
                 controller,
                 encoder,

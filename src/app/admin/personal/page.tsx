@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Save, Loader2, Eye, EyeOff, Bot } from "lucide-react"
+import { Save, Loader2, Eye, EyeOff, Bot, Eye as EyeIcon } from "lucide-react"
 
 interface LLMConfig {
   baseUrl: string
@@ -17,21 +17,32 @@ export default function PersonalPage() {
     model: "",
     apiKey: "",
   })
+  const [visionConfig, setVisionConfig] = useState<LLMConfig>({
+    baseUrl: "",
+    model: "",
+    apiKey: "",
+  })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{success: boolean; message: string} | null>(null)
+  const [savingVision, setSavingVision] = useState(false)
+  const [successVision, setSuccessVision] = useState(false)
+  const [showVisionApiKey, setShowVisionApiKey] = useState(false)
+  const [testingVision, setTestingVision] = useState(false)
+  const [testResultVision, setTestResultVision] = useState<{success: boolean; message: string} | null>(null)
 
   useEffect(() => {
-    fetch("/api/llm-config")
-      .then((res) => res.json())
-      .then((data) => {
-        setConfig(data)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+    Promise.all([
+      fetch("/api/llm-config").then((res) => res.json()),
+      fetch("/api/vision-config").then((res) => res.json()),
+    ]).then(([llmData, visionData]) => {
+      setConfig(llmData)
+      setVisionConfig(visionData)
+      setLoading(false)
+    }).catch(() => setLoading(false))
   }, [])
 
   const handleSave = useCallback(async () => {
@@ -71,8 +82,49 @@ export default function PersonalPage() {
     }
   }, [])
 
+  const handleSaveVision = useCallback(async () => {
+    setSavingVision(true)
+    setSuccessVision(false)
+    try {
+      const res = await fetch("/api/vision-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(visionConfig),
+      })
+      if (res.ok) {
+        setSuccessVision(true)
+        setTimeout(() => setSuccessVision(false), 2000)
+      }
+    } finally {
+      setSavingVision(false)
+    }
+  }, [visionConfig])
+
+  const handleTestVision = useCallback(async () => {
+    setTestingVision(true)
+    setTestResultVision(null)
+    try {
+      const res = await fetch("/api/vision-config/test", {
+        method: "POST",
+      })
+      const data = await res.json()
+      setTestResultVision(data)
+      if (data.success) {
+        setTimeout(() => setTestResultVision(null), 2000)
+      }
+    } catch {
+      setTestResultVision({ success: false, message: "网络请求失败" })
+    } finally {
+      setTestingVision(false)
+    }
+  }, [])
+
   function updateValue(key: keyof LLMConfig, value: string) {
     setConfig((prev) => ({ ...prev, [key]: value }))
+  }
+
+  function updateVisionValue(key: keyof LLMConfig, value: string) {
+    setVisionConfig((prev) => ({ ...prev, [key]: value }))
   }
 
   if (loading) {
@@ -207,6 +259,125 @@ export default function PersonalPage() {
           <p className="text-xs text-[#6B7280]">
             <strong>提示：</strong>如果您没有配置大模型参数，系统将使用默认的环境变量配置。
             配置保存后将立即生效。
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-lg border border-black/[0.06] bg-white p-6">
+        <div className="mb-6 flex items-center gap-3">
+          <div className="flex size-10 items-center justify-center rounded-full bg-[#E5A83D]/10">
+            <EyeIcon className="size-5 text-[#E5A83D]" />
+          </div>
+          <div>
+            <h2 className="font-medium text-[#1C1C1E]">视觉模型配置</h2>
+            <p className="text-xs text-[#6B7280]">
+              设置图像理解模型的连接参数，用于分析上传的图片并生成主题
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-5">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[#1C1C1E]">
+              Base URL
+            </label>
+            <p className="mb-1.5 text-xs text-[#6B7280]">
+              视觉模型 API 的基础地址
+            </p>
+            <Input
+              value={visionConfig.baseUrl}
+              onChange={(e) => updateVisionValue("baseUrl", e.target.value)}
+              className="w-full"
+              placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[#1C1C1E]">
+              Model
+            </label>
+            <p className="mb-1.5 text-xs text-[#6B7280]">
+              使用的模型名称
+            </p>
+            <Input
+              value={visionConfig.model}
+              onChange={(e) => updateVisionValue("model", e.target.value)}
+              className="w-full"
+              placeholder="qwen-vl-max"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[#1C1C1E]">
+              API Key
+            </label>
+            <p className="mb-1.5 text-xs text-[#6B7280]">
+              视觉模型 API 的访问密钥
+            </p>
+            <div className="relative">
+              <Input
+                type={showVisionApiKey ? "text" : "password"}
+                value={visionConfig.apiKey}
+                onChange={(e) => updateVisionValue("apiKey", e.target.value)}
+                className="w-full pr-10"
+                placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+              />
+              <button
+                type="button"
+                onClick={() => setShowVisionApiKey(!showVisionApiKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6B7280] hover:text-[#1C1C1E]"
+              >
+                {showVisionApiKey ? (
+                  <EyeOff className="size-4" />
+                ) : (
+                  <Eye className="size-4" />
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 flex items-center gap-3">
+          <Button
+            onClick={handleSaveVision}
+            disabled={savingVision}
+            className="bg-[#E5A83D] text-[#181A1E] hover:bg-[#D4A035]"
+          >
+            {savingVision ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            保存配置
+          </Button>
+          <Button
+            onClick={handleTestVision}
+            disabled={testingVision}
+            variant="outline"
+          >
+            {testingVision ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <EyeIcon className="size-4" />
+            )}
+            测试连接
+          </Button>
+          {testResultVision && (
+            <span className={`text-sm ${testResultVision.success ? 'text-green-600' : 'text-red-600'} animate-in fade-in`}>
+              {testResultVision.message}
+            </span>
+          )}
+          {successVision && (
+            <span className="text-sm text-green-600 animate-in fade-in">
+              已保存
+            </span>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-lg bg-[#F5F4F1] p-4">
+          <p className="text-xs text-[#6B7280]">
+            <strong>提示：</strong>视觉模型用于分析上传的图片，提取风格、配色、布局等设计特征，
+            然后据此生成主题。推荐使用 qwen-vl-max 等多模态模型。
           </p>
         </div>
       </div>

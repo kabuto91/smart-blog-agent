@@ -33,25 +33,35 @@ export default function SettingsPage() {
       .catch(() => setLoading(false))
   }, [])
 
+    const persistConfig = useCallback(async (cfg: Record<string, string>) => {
+    const editableEntries = Object.entries(cfg).filter(([key]) =>
+      EDITABLE_KEYS.has(key)
+    )
+    const body = Object.fromEntries(editableEntries)
+    const res = await fetch("/api/site-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      throw new Error(data?.error || "保存失败")
+    }
+    setSuccess(true)
+    setTimeout(() => setSuccess(false), 2000)
+  }, [])
+
   const handleSave = useCallback(async () => {
     setSaving(true)
     setSuccess(false)
     try {
-      const editableEntries = Object.entries(config).filter(([key]) => EDITABLE_KEYS.has(key))
-      const body = Object.fromEntries(editableEntries)
-      const res = await fetch("/api/site-config", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
-      if (res.ok) {
-        setSuccess(true)
-        setTimeout(() => setSuccess(false), 2000)
-      }
+      await persistConfig(config)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "保存失败")
     } finally {
       setSaving(false)
     }
-  }, [config])
+  }, [config, persistConfig])
 
   function updateValue(key: string, value: string) {
     setConfig((prev) => ({ ...prev, [key]: value }))
@@ -65,7 +75,9 @@ export default function SettingsPage() {
       const res = await fetch("/api/uploads", { method: "POST", body: formData })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "上传失败")
+      const next = { ...config, [AVATAR_FIELD_KEY]: data.url }
       updateValue(AVATAR_FIELD_KEY, data.url)
+      await persistConfig(next)
     } catch (e) {
       alert(e instanceof Error ? e.message : "上传失败")
     } finally {

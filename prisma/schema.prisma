@@ -144,3 +144,13 @@ model LLMConfig {
 
   @@map("llm_config")
 }
+
+model VisionConfig {
+  id        Int      @id @default(1)
+  baseUrl   String   @default("") @map("base_url")
+  model     String   @default("")
+  apiKey    String   @default("") @map("api_key")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("vision_config")
+}
