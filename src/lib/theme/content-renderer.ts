@@ -370,6 +370,9 @@ function renderTextField(doc: Document, key: string, value: string): void {
   if (els.length === 0) return
 
   for (const el of els) {
+    // 跳过属于 nav-list 容器的元素，避免覆盖导航标签
+    if (el.closest('[data-content-type="nav-list"]')) continue
+
     let img: HTMLImageElement | null = null
     if (el.tagName.toLowerCase() === "img") {
       img = el as HTMLImageElement
