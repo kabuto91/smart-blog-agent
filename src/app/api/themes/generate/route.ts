@@ -299,6 +299,10 @@ export async function POST(request: Request) {
           )
           const layoutClasses = collectThemeClasses(layoutHtml)
 
+          // 提取骨架的 contentConfig（包含导航栏配置）
+          const skeletonConfig = extractContentConfig(layoutHtml, siteConfig)
+          const skeletonContentConfig = JSON.stringify(skeletonConfig.contentConfig)
+
           // ---------- 并行页面阶段 ----------
           const bodyContext = buildPagePromptContext(layoutHtml)
           const pages = await Promise.all(
@@ -327,7 +331,7 @@ export async function POST(request: Request) {
             "assistant",
             "已生成主题骨架与三个页面",
             layoutHtml,
-            undefined,
+            skeletonContentConfig,
             JSON.stringify(pageMap)
           )
 
@@ -353,7 +357,7 @@ export async function POST(request: Request) {
                 type: "done",
                 conversationId,
                 layoutHtml,
-                contentConfig: "{}",
+                contentConfig: skeletonContentConfig,
               })}\n\n`
             )
           )
