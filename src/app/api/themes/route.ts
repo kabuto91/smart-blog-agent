@@ -1,4 +1,5 @@
 import { getThemes, saveTheme, ThemePageInput } from "@/lib/theme/theme"
+import { ensureLayoutContract } from "@/lib/theme/theme-splitter"
 
 export const runtime = "nodejs"
 
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     }
     const theme = await saveTheme(
       body.name,
-      body.layoutHtml,
+      ensureLayoutContract(body.layoutHtml),
       body.pages ?? [],
       body.contentConfig
     )

@@ -61,6 +61,7 @@ export function ThemeGenerateDialog({
   const [error, setError] = useState("")
   const [currentThinking, setCurrentThinking] = useState<string[]>([])
   const [toolStatus, setToolStatus] = useState("")
+  const [warnings, setWarnings] = useState<string[]>([])
   const [activePageType, setActivePageType] = useState("home")
   const [targetPage, setTargetPage] = useState<"skeleton" | "home" | "list" | "detail">("skeleton")
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -85,6 +86,7 @@ export function ThemeGenerateDialog({
     setInputValue("")
     setCurrentThinking([])
     setToolStatus("")
+    setWarnings([])
 
     const userMsgId = crypto.randomUUID()
     setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: message }])
@@ -182,6 +184,12 @@ export function ThemeGenerateDialog({
             setToolStatus(query ? `正在搜索图片：${query}` : "正在搜索图片...")
           } else if (event.type === "error") {
             setError(event.error)
+          } else if (event.type === "warn") {
+            if (event.message) {
+              setWarnings((prev) =>
+                prev.includes(event.message) ? prev : [...prev, event.message]
+              )
+            }
           }
         } catch {
           // Skip invalid JSON lines
@@ -265,6 +273,7 @@ export function ThemeGenerateDialog({
     setInputValue("")
     setError("")
     setCurrentThinking([])
+    setWarnings([])
     setTargetPage("skeleton")
     if (id) {
       fetch(`/api/themes/sessions/${id}`, { method: "DELETE" }).catch(() => {})
@@ -473,6 +482,15 @@ export function ThemeGenerateDialog({
             {/* Input area */}
             <div className="mt-4 border-t border-black/[0.06] pt-4">
               {error && <p className="mb-2 text-sm text-red-500">{error}</p>}
+
+              {warnings.map((w) => (
+                <p
+                  key={w}
+                  className="mb-2 text-sm text-amber-600"
+                >
+                  {w}
+                </p>
+              ))}
 
               {messages.length > 0 && (
                 <div className="mb-2 flex flex-wrap items-center gap-2">

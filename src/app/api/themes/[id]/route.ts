@@ -6,6 +6,7 @@ import {
   deleteThemePage,
   ThemePageInput,
 } from "@/lib/theme/theme"
+import { ensureLayoutContract } from "@/lib/theme/theme-splitter"
 
 export const runtime = "nodejs"
 
@@ -72,7 +73,7 @@ export async function PATCH(
       theme = await updateTheme(id, {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.layoutHtml !== undefined
-          ? { layoutHtml: body.layoutHtml }
+          ? { layoutHtml: ensureLayoutContract(body.layoutHtml) }
           : {}),
         ...(body.contentConfig !== undefined
           ? { contentConfig: body.contentConfig }

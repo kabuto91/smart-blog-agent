@@ -179,7 +179,8 @@ const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
       mergedHtml,
       contentConfig,
       dynamicData,
-      siteConfig
+      siteConfig,
+      { pageSpecific: true }
     )
 
     return new Response(renderedHtml, {
@@ -217,5 +218,7 @@ export async function renderCustomThemePage(
   const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
     navClearance: true,
   })
-  return renderContent(mergedHtml, contentConfig, undefined, siteConfig)
+  return renderContent(mergedHtml, contentConfig, undefined, siteConfig, {
+    pageSpecific: true,
+  })
 }

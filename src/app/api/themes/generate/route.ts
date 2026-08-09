@@ -6,7 +6,12 @@ import {
 } from "@/lib/theme/theme-session"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
 import { ensureAvatarOverflow } from "@/lib/theme/content-renderer"
-import { sanitizePageFragment } from "@/lib/theme/theme-splitter"
+import {
+  sanitizePageFragment,
+  ensureLayoutContract,
+  collectThemeClasses,
+  validatePageFragment,
+} from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
 import {
   createSkeletonAgent,
@@ -29,6 +34,8 @@ interface PageResult {
   type: ThemePageType
   html: string
   contentConfig: string
+  /** 是否通过与骨架契约的一致性校验 */
+  valid: boolean
 }
 
 const PAGE_TYPES: ThemePageType[] = ["home", "list", "detail"]
@@ -108,37 +115,59 @@ async function runAgentStream(
 async function extractPageResult(
   pageType: ThemePageType,
   rawHtml: string,
-  siteConfig: Record<string, string> | undefined
+  siteConfig: Record<string, string> | undefined,
+  layoutClasses: Set<string>
 ): Promise<PageResult> {
   let html = extractHtmlFromContent(rawHtml)
   if (!html) html = rawHtml
   html = ensureAvatarOverflow(html)
   const result = extractContentConfig(html, siteConfig)
+  const fragment = sanitizePageFragment(result.htmlTemplate)
+  const issue = validatePageFragment(fragment, layoutClasses)
   return {
     type: pageType,
-    html: sanitizePageFragment(result.htmlTemplate),
+    html: fragment,
     contentConfig: JSON.stringify(result.contentConfig),
+    valid: issue.ok,
   }
 }
 
-/** 运行单个页面 agent 并流式转发，返回该页结果。 */
+/** 运行单个页面 agent 并流式转发，返回该页结果；未通过契约校验时自动重试一次。 */
 async function runPageAgent(
   pageType: ThemePageType,
   userMessage: string,
   context: string,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
-  siteConfig: Record<string, string> | undefined
+  siteConfig: Record<string, string> | undefined,
+  layoutClasses: Set<string>
 ): Promise<PageResult> {
-  const graph = await createPageAgent(pageType, context)
-  const { html } = await runAgentStream(
-    graph,
-    [{ role: "user", content: userMessage }],
-    pageType,
-    controller,
-    encoder
-  )
-  return extractPageResult(pageType, html, siteConfig)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const graph = await createPageAgent(pageType, context)
+    const { html } = await runAgentStream(
+      graph,
+      [{ role: "user", content: userMessage }],
+      pageType,
+      controller,
+      encoder
+    )
+    const result = await extractPageResult(pageType, html, siteConfig, layoutClasses)
+    if (result.valid || attempt === 2) {
+      if (!result.valid) {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: "warn",
+              message: `「${pageHtmlLabel(pageType)}」存在样式一致性风险，已尽力修复`,
+            })}\n\n`
+          )
+        )
+      }
+      return result
+    }
+  }
+  // 不可达
+  return { type: pageType, html: "", contentConfig: "{}", valid: false }
 }
 
 export async function POST(request: Request) {
@@ -164,7 +193,9 @@ export async function POST(request: Request) {
           // 迭代场景：已有骨架，仅重生成目标页面。
           if (snapshot?.layout && targetPage && targetPage !== "skeleton") {
             const pageType = targetPage
-            const context = buildPagePromptContext(snapshot.layout)
+            const contractedLayout = ensureLayoutContract(snapshot.layout)
+            const context = buildPagePromptContext(contractedLayout)
+            const layoutClasses = collectThemeClasses(contractedLayout)
             const prev = snapshot.pages[pageType]
             const userMessage = prev
               ? `${message}\n\n当前「${pageHtmlLabel(pageType)}」正文状态：\n\`\`\`html\n${prev}\n\`\`\``
@@ -176,14 +207,15 @@ export async function POST(request: Request) {
               context,
               controller,
               encoder,
-              siteConfig
+              siteConfig,
+              layoutClasses
             )
 
             const nextPages: Record<string, string> = {
               ...snapshot.pages,
               [pageType]: result.html,
             }
-            const layoutForMerge = ensureAvatarOverflow(snapshot.layout)
+            const layoutForMerge = ensureAvatarOverflow(contractedLayout)
             await addMessage(
               conversationId,
               "assistant",
@@ -245,13 +277,24 @@ export async function POST(request: Request) {
           if (!skeletonOut.html) {
             throw new Error("骨架生成失败：未能提取 HTML")
           }
-          const layoutHtml = ensureAvatarOverflow(skeletonOut.html)
+          const layoutHtml = ensureAvatarOverflow(
+            ensureLayoutContract(skeletonOut.html)
+          )
+          const layoutClasses = collectThemeClasses(layoutHtml)
 
           // ---------- 并行页面阶段 ----------
           const bodyContext = buildPagePromptContext(layoutHtml)
           const pages = await Promise.all(
             PAGE_TYPES.map((pt) =>
-              runPageAgent(pt, message, bodyContext, controller, encoder, siteConfig)
+              runPageAgent(
+                pt,
+                message,
+                bodyContext,
+                controller,
+                encoder,
+                siteConfig,
+                layoutClasses
+              )
             )
           )
 

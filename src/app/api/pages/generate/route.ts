@@ -143,7 +143,9 @@ export async function POST(request: Request) {
               const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml, {
                 navClearance: true,
               })
-              previewHtml = renderContent(mergedHtml, config, undefined, siteConfig)
+              previewHtml = renderContent(mergedHtml, config, undefined, siteConfig, {
+                pageSpecific: true,
+              })
             } catch {
               // preview building failed, fall back to raw generated html
             }

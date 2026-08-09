@@ -182,7 +182,8 @@ const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计师，任
    - 用 CSS 变量（:root）统一管理配色、字体、字号阶梯、行高、间距、圆角、阴影、动效参数
    - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body/.article-cover）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
-2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由
+   - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。若导航为 position: fixed，页面正文将由布局读取该变量自动让位，.data-page-host 无需、也不应自行写 padding-top。
+2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把：root 中的 --nav-h 定义为导航真实高度。
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
 4. body 中【必须】包含一个正文占位节点，且仅此一个：
    <div data-page-host=""></div>
@@ -238,7 +239,10 @@ export function buildPagePromptContext(skeletonHtml: string): string {
   for (const style of Array.from(doc.querySelectorAll("style"))) {
     if (style.textContent) styles.push(style.textContent)
   }
-  const css = styles.join("\n").slice(0, 6000)
+  // 尽量保留完整 CSS；仅在超出安全长度时截断，但类名清单始终完整下发。
+  const MAX_CSS_CHARS = 16000
+  const cssFull = styles.join("\n")
+  const css = cssFull.slice(0, MAX_CSS_CHARS)
 
   const navLinks: string[] = []
   for (const el of Array.from(doc.querySelectorAll("nav a"))) {
@@ -247,18 +251,49 @@ export function buildPagePromptContext(skeletonHtml: string): string {
     if (href) navLinks.push(`${text} -> ${href}`)
   }
 
+  const classManifest = getManifestClasses(skeletonHtml)
+  const manifestText =
+    classManifest.length > 0
+      ? classManifest.join(", ")
+      : "（骨架未提供类名，仅使用骨架 CSS 中定义的基础标签样式）"
+
   const parts: string[] = []
   parts.push(`主题共享骨架的完整 CSS 类库与设计变量（配色、字体、间距、动效参数都必须从中选取并保持一致）：\n\`\`\`css\n${css || "（无 CSS）"}\n\`\`\``)
+  parts.push(`骨架已有的可复用类名清单（正文只能使用以下类名，禁止自创其它类名或样式）：\n${manifestText}\n以上类名清单优先于 CSS 中被截断的部分，务必从中选取。`)
   if (navLinks.length) {
     parts.push(`骨架导航链接（在正文中复用，保证路由一致）：\n${navLinks.join("\n")}`)
   }
   parts.push(`硬性约束（必须严格遵守）：
 - 只输出 body 内的页面正文，不要输出 <!DOCTYPE html>、<html>、<head>、<body>；
-- 不要输出任何 <style>、<script>、<link>、<meta>、<title> 标签；
+- 不要输出任何 <style>、<script>、<link>、<meta>、<title> 标签；不要使用 !important；不要书写自定义 @media 规则（响应式已由骨架统一处理）；
 - 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；
-- 正文的类名必须从骨架的 CSS 类库中选取，不要自创独立的页面类名或设计系统，否则会失去样式；
-- 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已统一处理该间距。`)
+- 正文的类名必须从上述"可复用类名清单"中选取，禁止自创新的页面类名、禁止对骨架类名的类写样式覆盖，否则会与骨架样式冲突并失去样式；
+- 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已通过 --nav-h 统一处理该间距。`)
   return parts.join("\n\n")
+}
+
+/** 从骨架 HTML + CSS 提取既有的可复用类名清单。 */
+function getManifestClasses(skeletonHtml: string): string[] {
+  const dom = new JSDOM(skeletonHtml)
+  const doc = dom.window.document
+  const set = new Set<string>()
+
+  for (const el of Array.from(doc.querySelectorAll<HTMLElement>("[class]"))) {
+    for (const cls of (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)) {
+      set.add(cls)
+    }
+  }
+
+  for (const style of Array.from(doc.querySelectorAll("style"))) {
+    const css = style.textContent ?? ""
+    const re = /\.([a-zA-Z_][\w-]*)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(css)) !== null) {
+      set.add(m[1])
+    }
+  }
+
+  return Array.from(set).sort()
 }
 
 /** 骨架阶段 agent：产出共享布局（head 样式 + 导航 + 页脚 + data-page-host 占位）。 */

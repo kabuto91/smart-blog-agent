@@ -13,6 +13,8 @@ interface RenderRequest {
   /** 新调用：页面正文（插入布局占位处） */
   pageHtml?: string
   contentConfig?: ContentConfig
+  /** 拆分式主题：跳过启发式剪枝（默认随调用方式自动推断） */
+  pageSpecific?: boolean
 }
 
 export async function POST(request: Request) {
@@ -20,8 +22,10 @@ export async function POST(request: Request) {
     const body: RenderRequest = await request.json()
 
     let template = body.htmlTemplate
+    let isSplit = body.pageSpecific
     if (!template && body.layoutHtml) {
       template = mergeThemePage(body.layoutHtml, body.pageHtml ?? "")
+      isSplit = isSplit ?? true
     }
 
     if (!template) {
@@ -31,12 +35,18 @@ export async function POST(request: Request) {
       )
     }
 
+    // 含 [data-page-host] 的模板已是"布局+单页正文"的拆分形态，跳过后启发式剪枝。
+    if (isSplit === undefined && template.includes("data-page-host")) {
+      isSplit = true
+    }
+
     const siteConfig = await getSiteConfig()
     const renderedHtml = renderContent(
       template,
       body.contentConfig ?? {},
       undefined,
-      siteConfig
+      siteConfig,
+      { pageSpecific: !!isSplit }
     )
 
     return Response.json({ html: renderedHtml })

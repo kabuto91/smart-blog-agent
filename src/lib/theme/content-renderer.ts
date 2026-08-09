@@ -39,11 +39,21 @@ export interface DynamicData {
   pagination?: PaginationData
 }
 
+export interface RenderOptions {
+  /**
+   * 拆分式主题渲染：页面正文已按类型独立成片段（由生成管线负责剪枝），
+   * 渲染时不再运行按 data-page-type / hero 正则猜测的启发式剪枝，
+   * 避免误删正文内容造成与骨架样式冲突。
+   */
+  pageSpecific?: boolean
+}
+
 export function renderContent(
   htmlTemplate: string,
   contentConfig: ContentConfig,
   dynamicData?: DynamicData,
-  siteConfig?: Record<string, string>
+  siteConfig?: Record<string, string>,
+  options?: RenderOptions
 ): string {
   const dom = new JSDOM(htmlTemplate)
   const doc = dom.window.document
@@ -71,14 +81,16 @@ export function renderContent(
     el.remove()
   }
 
-  prunePageRegions(doc, pageType)
+  if (!options?.pageSpecific) {
+    prunePageRegions(doc, pageType)
 
-  if (pageType === "detail") {
-    pruneDetailPage(doc)
-  }
+    if (pageType === "detail") {
+      pruneDetailPage(doc)
+    }
 
-  if (pageType === "list" || pageType === "detail") {
-    pruneHomeSections(doc)
+    if (pageType === "list" || pageType === "detail") {
+      pruneHomeSections(doc)
+    }
   }
 
   applyAvatarOverflow(doc)
@@ -294,25 +306,27 @@ function resolveTextValue(
 }
 
 function renderTextField(doc: Document, key: string, value: string): void {
-  const el = doc.querySelector(`[data-content="${key}"]`)
-  if (!el) return
+  const els = Array.from(doc.querySelectorAll(`[data-content="${key}"]`))
+  if (els.length === 0) return
 
-  let img: HTMLImageElement | null = null
-  if (el.tagName.toLowerCase() === "img") {
-    img = el as HTMLImageElement
-  } else {
-    const first = el.firstElementChild
-    if (first && first.tagName.toLowerCase() === "img") {
-      img = first as HTMLImageElement
+  for (const el of els) {
+    let img: HTMLImageElement | null = null
+    if (el.tagName.toLowerCase() === "img") {
+      img = el as HTMLImageElement
+    } else {
+      const first = el.firstElementChild
+      if (first && first.tagName.toLowerCase() === "img") {
+        img = first as HTMLImageElement
+      }
     }
-  }
 
-  if (img) {
-    if (value) img.setAttribute("src", value)
-    return
-  }
+    if (img) {
+      if (value) img.setAttribute("src", value)
+      continue
+    }
 
-  el.textContent = value
+    el.textContent = value
+  }
 }
 
 function renderDynamicField(
