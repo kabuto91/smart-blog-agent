@@ -30,6 +30,35 @@ const SKELETON_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`
 
+describe("renderContent nav-label 不被文本字段覆盖", () => {
+  const config: ContentConfig = {
+    "main-nav": {
+      type: "nav-list",
+      label: "main-nav",
+      items: [
+        { label: "首页", href: "/blog" },
+        { label: "归档", href: "/blog/archive" },
+      ],
+      itemTemplate:
+        '<a href="{href}" class="nav-brand" data-content="blog-title" data-content-type="text">{label}</a>',
+    },
+  }
+  const layout = `<nav class="main-nav" data-content="main-nav" data-content-type="nav-list"><a href="/">导航</a></nav>`
+
+  it("nav 链接的 data-content=blog-title 不被全局标题覆盖", () => {
+    const out = renderContent(
+      layout,
+      config,
+      undefined,
+      { "blog-title": "刚入行的小菜鸟" },
+      { pageSpecific: true }
+    )
+    expect(out).toContain('>首页</a>')
+    expect(out).toContain('>归档</a>')
+    expect(out).not.toContain('>刚入行的小菜鸟</a>')
+  })
+})
+
 describe("renderContent legacy mode", () => {
   it("非拆分模式仍执行 data-page-type 剪枝（保留 home）", () => {
     // resolvePageType(undefined) => home
