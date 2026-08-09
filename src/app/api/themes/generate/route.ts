@@ -233,12 +233,17 @@ export async function POST(request: Request) {
               [pageType]: result.html,
             }
             const layoutForMerge = ensureAvatarOverflow(contractedLayout)
+            // 迭代只改页面正文，布局（含导航）未变：重新从布局提取配置，
+            // 避免把导航/布局配置整体丢弃为 {}
+            const layoutConfigJson = JSON.stringify(
+              extractContentConfig(contractedLayout, siteConfig).contentConfig
+            )
             await addMessage(
               conversationId,
               "assistant",
               userMessage,
               layoutForMerge,
-              snapshot.contentConfig ?? undefined,
+              layoutConfigJson,
               JSON.stringify(nextPages)
             )
 
@@ -264,7 +269,7 @@ export async function POST(request: Request) {
                   type: "done",
                   conversationId,
                   layoutHtml: layoutForMerge,
-                  contentConfig: "{}",
+                  contentConfig: layoutConfigJson,
                 })}\n\n`
               )
             )

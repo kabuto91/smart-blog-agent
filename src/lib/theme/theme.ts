@@ -1,4 +1,5 @@
 import { prisma } from "../db/client"
+import { mergeMissingNav } from "./content-extractor"
 import type { ContentConfig } from "../types/content-config"
 
 export interface ThemePageData {
@@ -70,7 +71,7 @@ function parseTheme(theme: {
     updatedAt: Date
   }[]
 }): ThemeData {
-  return {
+  return ensureThemeNavConfig({
     id: theme.id,
     name: theme.name,
     layoutHtml: theme.layoutHtml,
@@ -79,7 +80,17 @@ function parseTheme(theme: {
     createdAt: theme.createdAt,
     updatedAt: theme.updatedAt,
     pages: theme.pages.map(parsePage),
-  }
+  })
+}
+
+/**
+ * 自我修复：导航（nav-list）字段只存在于布局 HTML 而不在 contentConfig 时，
+ * 从布局反向提取并补齐，保证导航栏始终有可配置入口（兼容旧主题/被清空的配置）。
+ */
+function ensureThemeNavConfig(theme: ThemeData): ThemeData {
+  const config = mergeMissingNav(theme.contentConfig, theme.layoutHtml)
+  if (config === theme.contentConfig) return theme
+  return { ...theme, contentConfig: config }
 }
 
 const PAGE_INCLUDE = {

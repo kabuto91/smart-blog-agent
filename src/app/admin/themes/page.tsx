@@ -128,10 +128,23 @@ export default function ThemesPage() {
   }
 
   async function handleConfigSaved(theme: Theme, page: ThemePage | null, config: ContentConfig) {
+    // 页面级配置写入对应页面行，避免整体覆盖主题级（布局/导航）配置
+    const body: Record<string, unknown> = page
+      ? {
+          pages: [
+            {
+              type: page.type,
+              route: page.route,
+              name: page.name,
+              contentConfig: JSON.stringify(config),
+            },
+          ],
+        }
+      : { contentConfig: JSON.stringify(config) }
     const res = await fetch(`/api/themes/${theme.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contentConfig: JSON.stringify(config) }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) return
     const saved = await res.json()
@@ -327,9 +340,9 @@ export default function ThemesPage() {
 
                   {/* Layout / styles row */}
                   <div className="flex items-center justify-between bg-[#F5F4F1] px-4 py-2">
-                    <span className="text-xs font-medium text-[#6B7280]">
-                      共享布局 / 样式
-                    </span>
+<span className="text-xs font-medium text-[#6B7280]">
+  共享布局 / 导航 / 样式
+</span>
                     <div className="flex gap-0.5">
                       <Button
                         variant="ghost"
@@ -339,16 +352,14 @@ export default function ThemesPage() {
                       >
                         <LayoutTemplate className="size-3" />
                       </Button>
-                      {theme.contentConfig && (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => setConfigEdit({ theme, page: null })}
-                          title="内容配置"
-                        >
-                          <Settings className="size-3" />
-                        </Button>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setConfigEdit({ theme, page: null })}
+                        title="导航链接 / 布局内容配置"
+                      >
+                        <Settings className="size-3" />
+                      </Button>
                     </div>
                   </div>
                 </div>

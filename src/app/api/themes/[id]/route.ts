@@ -83,7 +83,25 @@ export async function PATCH(
 
     if (body.pages && body.pages.length > 0) {
       for (const input of body.pages) {
-        await upsertThemePage(id, input)
+        // 部分更新（如只传 contentConfig）时，与既有记录合并，避免清空 html/sortOrder
+        const existing = theme.pages.find(
+          (p) =>
+            p.type === input.type &&
+            (p.route ?? null) === (input.route ?? null)
+        )
+        await upsertThemePage(id, {
+          type: input.type,
+          route: input.route ?? existing?.route ?? null,
+          name: input.name ?? existing?.name ?? input.type,
+          html: input.html ?? existing?.html ?? "",
+          contentConfig:
+            input.contentConfig !== undefined
+              ? input.contentConfig
+              : existing?.contentConfig
+                ? JSON.stringify(existing.contentConfig)
+                : null,
+          sortOrder: input.sortOrder ?? existing?.sortOrder ?? 0,
+        })
       }
     }
 

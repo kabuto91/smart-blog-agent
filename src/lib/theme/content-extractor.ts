@@ -7,6 +7,35 @@ export interface ExtractionResult {
   contentConfig: ContentConfig
 }
 
+/** 只提取导航（nav-list）字段，用于给缺失导航配置的主题补齐可配置入口。 */
+export function extractNavConfig(html: string): Record<string, NavField> {
+  const { contentConfig } = extractContentConfig(html)
+  const nav: Record<string, NavField> = {}
+  for (const [key, field] of Object.entries(contentConfig)) {
+    if (field.type === "nav-list") nav[key] = field as NavField
+  }
+  return nav
+}
+
+/**
+ * 补齐配置中缺失的导航字段：布局 HTML 里存在、但 config 中没有 nav-list 的
+ * 导航（main-nav/footer-nav 等）会用布局里的链接回填，已有导航保持不动。
+ */
+export function mergeMissingNav(
+  config: ContentConfig | undefined | null,
+  layoutHtml: string
+): ContentConfig | null {
+  const merged = { ...(config ?? {}) }
+  const navFields = extractNavConfig(layoutHtml)
+  let changed = false
+  for (const [key, field] of Object.entries(navFields)) {
+    if ((merged[key] as { type?: string } | undefined)?.type === "nav-list") continue
+    merged[key] = field
+    changed = true
+  }
+  return changed ? merged : (config ?? null)
+}
+
 export function extractContentConfig(
   html: string,
   siteConfig?: Record<string, string>
