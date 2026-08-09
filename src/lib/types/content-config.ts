@@ -11,12 +11,16 @@ export type DynamicFieldType =
   | "dynamic-categories"
   | "dynamic-tags"
   | "article-body"
+  | "dynamic-list"
+
+export type CustomListItem = Record<string, string>
 
 export interface DynamicField {
   type: DynamicFieldType
   label: string
   itemTemplate: string
   fieldMapping: Record<string, string>
+  items?: CustomListItem[]
 }
 
 export interface NavItem {

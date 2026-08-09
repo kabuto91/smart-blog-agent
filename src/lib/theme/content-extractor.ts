@@ -1,6 +1,13 @@
 import { JSDOM } from "jsdom"
-import type { ContentConfig, TextField, DynamicField, NavField } from "../types/content-config"
+import type { ContentConfig, TextField, DynamicField, NavField, CustomListItem } from "../types/content-config"
 import { FIELD_DEFINITIONS } from "../field-registry"
+
+const KNOWN_DYNAMIC_TYPES = new Set([
+  "dynamic-articles",
+  "dynamic-categories",
+  "dynamic-tags",
+  "article-body",
+])
 
 export interface ExtractionResult {
   htmlTemplate: string
@@ -60,7 +67,10 @@ export function extractContentConfig(
     if (type === "text") {
       config[unique] = extractTextField(el, unique, siteConfig)
     } else if (type.startsWith("dynamic-") || type === "article-body") {
-      config[unique] = extractDynamicField(el, unique, type as DynamicField["type"])
+      const fieldType: DynamicField["type"] = KNOWN_DYNAMIC_TYPES.has(type)
+        ? (type as DynamicField["type"])
+        : "dynamic-list"
+      config[unique] = extractDynamicField(el, unique, fieldType)
     } else if (type === "nav-list") {
       config[unique] = extractNavField(el, unique)
     }
@@ -182,12 +192,51 @@ function extractDynamicField(el: Element, key: string, type: DynamicField["type"
     }
   }
 
-  return {
+  const result: DynamicField = {
     type,
     label: key,
     itemTemplate: firstChild ? firstChild.outerHTML : "",
     fieldMapping,
   }
+
+  if (type === "dynamic-list" && firstChild) {
+    result.items = extractCustomListItems(el, firstChild, fieldMapping)
+  }
+
+  return result
+}
+
+function extractCustomListItems(
+  container: Element,
+  template: Element,
+  fieldMapping: Record<string, string>
+): CustomListItem[] {
+  const items: CustomListItem[] = []
+  const allChildren = Array.from(container.children)
+
+  for (const child of allChildren) {
+    if (child === template) continue
+
+    const item: CustomListItem = {}
+    for (const fieldName of Object.keys(fieldMapping)) {
+      if (fieldName === "link") {
+        const linkEl =
+          child.tagName.toLowerCase() === "a"
+            ? child
+            : child.querySelector("a[href]")
+        item[fieldName] = linkEl?.getAttribute("href") ?? ""
+      } else {
+        const mapped = child.querySelector(`[data-map="${fieldName}"]`) ?? child
+        item[fieldName] = mapped.textContent?.trim() ?? ""
+      }
+    }
+
+    if (Object.values(item).some((v) => v !== "")) {
+      items.push(item)
+    }
+  }
+
+  return items
 }
 
 function extractNavField(el: Element, key: string): NavField {

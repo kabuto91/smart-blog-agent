@@ -396,7 +396,14 @@ function renderDynamicField(
   dynamicData?: DynamicData
 ): void {
   const container = doc.querySelector(`[data-content="${key}"]`)
-  if (!container || !dynamicData) return
+  if (!container) return
+
+  if (field.type === "dynamic-list") {
+    renderCustomListField(container, field)
+    return
+  }
+
+  if (!dynamicData) return
 
   let isArticlesList = false
   let data: { [key: string]: string }[]
@@ -534,6 +541,71 @@ function renderDynamicField(
       "beforeend",
       buildPaginationNav(dynamicData.pagination)
     )
+  }
+}
+
+function renderCustomListField(container: Element, field: DynamicField): void {
+  const items = field.items ?? []
+  if (items.length === 0) return
+
+  const templateHtml = field.itemTemplate
+  if (!templateHtml) return
+
+  const tempDoc = new JSDOM(templateHtml).window.document
+  const templateEl = tempDoc.body.firstElementChild
+  if (!templateEl) return
+
+  container.innerHTML = ""
+
+  const mappings: [string, string][] =
+    Object.keys(field.fieldMapping).length > 0
+      ? Object.entries(field.fieldMapping)
+      : Array.from(mappedElements(templateEl)).map((el) => {
+          const name = el.getAttribute("data-map")!
+          return [name, name]
+        })
+
+  const labelKey = Object.keys(field.fieldMapping)[0] ?? "name"
+
+  for (const item of items) {
+    const clone = templateEl.cloneNode(true) as Element
+
+    let linkApplied = false
+    for (const [mapKey, dataKey] of mappings) {
+      const targets = mappedElements(clone, mapKey)
+      if (targets.length === 0) continue
+      const value = item[dataKey]
+      if (value === undefined) continue
+      if (mapKey === "link") {
+        linkApplied = true
+        for (const target of targets) {
+          target.setAttribute("href", value)
+        }
+      } else {
+        for (const target of targets) {
+          target.textContent = value
+        }
+      }
+    }
+
+    if (!linkApplied && item.link) {
+      if (clone.tagName.toLowerCase() === "a") {
+        clone.setAttribute("href", item.link)
+      } else {
+        const anchors = clone.querySelectorAll("a[href]")
+        if (anchors.length === 1) {
+          anchors[0].setAttribute("href", item.link)
+        }
+      }
+    }
+
+    const labelEl = mappedElements(clone, labelKey)[0]
+    if (!labelEl && item[labelKey]) {
+      const linkEl = mappedElements(clone, "link")[0]
+      if (linkEl) linkEl.textContent = item[labelKey]
+    }
+
+    container.appendChild(clone)
   }
 }
 

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Plus, Trash2, GripVertical, Loader2, Globe, ExternalLink } from "lucide-react"
 import Link from "next/link"
-import type { ContentConfig, ContentField, NavItem, TextField, NavField } from "@/lib/types/content-config"
+import type { ContentConfig, ContentField, NavItem, TextField, NavField, DynamicField, CustomListItem } from "@/lib/types/content-config"
 import { FIELD_DEFINITIONS } from "@/lib/field-registry"
 import { UrlCombobox, type UrlComboboxOption } from "@/components/admin/url-combobox"
 
@@ -128,6 +128,40 @@ export function ContentEditorDialog({
     })
   }
 
+  function isCustomListConfig(field: ContentField): field is DynamicField {
+    return field.type === "dynamic-list"
+  }
+
+  function updateCustomListItem(key: string, index: number, fieldKey: string, value: string) {
+    const field = config[key] as DynamicField | undefined
+    if (!field || !isCustomListConfig(field)) return
+    const items = (field.items ?? []).map((item, i) =>
+      i === index ? { ...item, [fieldKey]: value } : item
+    )
+    handleConfigChange({ ...config, [key]: { ...field, items } })
+  }
+
+  function addCustomListItem(key: string) {
+    const field = config[key] as DynamicField | undefined
+    if (!field || !isCustomListConfig(field)) return
+    const fields = Object.keys(field.fieldMapping)
+    const newItem: CustomListItem = {}
+    for (const f of fields) newItem[f] = ""
+    handleConfigChange({
+      ...config,
+      [key]: { ...field, items: [...(field.items ?? []), newItem] },
+    })
+  }
+
+  function removeCustomListItem(key: string, index: number) {
+    const field = config[key] as DynamicField | undefined
+    if (!field || !isCustomListConfig(field)) return
+    handleConfigChange({
+      ...config,
+      [key]: { ...field, items: (field.items ?? []).filter((_, i) => i !== index) },
+    })
+  }
+
   function isTextConfig(field: ContentField): field is TextField {
     return field.type === "text"
   }
@@ -151,6 +185,8 @@ export function ContentEditorDialog({
   )
   const navFields = Object.entries(config).filter(([, v]) => isNavConfig(v))
   const dynamicFields = Object.entries(config).filter(([, v]) => isDynamicConfig(v))
+  const systemDynamicFields = dynamicFields.filter(([, v]) => !isCustomListConfig(v))
+  const customListFields = dynamicFields.filter(([, v]) => isCustomListConfig(v))
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -316,13 +352,13 @@ export function ContentEditorDialog({
               )}
 
               {/* Dynamic data sections */}
-              {dynamicFields.length > 0 && (
+              {systemDynamicFields.length > 0 && (
                 <div>
                   <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
                     动态数据
                   </h3>
                   <div className="flex flex-col gap-2">
-                    {dynamicFields.map(([key, field]) => (
+                    {systemDynamicFields.map(([key, field]) => (
                       <div
                         key={key}
                         className="rounded-lg border border-black/[0.08] bg-[#F9F9F8] px-3 py-2"
@@ -333,6 +369,67 @@ export function ContentEditorDialog({
                         </p>
                       </div>
                     ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom list fields */}
+              {customListFields.length > 0 && (
+                <div>
+                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+                    自定义列表
+                  </h3>
+                  <div className="flex flex-col gap-3">
+                    {customListFields.map(([key, field]) => {
+                      const df = field as DynamicField
+                      const items = df.items ?? []
+                      const fieldKeys = Object.keys(df.fieldMapping)
+                      return (
+                        <div key={key} className="rounded-lg border border-black/[0.08] bg-[#F9F9F8] px-3 py-2">
+                          <p className="text-sm font-medium text-[#1C1C1E]">{df.label}</p>
+                          <p className="mt-0.5 text-xs text-[#6B7280]">
+                            字段：{fieldKeys.join("、")}
+                          </p>
+                          <div className="mt-2 flex flex-col gap-2">
+                            {items.map((item, idx) => (
+                              <div key={idx} className="flex flex-col gap-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="shrink-0 text-[10px] text-[#9CA3AF] w-4 text-right">{idx + 1}</span>
+                                  <div className="flex flex-1 flex-wrap gap-1">
+                                    {fieldKeys.map((fk) => (
+                                      <Input
+                                        key={fk}
+                                        placeholder={fk}
+                                        value={item[fk] ?? ""}
+                                        onChange={(e) => updateCustomListItem(key, idx, fk, e.target.value)}
+                                        className="h-7 min-w-0 flex-1 text-xs"
+                                      />
+                                    ))}
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() => removeCustomListItem(key, idx)}
+                                    className="shrink-0 text-red-400 hover:text-red-500"
+                                  >
+                                    <Trash2 className="size-3" />
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => addCustomListItem(key)}
+                              className="mt-1 gap-1"
+                            >
+                              <Plus className="size-3" />
+                              添加项目
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}
