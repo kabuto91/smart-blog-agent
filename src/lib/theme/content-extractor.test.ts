@@ -61,3 +61,50 @@ describe("mergeMissingNav", () => {
     expect(mergeMissingNav(null, html)).toBeNull()
   })
 })
+
+describe("mergeMissingNav 跳过品牌链接", () => {
+  const BRANDED_HTML = `<!DOCTYPE html>
+<body>
+  <nav data-content="main-nav" data-content-type="nav-list">
+    <a href="/blog" class="nav-brand"><span>极简日志</span></a>
+    <a href="/blog">首页</a>
+    <a href="/blog/archive">归档</a>
+  </nav>
+</body>`
+
+  it("提取导航项时排除品牌链接", () => {
+    const config = mergeMissingNav({}, BRANDED_HTML)!
+    const mainNav = config["main-nav"] as NavField
+    expect(mainNav.items).toEqual([
+      { label: "首页", href: "/blog" },
+      { label: "归档", href: "/blog/archive" },
+    ])
+    expect(mainNav.itemTemplate).not.toBeNull()
+    expect(mainNav.itemTemplate).not.toContain("nav-brand")
+    expect(mainNav.itemTemplate).not.toContain("极简日志")
+  })
+
+  it("修复被展平的旧导航：模板套回 li，品牌另存", () => {
+    // 旧版 extractNavField 把品牌模板 <a class=nav-brand> 套在所有链接上
+    const flattened: ContentConfig = {
+      "main-nav": {
+        type: "nav-list",
+        label: "main-nav",
+        items: [
+          { label: "首页", href: "/blog" },
+          { label: "归档", href: "/blog/archive" },
+        ],
+        itemTemplate:
+          '<a href="{href}" class="nav-brand" data-content="blog-title" data-content-type="text">{label}</a>',
+      },
+    }
+    const config = mergeMissingNav(flattened, BRANDED_HTML)!
+    const mainNav = config["main-nav"] as NavField
+    expect(mainNav.itemTemplate).toContain("<li>")
+    expect(mainNav.itemTemplate).not.toContain("nav-brand")
+    expect(mainNav.items).toEqual([
+      { label: "首页", href: "/blog" },
+      { label: "归档", href: "/blog/archive" },
+    ])
+  })
+})
