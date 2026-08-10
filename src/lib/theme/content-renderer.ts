@@ -660,28 +660,60 @@ function renderNavField(doc: Document, key: string, field: NavField): void {
   const tempDoc = new JSDOM(field.itemTemplate).window.document
   const templateEl = tempDoc.body.firstElementChild
 
-  if (!templateEl) {
-    const rendered = field.items
-      .map((item) => field.itemTemplate.replace("{href}", item.href).replace("{label}", item.label))
-      .join("")
-    for (const nav of navs) {
-      nav.innerHTML = rendered
-    }
-    return
-  }
+  const renderedItems = (item: { label: string; href: string }): string =>
+    field.itemTemplate
+      .replace("{href}", item.href)
+      .replace("{label}", item.label)
 
   for (const nav of navs) {
-    nav.innerHTML = ""
+    const host = findNavListHost(nav)
+    const isListHost = host && host.matches("ul, ol")
+
+    const target = host ?? nav
+    target.innerHTML = ""
+
+    if (!templateEl) {
+      target.innerHTML = field.items.map(renderedItems).join("")
+      continue
+    }
+
+    const templateTag = templateEl.tagName.toLowerCase()
+    const wrapInLi =
+      isListHost && templateTag !== "li" && templateTag !== "ul" && templateTag !== "ol"
 
     for (const item of field.items) {
       const clone = templateEl.cloneNode(true) as Element
-      if (clone.tagName.toLowerCase() === "a") {
-        clone.setAttribute("href", item.href)
-      } else if (clone.hasAttribute("data-href")) {
-        clone.setAttribute("data-href", item.href)
+      const linkEl =
+        clone.matches("a, [data-href]")
+          ? clone
+          : clone.querySelector<Element>("a[href], [data-href]")
+      if (linkEl) {
+        if (linkEl.hasAttribute("href")) linkEl.setAttribute("href", item.href)
+        else if (linkEl.hasAttribute("data-href")) linkEl.setAttribute("data-href", item.href)
+        linkEl.textContent = item.label
+      } else {
+        clone.textContent = `${item.label}`
       }
-      clone.textContent = item.label
-      nav.appendChild(clone)
+      if (wrapInLi) {
+        const li = doc.createElement("li")
+        li.appendChild(clone)
+        target.appendChild(li)
+      } else {
+        target.appendChild(clone)
+      }
     }
   }
+}
+
+/** 找到导航里的"链接列表容器"：优先匹配 class 语义（nav-links/nav-menu/menu），再退回 ul/ol */
+function findNavListHost(nav: Element): Element | null {
+  const lists = Array.from(nav.querySelectorAll("ul, ol"))
+  const byClass = lists.find((l) =>
+    /(^|[-_\s])(nav-links|nav-menu|nav_list|menu|links|list)([-_\s]|$)/i.test(
+      (l.getAttribute("class") ?? "") + " " + (l.id ?? "")
+    )
+  )
+  if (byClass) return byClass
+  const byLinks = lists.find((l) => l.querySelector("[href], [data-href]"))
+  return byLinks ?? null
 }

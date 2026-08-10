@@ -39,6 +39,8 @@ export default function ThemesPage() {
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [preview, setPreview] = useState<{ theme: Theme; page: ThemePage } | null>(null)
+  const [previewHtml, setPreviewHtml] = useState("")
+  const [previewLoading, setPreviewLoading] = useState(false)
   const [configEdit, setConfigEdit] = useState<{ theme: Theme; page: ThemePage | null } | null>(null)
   const [htmlEdit, setHtmlEdit] = useState<{ theme: Theme; page: ThemePage | null } | null>(null)
 
@@ -91,6 +93,34 @@ export default function ThemesPage() {
     setThemes((prev) =>
       prev.map((t) => ({ ...t, isActive: t.id === id }))
     )
+  }
+
+  async function openPreview(theme: Theme, page: ThemePage) {
+    setPreview({ theme, page })
+    setPreviewHtml("")
+    setPreviewLoading(true)
+    try {
+      const merged: ContentConfig = { ...(theme.contentConfig ?? {}) }
+      if (page.contentConfig) Object.assign(merged, page.contentConfig)
+      const res = await fetch("/api/themes/render", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          htmlTemplate: injectPageIntoLayout(
+            theme.layoutHtml,
+            page.html,
+            { navClearance: page.type !== "home" }
+          ),
+          contentConfig: merged,
+        }),
+      })
+      const data = await res.json()
+      if (data.html) setPreviewHtml(data.html)
+    } catch {
+      // 预览失败时回退到未渲染模板
+    } finally {
+      setPreviewLoading(false)
+    }
   }
 
   async function handlePageSaved(themeId: string, page: ThemePage | null, html: string) {
@@ -311,7 +341,7 @@ export default function ThemesPage() {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          onClick={() => setPreview({ theme, page })}
+                          onClick={() => openPreview(theme, page)}
                           title="预览页面"
                         >
                           <Eye className="size-3" />
@@ -429,33 +459,38 @@ export default function ThemesPage() {
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm"
           onClick={() => setPreview(null)}
         >
-          <div
-            className="mx-4 flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
-              <span className="text-sm font-medium text-[#1C1C1E]">
-                {preview.theme.name} · {preview.page.name}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPreview(null)}
-              >
-                关闭
-              </Button>
+          <div className="mx-4 flex h-[85vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-black/[0.06] px-4 py-3">
+                <span className="text-sm font-medium text-[#1C1C1E]">
+                  {preview.theme.name} · {preview.page.name}
+                </span>
+                <div className="flex items-center gap-2">
+                  {previewLoading && <Loader2 className="size-3 animate-spin text-[#6B7280]" />}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPreview(null)}
+                  >
+                    关闭
+                  </Button>
+                </div>
+              </div>
+              <iframe
+                srcDoc={
+                  previewHtml ||
+                  injectPageIntoLayout(
+                    preview.theme.layoutHtml,
+                    preview.page.html,
+                    { navClearance: preview.page.type !== "home" }
+                  )
+                }
+                sandbox="allow-scripts"
+                className="flex-1"
+                title="页面预览"
+              />
             </div>
-            <iframe
-              srcDoc={injectPageIntoLayout(
-                preview.theme.layoutHtml,
-                preview.page.html,
-                { navClearance: preview.page.type !== "home" }
-              )}
-              sandbox="allow-scripts"
-              className="flex-1"
-              title="页面预览"
-            />
-          </div>
         </div>
       )}
     </>
