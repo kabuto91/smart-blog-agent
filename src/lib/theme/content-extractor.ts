@@ -305,7 +305,7 @@ function extractNavField(el: Element, key: string): NavField {
     const href = linkEl.getAttribute("href") ?? linkEl.getAttribute("data-href") ?? ""
     items.push({ label, href })
     if (!itemTemplate) {
-      itemTemplate = buildNavTemplate(itemEl, linkEl)
+      itemTemplate = buildNavTemplate(itemEl)
     }
   }
 
@@ -347,7 +347,7 @@ function resolveNavLink(itemEl: Element): Element | null {
 }
 
 /** 生成单个 nav 项的模板：保留归档（li）包裹，只把 href 与 label 占位化。 */
-function buildNavTemplate(itemEl: Element, linkEl: Element): string {
+function buildNavTemplate(itemEl: Element): string {
   const clone = itemEl.cloneNode(true) as Element
   const linkClone = (() => {
     if (clone.matches("a, [data-href]")) return clone

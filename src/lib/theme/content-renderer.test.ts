@@ -68,6 +68,56 @@ describe("renderContent legacy mode", () => {
   })
 })
 
+describe("renderContent nav 结构保留", () => {
+  const config: ContentConfig = {
+    "main-nav": {
+      type: "nav-list",
+      label: "main-nav",
+      items: [
+        { label: "首页", href: "/blog" },
+        { label: "归档", href: "/blog/archive" },
+      ],
+      itemTemplate: '<li><a href="{href}">{label}</a></li>',
+    },
+  }
+  const layout = `<nav class="main-nav" data-content="main-nav" data-content-type="nav-list">
+  <div class="nav-inner">
+    <a href="/blog" class="nav-brand"><span>极简日志</span></a>
+    <ul class="nav-links"><li><a href="/">占位</a></li></ul>
+  </div>
+</nav>`
+
+  it("渲染到 .nav-links 列表容器而非展平导航", () => {
+    const out = renderContent(layout, config, undefined, undefined, {
+      pageSpecific: true,
+    })
+    expect(out).toContain('<ul class="nav-links">')
+    expect(out).toContain("<li><a href=\"/blog\">首页</a></li>")
+    expect(out).toContain("<li><a href=\"/blog/archive\">归档</a></li>")
+    expect(out).toContain('class="nav-brand"')
+    // 不再是品牌模板套在所有链接上
+    expect(out).not.toContain('class="nav-brand">首页')
+  })
+
+  it("无列表容器时退化为直接 a 渲染", () => {
+    const flat = `<nav class="main-nav" data-content="main-nav" data-content-type="nav-list"><a href="/">占位</a></nav>`
+    const out = renderContent(flat, config, undefined, undefined, {
+      pageSpecific: true,
+    })
+    expect(out).toContain('href="/blog">首页</a>')
+    expect(out).toContain('href="/blog/archive">归档</a>')
+  })
+
+  it("页面级内容不被垂直导航遮挡（padding-top 由 --nav-h 驱动）", () => {
+    // 渲染前后都应保留 host 的 padding-top 占位
+    const withHost = `<div data-page-host="" style="padding-top:var(--nav-h,0px)"></div>`
+    const out = renderContent(withHost, {}, undefined, undefined, {
+      pageSpecific: true,
+    })
+    expect(out).toContain('style="padding-top:var(--nav-h,0px)"')
+  })
+})
+
 describe("renderContent author-avatar", () => {
   const AVATAR_URL = "/api/uploads/abc"
 
