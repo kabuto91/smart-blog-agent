@@ -93,6 +93,7 @@ export function renderContent(
     }
   }
 
+  ensureMultipleAvatarPlaces(doc, siteConfig?.["author-avatar"])
   applyAvatarOverflow(doc, siteConfig?.["author-avatar"])
   fillGradientAvatarPlaceholders(doc, siteConfig?.["author-avatar"])
 
@@ -258,6 +259,48 @@ export function ensureAvatarOverflow(html: string): string {
 }
 
 /**
+ * 兜底：确保页面正文区域（[data-page-host]）中至少有一处头像显示。
+ * 导航栏的头像由骨架/SKELETON_SYSTEM_PROMPT 保证，但页面正文区域（hero/作者简介/文章底部）
+ * 的头像依赖 LLM 生成，不一定存在。此函数在渲染完成后检测正文区域，
+ * 若无任何头像标记则自动注入，保证所有页面都至少显示作者头像。
+ */
+export function ensureMultipleAvatarPlaces(doc: Document, avatarUrl?: string): void {
+  if (!avatarUrl) return
+
+  const host = doc.querySelector<HTMLElement>("[data-page-host]")
+  if (!host) return
+
+  // 检查正文区域内是否已有头像元素
+  const hasAvatarInBody =
+    host.querySelector('[data-content="author-avatar"]') ||
+    host.querySelector("img.avatar") ||
+    host.querySelector("img[class*='avatar']") ||
+    Array.from(host.querySelectorAll<HTMLElement>("[class]")).some((el) =>
+      (el.getAttribute("class") || "").toLowerCase().includes("avatar")
+    )
+
+  if (hasAvatarInBody) return
+
+  // 按优先级寻找注入位置：<aside> > 含 author/bio/sidebar 的容器 > 正文首部
+  const targets = [
+    host.querySelector("aside"),
+    host.querySelector<HTMLElement>(
+      "[class*='author'], [class*='bio'], [class*='sidebar'], [class*='widget'], [class*='about']"
+    ),
+  ]
+  const target = targets.find(Boolean)
+
+  const avatarHtml = `<img class="avatar" src="${avatarUrl}" alt="作者头像" style="width:64px;height:64px;border-radius:50%;object-fit:cover;overflow:hidden;">`
+
+  if (target) {
+    target.insertAdjacentHTML("afterbegin", avatarHtml)
+  } else {
+    // 兜底：插入到正文容器最前面
+    host.insertAdjacentHTML("afterbegin", avatarHtml)
+  }
+}
+
+/**
  * 兜底：把「圆形 + 渐变背景」的纯 CSS 头像占位（无 <img>、无 data-content）
  * 用上传的作者头像填充，覆盖生成器只愿用渐变圆圈的情况。
  */
@@ -310,11 +353,7 @@ function applyAvatarOverflow(doc: Document, avatarUrl?: string): void {
       const self = el as HTMLImageElement
       self.style.objectFit = "cover"
       self.style.display = "block"
-      if (
-        avatarUrl &&
-        !el.hasAttribute("data-content") &&
-        (!self.getAttribute("src") || self.getAttribute("src")?.trim() === "")
-      ) {
+      if (avatarUrl && !el.hasAttribute("data-content")) {
         self.setAttribute("src", avatarUrl)
       }
     } else if (img) {
@@ -322,11 +361,7 @@ function applyAvatarOverflow(doc: Document, avatarUrl?: string): void {
       img.style.height = "100%"
       img.style.objectFit = "cover"
       img.style.display = "block"
-      if (
-        avatarUrl &&
-        !el.hasAttribute("data-content") &&
-        (!img.getAttribute("src") || img.getAttribute("src")?.trim() === "")
-      ) {
+      if (avatarUrl && !el.hasAttribute("data-content")) {
         img.setAttribute("src", avatarUrl)
       }
     }
@@ -341,7 +376,6 @@ function augmentGlobalFields(
   if (!siteConfig) return
   for (const [key, value] of Object.entries(siteConfig)) {
     if (!value) continue
-    if (contentConfig[key]) continue
     const el = doc.querySelector(`[data-content="${key}"]`)
     if (!el) continue
     const def = FIELD_DEFINITIONS[key]
@@ -351,6 +385,27 @@ function augmentGlobalFields(
       value,
       source: def?.readonly ? "readonly" : "global",
       globalKey: key,
+    }
+  }
+
+  // 兜底：处理全局字段的衍生 key（如 author-avatar-2），
+  // 使其继承主 key 的值，避免 LLM 生成的重复占位无法被填充
+  for (const [baseKey, value] of Object.entries(siteConfig)) {
+    if (!value) continue
+    if (!FIELD_DEFINITIONS[baseKey]) continue
+    const els = doc.querySelectorAll(`[data-content^="${baseKey}-"]`)
+    for (const el of Array.from(els)) {
+      const key = el.getAttribute("data-content")!
+      const existing = contentConfig[key] as TextField | undefined
+      // 已有非空值则保留，否则用主 key 的值覆盖
+      if (existing && existing.type === "text" && existing.value) continue
+      contentConfig[key] = {
+        type: "text",
+        label: key,
+        value,
+        source: "global",
+        globalKey: baseKey,
+      }
     }
   }
 }
@@ -369,10 +424,10 @@ function renderTextField(doc: Document, key: string, value: string): void {
   const els = Array.from(doc.querySelectorAll(`[data-content="${key}"]`))
   if (els.length === 0) return
 
-  for (const el of els) {
-    // 跳过属于 nav-list 容器的元素，避免覆盖导航标签
-    if (el.closest('[data-content-type="nav-list"]')) continue
+  for (let idx = 0; idx < els.length; idx++) {
+    const el = els[idx]
 
+    // 判断是否为 img 元素（或包含 img 子元素）
     let img: HTMLImageElement | null = null
     if (el.tagName.toLowerCase() === "img") {
       img = el as HTMLImageElement
@@ -381,6 +436,11 @@ function renderTextField(doc: Document, key: string, value: string): void {
       if (first && first.tagName.toLowerCase() === "img") {
         img = first as HTMLImageElement
       }
+    }
+
+    // 跳过属于 nav-list 容器的文字元素，避免覆盖导航标签；img 元素（如头像）不受影响
+    if (!img && el.closest('[data-content-type="nav-list"]')) {
+      continue
     }
 
     if (img) {

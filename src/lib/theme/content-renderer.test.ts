@@ -145,7 +145,7 @@ describe("renderContent author-avatar", () => {
     expect(out).toContain(`src="${AVATAR_URL}"`)
   })
 
-  it(".avatar 内已有非空 src 时不被覆盖", () => {
+  it("管理后台配置的头像会覆盖主题中的占位 src", () => {
     const html = `<div class="avatar"><img src="https://example.com/x.png" alt="头像"></div>`
     const out = renderContent(
       html,
@@ -154,8 +154,7 @@ describe("renderContent author-avatar", () => {
       { "author-avatar": AVATAR_URL },
       { pageSpecific: true }
     )
-    expect(out).toContain('src="https://example.com/x.png"')
-    expect(out).not.toContain(`src="${AVATAR_URL}"`)
+    expect(out).toContain(`src="${AVATAR_URL}"`)
   })
 
   it("未配置全局头像时不注入", () => {
@@ -209,5 +208,126 @@ describe("renderContent 渐变圆形头像占位兜底", () => {
     })
     expect(out).not.toContain("background-image:")
     expect(out).toContain("linear-gradient")
+  })
+})
+
+describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
+  const AVATAR_URL = "/api/uploads/avatar1"
+
+  const withHost = (body: string) =>
+    `<body><nav><a href="/">导航</a></nav><div data-page-host="">${body}</div><footer>尾</footer></body>`
+
+  it("正文区域内无头像标记时，在 aside 顶部注入头像", () => {
+    const html = withHost("<aside><p>侧边栏内容</p></aside>")
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    expect(out).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
+    expect(out).toContain("侧边栏内容")
+  })
+
+  it("正文区域已含 data-content=author-avatar 时不注入", () => {
+    const html = withHost(
+      '<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="头像"><aside><p>内容</p></aside>'
+    )
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    // data-page-host 内的 aside 不应被额外注入头像
+    const hostMatch = out.match(/data-page-host=""[^>]*>([\s\S]*?)<\/div>/)
+    const hostContent = hostMatch?.[1] ?? ""
+    const avatarInHost = hostContent.match(/<img class="avatar"/g)
+    // 只有 renderTextField 填充的那一个，不应多出额外注入
+    expect(avatarInHost?.length ?? 0).toBeLessThanOrEqual(1)
+  })
+
+  it("正文区域已含 class=avatar 的 img 时不注入", () => {
+    const html = withHost(
+      '<div class="avatar"><img src="" alt="头像"></div><aside><p>内容</p></aside>'
+    )
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    const hostMatch = out.match(/data-page-host=""[^>]*>([\s\S]*?)<\/div>/)
+    const hostContent = hostMatch?.[1] ?? ""
+    const avatarInHost = hostContent.match(/<img class="avatar"/g)
+    expect(avatarInHost?.length ?? 0).toBeLessThanOrEqual(1)
+  })
+
+  it("无 aside 但有含 author 类的容器时，注入到该容器", () => {
+    const html = withHost('<div class="author-card"><p>作者简介</p></div>')
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    expect(out).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
+    expect(out).toContain("作者简介")
+  })
+
+  it("无 aside 也无 author 容器时，注入到 data-page-host 顶部", () => {
+    const html = withHost("<p>正文内容</p>")
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    expect(out).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
+  })
+
+  it("无 data-page-host 时不报错", () => {
+    const html = `<body><main><p>无 host</p></main></body>`
+    expect(() =>
+      renderContent(
+        html,
+        {},
+        undefined,
+        { "author-avatar": AVATAR_URL },
+        { pageSpecific: true }
+      )
+    ).not.toThrow()
+  })
+
+  it("未配置头像时不注入", () => {
+    const html = withHost("<aside><p>内容</p></aside>")
+    const out = renderContent(html, {}, undefined, undefined, {
+      pageSpecific: true,
+    })
+    expect(out).not.toContain(`class="avatar" src=`)
+  })
+
+  it("导航栏有头像但正文区域无头像时，正文区域仍会注入", () => {
+    // 模拟：导航栏有 avatar（通过骨架生成），但正文区域没有
+    const html = `<body>
+      <nav><img class="avatar" src="/nav-avatar.png" alt="导航头像"><a href="/">首页</a></nav>
+      <div data-page-host=""><p>正文内容</p></div>
+      <footer>尾</footer>
+    </body>`
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    // 正文区域应被注入头像
+    const hostMatch = out.match(/data-page-host=""[^>]*>([\s\S]*?)<\/div>/)
+    expect(hostMatch?.[1]).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
   })
 })
