@@ -32,7 +32,8 @@ export async function addMessage(
   content: string,
   htmlSnapshot?: string,
   contentConfig?: string,
-  pageSnapshots?: string
+  pageSnapshots?: string,
+  metrics?: string
 ): Promise<void> {
   // Ensure session exists
   const exists = await sessionExists(sessionId)
@@ -48,6 +49,7 @@ export async function addMessage(
       htmlSnapshot: htmlSnapshot || null,
       pageSnapshots: pageSnapshots || null,
       contentConfig: contentConfig || null,
+      metrics: metrics || null,
     },
   })
 

@@ -1,4 +1,4 @@
-import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
+import type { AIMessageChunk } from "@langchain/core/messages"
 import { HumanMessage } from "@langchain/core/messages"
 import { getActiveTheme } from "@/lib/theme/theme"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
@@ -8,8 +8,10 @@ import {
 } from "@/lib/theme/content-renderer"
 import { mergeThemePage } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
+import { extractHtmlFromContent } from "@/agents/theme-agent"
+import { createLLM } from "@/lib/llm/client"
 import type { ContentConfig } from "@/lib/types/content-config"
-import { createThemeAgent, extractHtmlFromContent } from "@/agents/theme-agent"
+import { createSSEStream, SSE_HEADERS } from "@/lib/stream/sse"
 
 export const runtime = "nodejs"
 
@@ -52,13 +54,19 @@ ${themeHtml}
 }
 
 export async function POST(request: Request) {
+  let body: GenerateRequest
   try {
-    const { url } = (await request.json()) as GenerateRequest
-    const route = url?.trim()
-    if (!route) {
-      return Response.json({ error: "请输入链接" }, { status: 400 })
-    }
+    body = (await request.json()) as GenerateRequest
+  } catch {
+    return Response.json({ error: "请求体不是合法 JSON" }, { status: 400 })
+  }
 
+  const route = body.url?.trim()
+  if (!route) {
+    return Response.json({ error: "请输入链接" }, { status: 400 })
+  }
+
+  try {
     const theme = await getActiveTheme()
     if (!theme) {
       return Response.json({ error: "请先创建并启用一个主题" }, { status: 400 })
@@ -67,114 +75,82 @@ export async function POST(request: Request) {
     const prompt = buildPrompt(route, theme.layoutHtml)
     const llmMessages = [new HumanMessage(prompt)]
 
-    // Create streaming response
-    const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder()
+    const stream = createSSEStream(async ({ send, close }) => {
+      const llm = await createLLM(true)
+
+      let fullContent = ""
+      for await (const chunk of await llm.stream(llmMessages)) {
+        const aiChunk = chunk as AIMessageChunk
+        const content = aiChunk.content
+
+        const sendText = (text: string) => {
+          fullContent += text
+          send({ type: "text", content: text })
+        }
+
+        if (typeof content === "string" && content) {
+          sendText(content)
+        } else if (Array.isArray(content)) {
+          for (const block of content as { type?: string; text?: string }[]) {
+            if (block.type === "text" && block.text) sendText(block.text)
+          }
+        }
+
+        if (aiChunk.tool_calls?.length) {
+          for (const tc of aiChunk.tool_calls) {
+            send({ type: "tool_call", name: tc.name, args: tc.args })
+          }
+        }
+      }
+
+      // 解析完整输出中的 HTML
+      const html = extractHtmlFromContent(fullContent)
+
+      if (!html) {
+        console.error(
+          "[pages/generate] 未能从模型输出提取 HTML。输出长度:",
+          fullContent.length,
+          "\n--- 输出尾部 ---\n",
+          fullContent.slice(-3000)
+        )
+      }
+
+      // 从生成的 HTML 提取内容配置（与站点配置匹配）
+      let contentConfigJson = ""
+      let previewHtml = ""
+      let normalizedHtml = html
+      if (html) {
+        const siteConfig = await getSiteConfig()
+        const result = extractContentConfig(html, siteConfig)
+        normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
+        contentConfigJson = JSON.stringify(result.contentConfig)
 
         try {
-          const graph = await createThemeAgent()
-
-          const streamIterable = await graph.stream(
-            { messages: llmMessages },
-            { streamMode: "messages" }
-          )
-
-          let fullContent = ""
-
-          for await (const event of streamIterable) {
-            const messageChunk = event[0] as BaseMessage
-
-            if (messageChunk._getType() !== "ai") continue
-
-            const aiChunk = messageChunk as AIMessageChunk
-            const content = aiChunk.content
-
-            if (typeof content === "string" && content) {
-              fullContent += content
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ type: "text", content })}\n\n`)
-              )
-            } else if (Array.isArray(content)) {
-              for (const block of content) {
-                if (block.type === "text" && block.text) {
-                  fullContent += block.text
-                  controller.enqueue(
-                    encoder.encode(`data: ${JSON.stringify({ type: "text", content: block.text })}\n\n`)
-                  )
-                }
-              }
-            }
-
-            if (aiChunk.tool_calls?.length) {
-              for (const tc of aiChunk.tool_calls) {
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ type: "tool_call", name: tc.name, args: tc.args })}\n\n`)
-                )
-              }
-            }
-          }
-
-          // Parse the complete content to extract HTML
-          const html = extractHtmlFromContent(fullContent)
-
-          if (!html) {
-            console.error(
-              "[pages/generate] 未能从模型输出提取 HTML。输出长度:",
-              fullContent.length,
-              "\n--- 输出尾部 ---\n",
-              fullContent.slice(-3000)
-            )
-          }
-
-          // Extract content config from generated HTML (match against site config)
-          let contentConfigJson = ""
-          let previewHtml = ""
-          let normalizedHtml = html
-          if (html) {
-            const siteConfig = await getSiteConfig()
-            const result = extractContentConfig(html, siteConfig)
-            normalizedHtml = ensureAvatarOverflow(result.htmlTemplate)
-            contentConfigJson = JSON.stringify(result.contentConfig)
-
-            try {
-              const config = (JSON.parse(contentConfigJson) ?? {}) as ContentConfig
-              const siteConfig = await getSiteConfig()
-              const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml, {
-                navClearance: true,
-              })
-              previewHtml = renderContent(mergedHtml, config, undefined, siteConfig, {
-                pageSpecific: true,
-              })
-            } catch {
-              // preview building failed, fall back to raw generated html
-            }
-          }
-
-          // Send completion signal with generated HTML and content config
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "done", html: normalizedHtml, previewHtml, contentConfig: contentConfigJson })}\n\n`)
-          )
-        } catch (error) {
-          const errorMsg = error instanceof Error ? error.message : "未知错误"
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ type: "error", error: errorMsg })}\n\n`)
-          )
-        } finally {
-          controller.close()
+          const config = (JSON.parse(contentConfigJson) ?? {}) as ContentConfig
+          const siteConfig = await getSiteConfig()
+          const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml, {
+            navClearance: true,
+          })
+          previewHtml = renderContent(mergedHtml, config, undefined, siteConfig, {
+            pageSpecific: true,
+          })
+        } catch {
+          // preview 构建失败时回退到原始生成 HTML
         }
-      },
+      }
+
+      send({
+        type: "done",
+        html: normalizedHtml,
+        previewHtml,
+        contentConfig: contentConfigJson,
+      })
+      close()
     })
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    })
+    return new Response(stream, { headers: SSE_HEADERS })
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "未知错误"
-    return Response.json({ error: msg }, { status: 500 })
+    const message = error instanceof Error ? error.message : "未知错误"
+    return Response.json({ error: message }, { status: 500 })
   }
 }
