@@ -33,6 +33,7 @@ interface Message {
   thinkingVisible?: boolean
   imageId?: string
   imageUrl?: string
+  metrics?: ThemeMetrics
 }
 
 interface ThemeGenerateDialogProps {
@@ -51,6 +52,54 @@ const PAGE_TABS = [
   { type: "detail", label: "文章详情页" },
 ]
 
+interface ThemeMetrics {
+  stages: Record<string, number>
+  totalMs: number
+  reviseCount: number
+  pageCount: number
+  qualityScore: number
+  iteration: boolean
+}
+
+/** Agent 各阶段的中文名与展示顺序。 */
+const STAGE_META: Record<string, { label: string; order: number }> = {
+  planner: { label: "规划设计方向", order: 1 },
+  skeleton: { label: "生成主题骨架", order: 2 },
+  page_home: { label: "首页", order: 3 },
+  page_list: { label: "文章列表页", order: 4 },
+  page_detail: { label: "文章详情页", order: 5 },
+  validator: { label: "校验骨架一致性", order: 6 },
+  judge: { label: "评估设计质量", order: 7 },
+  revise: { label: "修订页面", order: 8 },
+  commit: { label: "保存会话快照", order: 9 },
+}
+const STAGE_LIST = Object.entries(STAGE_META)
+  .sort((a, b) => a[1].order - b[1].order)
+  .map(([key]) => key)
+
+const PRESETS = [
+  {
+    label: "极简杂志风",
+    prompt:
+      "我想要一个极简杂志风格的博客：米白底色、黑色衬线标题、居中单栏布局，留白充足。",
+  },
+  {
+    label: "复古未来",
+    prompt:
+      "复古未来风格：深蓝紫渐变背景、霓虹点缀色、圆角卡片，带一点 80 年代科幻感。",
+  },
+  {
+    label: "日式侘寂",
+    prompt:
+      "日式侘寂风格：亚麻灰与陶土色、粗粝质感、手写感标题、极简不对称布局。",
+  },
+  {
+    label: "工业实用",
+    prompt:
+      "工业实用风格：深色金属质感、荧光黄强调色、粗黑标题、信息密集的两栏布局。",
+  },
+]
+
 export function ThemeGenerateDialog({
   open,
   onOpenChange,
@@ -64,6 +113,10 @@ export function ThemeGenerateDialog({
   const [currentThinking, setCurrentThinking] = useState<string[]>([])
   const [toolStatus, setToolStatus] = useState("")
   const [warnings, setWarnings] = useState<string[]>([])
+  const [stageState, setStageState] = useState<
+    Record<string, "running" | "done">
+  >({})
+  const [stageDetail, setStageDetail] = useState<Record<string, string>>({})
   const [activePageType, setActivePageType] = useState("home")
   const [targetPage, setTargetPage] = useState<"skeleton" | "home" | "list" | "detail">("skeleton")
   const [selectedImage, setSelectedImage] = useState<{ id: string; url: string } | null>(null)
@@ -92,6 +145,8 @@ export function ThemeGenerateDialog({
     setCurrentThinking([])
     setToolStatus("")
     setWarnings([])
+    setStageState({})
+    setStageDetail({})
     setSelectedImage(null)
 
     const userMsgId = crypto.randomUUID()
@@ -189,6 +244,18 @@ export function ThemeGenerateDialog({
               ? (event.args as { query?: string }).query
               : undefined)
             setToolStatus(query ? `正在搜索图片：${query}` : "正在搜索图片...")
+          } else if (event.type === "stage") {
+            const stage = event.stage as string
+            if (event.status === "done") {
+              setStageState((prev) => ({ ...prev, [stage]: "done" }))
+              if (typeof event.detail === "string" && event.detail) {
+                setStageDetail((prev) => ({ ...prev, [stage]: event.detail }))
+              }
+            } else {
+              setStageState((prev) => ({ ...prev, [stage]: "running" }))
+            }
+          } else if (event.type === "metrics") {
+            updateMsg({ metrics: event.metrics as ThemeMetrics })
           } else if (event.type === "error") {
             setError(event.error)
           } else if (event.type === "warn") {
@@ -389,46 +456,71 @@ export function ThemeGenerateDialog({
                               </div>
                             )}
                             <div className="mt-2 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
-                              <div className="flex flex-col gap-0.5 py-0.5">
-                                <div className="flex items-center gap-2">
-                                  {loading && !msg.pageContents?.["skeleton"] ? (
-                                    <Loader2 className="size-3 animate-spin" />
-                                  ) : (
-                                    <span className="text-[#16A34A]">✓</span>
-                                  )}
-                                  <span className="font-medium">骨架布局</span>
-                                  {msg.pageContents?.["skeleton"] && (
-                                    <span className="text-[#16A34A]">已生成</span>
-                                  )}
-                                </div>
-                              </div>
-                              {PAGE_TABS.map((tab) => {
-                                const content = msg.pageContents?.[tab.type] ?? ""
-                                const done = msg.pagesDone?.includes(tab.type)
-                                const running = loading && !done && content.length === 0
-                                return (
-                                  <div key={tab.type} className="flex flex-col gap-0.5 py-0.5">
-                                    <div className="flex items-center gap-2">
-                                      {done ? (
-                                        <span className="text-[#16A34A]">✓</span>
-                                      ) : running ? (
-                                        <Loader2 className="size-3 animate-spin" />
-                                      ) : (
-                                        <span className="text-[#E5A83D]">●</span>
-                                      )}
-                                      <span className="font-medium">
-                                        {tab.label}
-                                      </span>
-                                      {done && <span className="text-[#16A34A]">已生成</span>}
-                                    </div>
-                                    {content && (
-                                      <div className="mt-1 whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] leading-relaxed text-[#6B7280]">
-                                        {content.slice(-300)}
+                              <div className="flex flex-col">
+                                {(() => {
+                                  const started = Object.keys(stageState)
+                                  const maxOrder =
+                                    started.length > 0
+                                      ? Math.max(
+                                          ...started.map(
+                                            (s) => STAGE_META[s]?.order ?? 0
+                                          )
+                                        )
+                                      : 0
+                                  return STAGE_LIST.filter(
+                                    (stage) =>
+                                      stage !== "pages" &&
+                                      (stageState[stage] ||
+                                        (STAGE_META[stage]?.order ?? 0) <=
+                                          maxOrder)
+                                  ).map((stage) => {
+                                    const meta = STAGE_META[stage]
+                                    const status = stageState[stage]
+                                    const done = status === "done"
+                                    const running = status === "running"
+                                    const detail = stageDetail[stage]
+                                    const pageKey =
+                                      stage === "skeleton"
+                                        ? "skeleton"
+                                        : stage.replace("page_", "")
+                                    const preview = msg.pageContents?.[pageKey] ?? ""
+                                    return (
+                                      <div
+                                        key={stage}
+                                        className="flex flex-col gap-0.5 py-0.5"
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          {done ? (
+                                            <span className="text-[#16A34A]">✓</span>
+                                          ) : running ? (
+                                            <Loader2 className="size-3 animate-spin" />
+                                          ) : (
+                                            <span className="text-[#E5A83D]">●</span>
+                                          )}
+                                          <span className="font-medium">
+                                            {meta?.label ?? stage}
+                                          </span>
+                                          {done && (
+                                            <span className="text-[#16A34A]">
+                                              已生成
+                                            </span>
+                                          )}
+                                          {done && detail && (
+                                            <span className="max-w-[40%] truncate text-[#6B7280]/70">
+                                              {detail}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {preview && (
+                                          <div className="mt-1 whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] leading-relaxed text-[#6B7280]">
+                                            {preview.slice(-300)}
+                                          </div>
+                                        )}
                                       </div>
-                                    )}
-                                  </div>
-                                )
-                              })}
+                                    )
+                                  })
+                                })()}
+                              </div>
                             </div>
                           </div>
                         )}
@@ -498,6 +590,39 @@ export function ThemeGenerateDialog({
                             />
                           </div>
                         )}
+
+                        {/* Run metrics */}
+                        {msg.metrics && (
+                          <div className="ml-1 rounded-lg border border-black/[0.06] bg-[#FAF9F6] px-3 py-2 text-[11px] text-[#6B7280]">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <span>
+                                总耗时{" "}
+                                {(msg.metrics.totalMs / 1000).toFixed(1)}s
+                              </span>
+                              {msg.metrics.qualityScore > 0 && (
+                                <span>质量分 {msg.metrics.qualityScore}</span>
+                              )}
+                              {msg.metrics.reviseCount > 0 && (
+                                <span>修订 {msg.metrics.reviseCount} 轮</span>
+                              )}
+                              <span>
+                                页面 {msg.metrics.pageCount}/3
+                              </span>
+                            </div>
+                            {Object.keys(msg.metrics.stages).length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                                {Object.entries(msg.metrics.stages).map(
+                                  ([key, ms]) => (
+                                    <span key={key}>
+                                      {STAGE_META[key]?.label ?? key}{" "}
+                                      {(ms / 1000).toFixed(1)}s
+                                    </span>
+                                  )
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -537,6 +662,24 @@ export function ThemeGenerateDialog({
                   {w}
                 </p>
               ))}
+
+              {messages.length === 0 && !loading && (
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-[#6B7280]">快速开始：</span>
+                  {PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      onClick={() => {
+                        setInputValue(preset.prompt)
+                        textareaRef.current?.focus()
+                      }}
+                      className="rounded-md border border-[#E5A83D]/30 bg-[#E5A83D]/5 px-2 py-0.5 text-xs text-[#8a6d1f] transition-colors hover:bg-[#E5A83D]/15"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {messages.length > 0 && (
                 <div className="mb-2 flex flex-wrap items-center gap-2">

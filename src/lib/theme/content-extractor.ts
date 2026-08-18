@@ -35,9 +35,16 @@ export function mergeMissingNav(
   const merged = { ...(config ?? {}) }
   const navFields = extractNavConfig(layoutHtml)
   let changed = false
-  for (const [key, field] of Object.entries(navFields)) {
-    if ((merged[key] as { type?: string } | undefined)?.type === "nav-list") continue
-    merged[key] = field
+  for (const [key, fresh] of Object.entries(navFields)) {
+    const existing = merged[key] as NavField | undefined
+    if (existing?.type === "nav-list") {
+      // 已有导航保持不动，除非是被品牌模板污染而展平的损坏配置
+      if (!isFlattenedNav(existing, fresh)) continue
+      merged[key] = fresh
+      changed = true
+      continue
+    }
+    merged[key] = fresh
     changed = true
   }
   return changed ? merged : (config ?? null)
@@ -69,8 +76,8 @@ export function repairBrokenNav(
 function isFlattenedNav(existing: NavField, fresh: NavField): boolean {
   const freshTags = /<(ul|ol|li)\b/i.test(fresh.itemTemplate)
   const existingTags = /<(ul|ol|li)\b/i.test(existing.itemTemplate)
-  // 布局里有列表容器但配置模板是纯 <a>（展平标志）
-  if (freshTags && !existingTags) return true
+  // 布局里有列表结构但配置模板是纯 <a>（展平标志），且模板被品牌标记污染才视为损坏
+  if (freshTags && !existingTags && isBrandTemplate(existing.itemTemplate)) return true
   // items 里混入了站点标题类文本、且与布局品牌链接一致
   const brandTexts = extractBrandTexts(fresh.itemTemplate)
   if (
@@ -80,6 +87,11 @@ function isFlattenedNav(existing: NavField, fresh: NavField): boolean {
     return true
   }
   return false
+}
+
+/** 导航项模板是否混入了品牌标记（.nav-brand / .logo / data-content 字段）。 */
+function isBrandTemplate(itemTemplate: string): boolean {
+  return /\bnav-brand\b|\blogo\b|\bdata-content\s*=/i.test(itemTemplate)
 }
 
 function extractBrandTexts(itemTemplate: string): string[] {
@@ -330,12 +342,21 @@ function findNavListHost(nav: Element): Element | null {
   return byLinks ?? null
 }
 
-/** 收集列表容器里的 nav 项元素：优先 li，退回直接的 a / [data-href]。 */
+/** 品牌元素（logo / 站点标题链接）不算导航项。 */
+function isBrandElement(el: Element): boolean {
+  if (/\bnav-brand\b|\blogo\b/i.test(el.getAttribute("class") ?? "")) return true
+  return el.querySelector(".nav-brand, .logo") !== null
+}
+
+/** 收集列表容器里的 nav 项元素：优先 li，退回直接的 a / [data-href]，跳过品牌元素。 */
 function collectNavItemElements(host: Element): Element[] {
-  const lis = Array.from(host.children).filter((c) => c.tagName.toLowerCase() === "li")
+  const lis = Array.from(host.children).filter(
+    (c) => c.tagName.toLowerCase() === "li" && !isBrandElement(c)
+  )
   if (lis.length > 0) return lis
-  return Array.from(host.children).filter((c) =>
-    c.matches("a[href], [data-href], button[data-href]")
+  return Array.from(host.children).filter(
+    (c) =>
+      c.matches("a[href], [data-href], button[data-href]") && !isBrandElement(c)
   )
 }
 
@@ -346,15 +367,20 @@ function resolveNavLink(itemEl: Element): Element | null {
   return anchor ?? null
 }
 
-/** 生成单个 nav 项的模板：保留归档（li）包裹，只把 href 与 label 占位化。 */
+/** 生成单个 nav 项的模板：保留归档（li）包裹，只把 href 与 label 占位化；裸 <a> 套回 <li> 恢复列表结构。 */
 function buildNavTemplate(itemEl: Element): string {
   const clone = itemEl.cloneNode(true) as Element
   const linkClone = (() => {
-    if (clone.matches("a, [data-href]")) return clone
+    if (clone.matches("a[href], [data-href]")) return clone
     return clone.querySelector<Element>("a[href], [data-href]")
   })() as Element
   if (linkClone.hasAttribute("href")) linkClone.setAttribute("href", "{href}")
   else if (linkClone.hasAttribute("data-href")) linkClone.setAttribute("data-href", "{href}")
   linkClone.textContent = "{label}"
+  if (clone.matches("a[href], [data-href]")) {
+    const li = clone.ownerDocument.createElement("li")
+    li.appendChild(clone)
+    return li.outerHTML
+  }
   return clone.outerHTML
 }
