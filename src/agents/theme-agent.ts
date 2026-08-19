@@ -53,7 +53,7 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
 【骨架应包含】
 1. <head> 中的完整 <style>：这是整站设计系统，所有页面共享。
    - 用 CSS 变量（:root）统一管理配色、字体、字号阶梯、行高、间距、圆角、阴影、动效参数
-   - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body/.article-cover）、标签等
+   - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
    - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。若导航为 position: fixed，页面正文将由布局读取该变量自动让位，.data-page-host 无需、也不应自行写 padding-top。
 2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把：root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）需放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充），并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
@@ -110,6 +110,15 @@ export function buildPageSystemPrompt(
   context: string
 ): string {
   const spec = PAGE_SPEC[pageType]
+  const imageRule =
+    pageType === "detail"
+      ? `【图片规则】
+本页（文章详情页）正文不含封面或配图，文章配图会随正文内容自动渲染（data-map="body"）。底部可放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；该元素不要标记 data-page-type）。`
+      : `【图片规则】
+可使用 search_image 工具搜索二次元图片素材（Hero/横幅背景图、文章缩略图、插画装饰等），工具返回 /api/uploads/ 开头的本地地址，可直接写入 <img src> 或 CSS background-image。搜索到的图片会附加 dominantColors（主要颜色）与 brightness（整体明暗），请挑选与主题色板匹配、明暗与主题一致的图片。
+不使用其它任何外部图片 URL，也不要编造图片地址；唯一始终允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；【必须】在首页 hero/作者简介栏放置，与骨架导航中的头像共用同一 data-content，会同时填充；该头像区域不要标记 data-page-type，确保所有页面都能显示）。
+除作者头像外，没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。`
+
   return `你是一个博客「${spec.context}」的正文设计者。请基于给定的共享骨架（其样式/类名/设计语言已由骨架阶段产出）输出该页面正文。
 
 ${context}
@@ -124,10 +133,7 @@ ${spec.bodyPrompt}
 ${FIELD_REFERENCE}
 示例：<h1 data-content="blog-title" data-content-type="text">我的博客</h1>
 
-【图片规则】
-可使用 search_image 工具搜索二次元图片素材（Hero/横幅背景图、文章缩略图、插画装饰等），工具返回 /api/uploads/ 开头的本地地址，可直接写入 <img src> 或 CSS background-image。搜索到的图片会附加 dominantColors（主要颜色）与 brightness（整体明暗），请挑选与主题色板匹配、明暗与主题一致的图片。
-不使用其它任何外部图片 URL，也不要编造图片地址；唯一始终允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；【必须】在首页 hero/作者简介栏放置，与骨架导航中的头像共用同一 data-content，会同时填充；该头像区域不要标记 data-page-type，确保所有页面都能显示）。
-除作者头像外，没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
+${imageRule}
 
 用中文填充占位内容，保持精致设计与骨架视觉语言完全一致。直接输出正文 HTML，不要额外解释性文字。`
 }
@@ -136,7 +142,10 @@ ${FIELD_REFERENCE}
  * 从骨架 HTML 提炼出紧凑的"视觉契约"，供各页面生成器参考，
  * 避免把整份骨架 HTML 重复注入每个页面 prompt。
  */
-export function buildPagePromptContext(skeletonHtml: string): string {
+export function buildPagePromptContext(
+  skeletonHtml: string,
+  pageType?: ThemePageType
+): string {
   const dom = new JSDOM(skeletonHtml)
   const doc = dom.window.document
 
@@ -156,7 +165,11 @@ export function buildPagePromptContext(skeletonHtml: string): string {
     if (href) navLinks.push(`${text} -> ${href}`)
   }
 
-  const classManifest = getManifestClasses(skeletonHtml)
+  const classManifest = getManifestClasses(skeletonHtml, {
+    // 详情页不展示封面相关类，避免诱导生成封面/头图区块
+    exclude:
+      pageType === "detail" ? (cls) => /\bcover\b/i.test(cls) : undefined,
+  })
   const manifestText =
     classManifest.length > 0
       ? classManifest.join(", ")
@@ -178,7 +191,10 @@ export function buildPagePromptContext(skeletonHtml: string): string {
 }
 
 /** 从骨架 HTML + CSS 提取既有的可复用类名清单。 */
-function getManifestClasses(skeletonHtml: string): string[] {
+function getManifestClasses(
+  skeletonHtml: string,
+  options?: { exclude?: (cls: string) => boolean }
+): string[] {
   const dom = new JSDOM(skeletonHtml)
   const doc = dom.window.document
   const set = new Set<string>()
@@ -198,5 +214,7 @@ function getManifestClasses(skeletonHtml: string): string[] {
     }
   }
 
-  return Array.from(set).sort()
+  return Array.from(set)
+    .filter((cls) => !options?.exclude?.(cls))
+    .sort()
 }

@@ -399,17 +399,17 @@ export function ThemeGenerateDialog({
       <DialogPortal>
         <DialogOverlay />
         <DialogContent
-          className="sm:max-w-3xl lg:max-w-4xl"
+          className="overflow-hidden sm:max-w-3xl lg:max-w-4xl"
           showCloseButton={false}
         >
-          <div className="flex max-h-[80vh] flex-col">
+          <div className="flex max-h-[80vh] min-w-0 flex-col">
             <DialogTitle className="flex items-center gap-2 pb-3 text-[#1C1C1E]">
               <Sparkles className="size-4 text-[#E5A83D]" />
               生成新主题
             </DialogTitle>
 
             {/* Messages area */}
-            <div className="min-h-[200px] flex-1 overflow-y-auto pr-1">
+            <div className="min-h-[200px] flex-1 overflow-y-auto overflow-x-hidden pr-1">
               {messages.length === 0 && !loading && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Sparkles className="size-8 text-[#E5A83D]/40" />
@@ -427,7 +427,7 @@ export function ThemeGenerateDialog({
                   <div key={msg.id} className="flex flex-col gap-2">
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
-                        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-[#E5A83D] px-4 py-2.5 text-sm text-[#181A1E]">
+                        <div className="max-w-[85%] break-words rounded-2xl rounded-br-md bg-[#E5A83D] px-4 py-2.5 text-sm text-[#181A1E]">
                           {msg.imageUrl && (
                             <div className="mb-2">
                               <img
@@ -512,7 +512,7 @@ export function ThemeGenerateDialog({
                                           )}
                                         </div>
                                         {preview && (
-                                          <div className="mt-1 whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] leading-relaxed text-[#6B7280]">
+                                          <div className="mt-1 break-words whitespace-pre-wrap rounded bg-white/70 p-2 text-[11px] leading-relaxed text-[#6B7280]">
                                             {preview.slice(-300)}
                                           </div>
                                         )}
@@ -536,11 +536,11 @@ export function ThemeGenerateDialog({
                               {msg.thinkingVisible ? "收起思考过程" : "查看思考过程"}
                             </button>
                             {msg.thinkingVisible && (
-                              <div className="mt-2 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
+                              <div className="mt-2 break-words rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
                                 {msg.thinking.map((step, i) => (
                                   <div key={i} className="flex items-start gap-2">
                                     <span className="mt-0.5 text-[#E5A83D]">•</span>
-                                    <span>{step}</span>
+                                    <span className="min-w-0 break-words">{step}</span>
                                   </div>
                                 ))}
                               </div>
@@ -630,17 +630,17 @@ export function ThemeGenerateDialog({
 
                 {/* Current streaming content */}
                 {loading && toolStatus && (
-                  <div className="flex items-center gap-1.5 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
+                  <div className="flex items-center gap-1.5 break-words rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
                     <Loader2 className="size-3 animate-spin" />
-                    <span>{toolStatus}</span>
+                    <span className="min-w-0 break-words">{toolStatus}</span>
                   </div>
                 )}
                 {loading && currentThinking.length > 0 && (
-                  <div className="flex flex-col gap-1.5 rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
+                  <div className="flex flex-col gap-1.5 break-words rounded-lg bg-[#F5F4F1] p-3 text-xs text-[#6B7280]">
                     {currentThinking.map((step, i) => (
                       <div key={i} className="flex items-start gap-2 animate-in fade-in">
                         <span className="mt-0.5 text-[#E5A83D]">•</span>
-                        <span>{step}</span>
+                        <span className="min-w-0 break-words">{step}</span>
                       </div>
                     ))}
                   </div>
@@ -652,12 +652,12 @@ export function ThemeGenerateDialog({
 
             {/* Input area */}
             <div className="mt-4 border-t border-black/[0.06] pt-4">
-              {error && <p className="mb-2 text-sm text-red-500">{error}</p>}
+              {error && <p className="mb-2 break-words text-sm text-red-500">{error}</p>}
 
               {warnings.map((w) => (
                 <p
                   key={w}
-                  className="mb-2 text-sm text-amber-600"
+                  className="mb-2 break-words text-sm text-amber-600"
                 >
                   {w}
                 </p>

@@ -331,7 +331,8 @@ function makeDispatchNode(ctx: NodeContext) {
 function makePageNode(pageType: ThemePageType, ctx: NodeContext) {
   return async function pageNode(state: GraphState) {
     const context = buildPagePromptContext(
-      ensureLayoutContract(state.layoutHtml)
+      ensureLayoutContract(state.layoutHtml),
+      pageType
     )
     let userContent = state.userRequest
     if (state.designBrief) userContent += `\n\n【设计简报】\n${state.designBrief}`
