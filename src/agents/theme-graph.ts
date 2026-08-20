@@ -7,9 +7,8 @@ import {
   Command,
   MemorySaver,
 } from "@langchain/langgraph"
-import { ToolNode } from "@langchain/langgraph/prebuilt"
 import { SystemMessage, HumanMessage } from "@langchain/core/messages"
-import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
+import type { BaseMessage } from "@langchain/core/messages"
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { createLLM } from "@/lib/llm/client"
 import { extractContentConfig } from "@/lib/theme/content-extractor"
@@ -22,7 +21,6 @@ import {
   type PageFragmentIssue,
 } from "@/lib/theme/theme-splitter"
 import { addMessage } from "@/lib/theme/theme-session"
-import { searchImageTool } from "@/agents/tools/image-search"
 import {
   PAGE_TYPES,
   SKELETON_SYSTEM_PROMPT,
@@ -148,40 +146,6 @@ type GraphState = typeof ThemeStateAnnotation.State
 // 工具 loop：模型调用 + 工具回流，token 经 callbacks 进入 graph 的 messages 流
 // ---------------------------------------------------------------------------
 
-interface AgentModel {
-  invoke: (messages: BaseMessage[]) => Promise<AIMessageChunk>
-}
-
-function bindTools(
-  llm: BaseChatModel,
-  tools: unknown[]
-): AgentModel {
-  if (!llm.bindTools) throw new Error("LLM 不支持工具绑定")
-  return llm.bindTools(tools as never) as unknown as AgentModel
-}
-
-async function runAgenticLoop(
-  model: AgentModel,
-  toolNode: ToolNode,
-  messages: BaseMessage[],
-  pageKey: string,
-  emitter?: ThemeGraphEmitter
-): Promise<BaseMessage[]> {
-  const MAX_TOOL_ROUNDS = 3
-  let current = messages
-  for (let i = 0; i < MAX_TOOL_ROUNDS; i++) {
-    const response = await model.invoke(current)
-    const toolCalls = response.tool_calls ?? []
-    if (toolCalls.length === 0) return [...current, response]
-    for (const tc of toolCalls) {
-      emitter?.tool(pageKey, tc.name, tc.args)
-    }
-    const toolResults = await toolNode.invoke([response])
-    current = [...current, response, ...toolResults]
-  }
-  return current
-}
-
 function messageText(msg: BaseMessage | undefined): string {
   if (!msg) return ""
   const content = msg.content
@@ -261,8 +225,6 @@ async function generateDesignBrief(
 function makeSkeletonNode(ctx: NodeContext) {
   return async function skeletonNode(state: GraphState) {
     ctx.emitter?.stage("skeleton", "生成主题骨架", "start")
-    const model = bindTools(ctx.llm, [searchImageTool])
-    const toolNode = new ToolNode([searchImageTool])
 
     let userContent = state.userRequest
     if (state.designBrief) userContent += `\n\n【设计简报】\n${state.designBrief}`
@@ -270,14 +232,11 @@ function makeSkeletonNode(ctx: NodeContext) {
       userContent += `\n\n【之前的骨架（保持其风格，按新需求调整）】\n\`\`\`html\n${state.prevLayout}\n\`\`\``
     }
 
-    const messages = await runAgenticLoop(
-      model,
-      toolNode,
-      [new SystemMessage(SKELETON_SYSTEM_PROMPT), new HumanMessage(userContent)],
-      "skeleton",
-      ctx.emitter
-    )
-    const html = extractHtmlFromContent(messageText(messages[messages.length - 1]))
+    const response = await ctx.llm.invoke([
+      new SystemMessage(SKELETON_SYSTEM_PROMPT),
+      new HumanMessage(userContent),
+    ])
+    const html = extractHtmlFromContent(messageText(response))
     if (!html) throw new Error("骨架生成失败：未能提取 HTML")
     const layoutHtml = ensureAvatarOverflow(ensureLayoutContract(html))
     const layoutConfigJson = JSON.stringify(
@@ -345,20 +304,12 @@ function makePageNode(pageType: ThemePageType, ctx: NodeContext) {
       userContent += `\n\n【上一轮校验反馈，必须修复】\n${feedback}`
     }
 
-    const model = bindTools(ctx.llm, [searchImageTool])
-    const toolNode = new ToolNode([searchImageTool])
-    const messages = await runAgenticLoop(
-      model,
-      toolNode,
-      [
-        new SystemMessage(buildPageSystemPrompt(pageType, context)),
-        new HumanMessage(userContent),
-      ],
-      pageType,
-      ctx.emitter
-    )
+    const response = await ctx.llm.invoke([
+      new SystemMessage(buildPageSystemPrompt(pageType, context)),
+      new HumanMessage(userContent),
+    ])
 
-    const rawText = messageText(messages[messages.length - 1])
+    const rawText = messageText(response)
     let html = extractHtmlFromContent(rawText)
     if (!html) html = rawText
     html = ensureAvatarOverflow(html)

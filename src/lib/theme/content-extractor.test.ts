@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { mergeMissingNav } from "@/lib/theme/content-extractor"
-import type { ContentConfig, NavField } from "@/lib/types/content-config"
+import { mergeMissingNav, extractContentConfig } from "@/lib/theme/content-extractor"
+import type { ContentConfig, NavField, DynamicField } from "@/lib/types/content-config"
 
 const NAV_HTML = `<!DOCTYPE html>
 <html>
@@ -106,5 +106,49 @@ describe("mergeMissingNav 跳过品牌链接", () => {
       { label: "首页", href: "/blog" },
       { label: "归档", href: "/blog/archive" },
     ])
+  })
+})
+
+describe("extractContentConfig 动态列表项模板", () => {
+  it("首子元素是整块面板时，钻取到真正列表项作为模板", () => {
+    const html = `<section class="section" data-content="article-list" data-content-type="dynamic-articles">
+      <div class="container">
+        <h2 class="section-title">近期文章</h2>
+        <ul class="archive-list">
+          <li class="archive-item" data-map="template">
+            <span class="archive-item__date" data-map="date">2024.03.01</span>
+            <a href="#" class="archive-item__title" data-map="link">模板标题</a>
+            <span class="archive-item__cat" data-map="category">设计</span>
+          </li>
+          <li class="archive-item">
+            <span class="archive-item__date">2024.02.22</span>
+            <a href="/blog/a-sample-slug" class="archive-item__title">示例</a>
+            <span class="archive-item__cat">设计</span>
+          </li>
+        </ul>
+        <div style="text-align:center"><a href="/blog/archive" class="btn">查看归档</a></div>
+      </div>
+    </section>`
+    const { contentConfig } = extractContentConfig(html)
+    const field = contentConfig["article-list"] as DynamicField
+    expect(field.type).toBe("dynamic-articles")
+    expect(field.itemTemplate).toContain("<li")
+    expect(field.itemTemplate).not.toContain("近期文章")
+    expect(field.itemTemplate).not.toContain("查看归档")
+    expect(field.itemTemplate).not.toContain("<ul")
+  })
+
+  it("首子元素即列表项时保持原模板不变", () => {
+    const html = `<ul class="archive-list" data-content="articles" data-content-type="dynamic-articles">
+      <li class="archive-item">
+        <time class="archive-item__date" data-map="date">2023.10.24</time>
+        <a href="#" class="archive-item__title" data-map="link"><span data-map="title">模板</span></a>
+        <span class="archive-item__cat" data-map="category">设计</span>
+      </li>
+    </ul>`
+    const { contentConfig } = extractContentConfig(html)
+    const field = contentConfig["articles"] as DynamicField
+    expect(field.itemTemplate).toContain("<li")
+    expect(field.itemTemplate).toContain('data-map="title"')
   })
 })

@@ -63,9 +63,8 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
    后续三个页面的正文会被依次填入这里。除该占位节点外，骨架不要包含其它正文内容。
 
 【图片规则】
-- 可使用 search_image 工具搜索二次元图片素材（Hero/横幅背景图、作者头像、文章缩略图、插画装饰等），工具返回 /api/uploads/ 开头的本地地址，可直接写入 <img src> 或 CSS background-image。搜索到的图片会附加 dominantColors（主要颜色）与 brightness（整体明暗），请挑选与主题色板匹配的图片。
-- 不使用其它任何外部图片 URL，也不要编造图片地址；唯一始终允许的例外是作者头像占位 <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充，见上方导航要求）。
-- 没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计即可。
+- 不要使用任何图片素材（包括外部图片 URL 或编造的图片地址），一律以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
+- 唯一允许的例外是作者头像占位 <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充，见上方导航要求）。
 
 【内容标记规则】
 - 导航/页脚等链接列表用 data-content + data-content-type="nav-list" 标记。
@@ -82,7 +81,7 @@ const PAGE_SPEC: Record<
   home: {
     context: "博客首页 /blog",
     bodyPrompt: `生成优质首页正文，包含：hero/介绍区（可配图）、精选文章、近期文章卡片列表、统计与作者简介栏等。
-文章列表用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹，其首个子元素为模板，字段用 data-map 标记（如 title、excerpt、date、category、link），其余示例项会被清除并替换为真实数据。
+文章列表用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹；【必须】动态区的首个子元素是单个列表项模板（如 <li> 或 <article>，内部用 data-map 标记 title、excerpt、date、category、link 等字段）。「近期文章」标题、包裹列表的 <ul>/<div>、底部按钮等静态结构放在模板项的同级位置（模板项之外），不要包在模板项里面。其余示例项会被清除并替换为真实数据。
 【必须】在作者简介/关于区域放置头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充）。该头像区域不要标记 data-page-type（确保列表页也能显示）。`,
   },
   list: {
@@ -113,11 +112,10 @@ export function buildPageSystemPrompt(
   const imageRule =
     pageType === "detail"
       ? `【图片规则】
-本页（文章详情页）正文不含封面或配图，文章配图会随正文内容自动渲染（data-map="body"）。底部可放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；该元素不要标记 data-page-type）。`
+本页（文章详情页）正文不含封面或配图，文章配图会随正文内容自动渲染（data-map="body"）。不要使用任何图片素材。底部可放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；该元素不要标记 data-page-type）。`
       : `【图片规则】
-可使用 search_image 工具搜索二次元图片素材（Hero/横幅背景图、文章缩略图、插画装饰等），工具返回 /api/uploads/ 开头的本地地址，可直接写入 <img src> 或 CSS background-image。搜索到的图片会附加 dominantColors（主要颜色）与 brightness（整体明暗），请挑选与主题色板匹配、明暗与主题一致的图片。
-不使用其它任何外部图片 URL，也不要编造图片地址；唯一始终允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；【必须】在首页 hero/作者简介栏放置，与骨架导航中的头像共用同一 data-content，会同时填充；该头像区域不要标记 data-page-type，确保所有页面都能显示）。
-除作者头像外，没有可用图片素材时，直接以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。`
+不要使用任何图片素材（包括外部图片 URL 或编造的图片地址），一律以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
+唯一允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；【必须】在首页 hero/作者简介栏放置，与骨架导航中的头像共用同一 data-content，会同时填充；该头像区域不要标记 data-page-type，确保所有页面都能显示）。`
 
   return `你是一个博客「${spec.context}」的正文设计者。请基于给定的共享骨架（其样式/类名/设计语言已由骨架阶段产出）输出该页面正文。
 

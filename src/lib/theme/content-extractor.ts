@@ -229,10 +229,11 @@ function extractTextField(
 
 function extractDynamicField(el: Element, key: string, type: DynamicField["type"]): DynamicField {
   const firstChild = el.firstElementChild
+  const templateEl = firstChild ? findRepeatableItemTemplate(firstChild) ?? firstChild : null
   const fieldMapping: Record<string, string> = {}
 
-  if (firstChild) {
-    const mappedElements = firstChild.querySelectorAll("[data-map]")
+  if (templateEl) {
+    const mappedElements = templateEl.querySelectorAll("[data-map]")
     for (const mapped of mappedElements) {
       const fieldName = mapped.getAttribute("data-map")
       if (fieldName) {
@@ -242,9 +243,9 @@ function extractDynamicField(el: Element, key: string, type: DynamicField["type"
 
     if (!fieldMapping.link) {
       const linkEl =
-        firstChild.tagName.toLowerCase() === "a"
-          ? firstChild
-          : firstChild.querySelector("a[href]")
+        templateEl.tagName.toLowerCase() === "a"
+          ? templateEl
+          : templateEl.querySelector("a[href]")
       if (linkEl) {
         linkEl.setAttribute("data-map", "link")
         fieldMapping.link = "link"
@@ -255,15 +256,62 @@ function extractDynamicField(el: Element, key: string, type: DynamicField["type"
   const result: DynamicField = {
     type,
     label: key,
-    itemTemplate: firstChild ? firstChild.outerHTML : "",
+    itemTemplate: templateEl ? templateEl.outerHTML : "",
     fieldMapping,
   }
 
-  if (type === "dynamic-list" && firstChild) {
-    result.items = extractCustomListItems(el, firstChild, fieldMapping)
+  if (type === "dynamic-list" && templateEl) {
+    const itemsScope = templateEl.parentElement ?? el
+    result.items = extractCustomListItems(itemsScope, templateEl, fieldMapping)
   }
 
   return result
+}
+
+/**
+ * 当动态区首个子元素是整块面板/网格包装（含标题、列表容器、按钮）时，
+ * 向下钻取到真正可重复的列表项作为模板，避免把整个面板当成单个列表项。
+ */
+function findRepeatableItemTemplate(root: Element): Element | null {
+  if (root.matches("ul, ol")) return root.firstElementChild
+
+  const list = root.querySelector<Element>("ul, ol")
+  if (list) {
+    const first = list.firstElementChild
+    if (first && (first.matches("[data-map]") || first.querySelector("[data-map]"))) {
+      return first
+    }
+  }
+
+  const children = Array.from(root.children) as Element[]
+  const items = children.filter(
+    (c) => c.matches("[data-map]") || c.querySelector("[data-map]")
+  )
+  // 仅当存在多个结构相同的重复项（同标签 + 同 data-map 字段集）时才视为"网格/卡片包装"，
+  // 避免把列表项自身（li 内的时间/链接/分类等字段元素）误判为重复项。
+  const sameTag =
+    items.length > 1 && items.every((c) => c.tagName === items[0].tagName)
+  const sameMaps =
+    items.length > 1 &&
+    items.every((c) => mapKeysOf(c).join(",") === mapKeysOf(items[0]).join(","))
+  if (sameTag && sameMaps) {
+    return items[0]
+  }
+  return null
+}
+
+/** 收集元素内（含自身）的全部 data-map 字段名，排序后用于结构比对。 */
+function mapKeysOf(el: Element): string[] {
+  const keys = new Set<string>()
+  if (el.matches("[data-map]")) {
+    const name = el.getAttribute("data-map")
+    if (name) keys.add(name)
+  }
+  for (const mapped of el.querySelectorAll("[data-map]")) {
+    const name = mapped.getAttribute("data-map")
+    if (name) keys.add(name)
+  }
+  return Array.from(keys).sort()
 }
 
 function extractCustomListItems(

@@ -535,65 +535,8 @@ function renderDynamicField(
 
   if (data.length === 0) return
 
-  const templateHtml = field.itemTemplate
-  if (!templateHtml) return
-
-  const tempDoc = new JSDOM(templateHtml).window.document
-  const templateEl = tempDoc.body.firstElementChild
-  if (!templateEl) return
-
-  container.innerHTML = ""
-
-  const mappings: [string, string][] =
-    Object.keys(field.fieldMapping).length > 0
-      ? Object.entries(field.fieldMapping)
-      : Array.from(mappedElements(templateEl)).map((el) => {
-          const name = el.getAttribute("data-map")!
-          return [name, name]
-        })
-
   const labelKey = field.type === "dynamic-articles" ? "title" : "name"
-
-  for (const item of data) {
-    const clone = templateEl.cloneNode(true) as Element
-
-    let linkApplied = false
-    for (const [mapKey, dataKey] of mappings) {
-      const targets = mappedElements(clone, mapKey)
-      if (targets.length === 0) continue
-      const value = item[dataKey]
-      if (value === undefined) continue
-      if (mapKey === "link") {
-        linkApplied = true
-        for (const target of targets) {
-          target.setAttribute("href", value)
-        }
-      } else {
-        for (const target of targets) {
-          target.textContent = value
-        }
-      }
-    }
-
-    if (!linkApplied && item.link) {
-      if (clone.tagName.toLowerCase() === "a") {
-        clone.setAttribute("href", item.link)
-      } else {
-        const anchors = clone.querySelectorAll("a[href]")
-        if (anchors.length === 1) {
-          anchors[0].setAttribute("href", item.link)
-        }
-      }
-    }
-
-    const labelEl = mappedElements(clone, labelKey)[0]
-    if (!labelEl && item[labelKey]) {
-      const linkEl = mappedElements(clone, "link")[0]
-      if (linkEl) linkEl.textContent = item[labelKey]
-    }
-
-    container.appendChild(clone)
-  }
+  renderListField(container, field, data, { labelKey })
 
   if (
     isArticlesList &&
@@ -610,28 +553,40 @@ function renderDynamicField(
 function renderCustomListField(container: Element, field: DynamicField): void {
   const items = field.items ?? []
   if (items.length === 0) return
+  renderListField(container, field, items, {
+    labelKey: Object.keys(field.fieldMapping)[0] ?? "name",
+  })
+}
 
-  const templateHtml = field.itemTemplate
-  if (!templateHtml) return
+/**
+ * 渲染动态列表：把数据项填入容器内已有的列表宿主（ul/ol 或平铺卡片容器），
+ * 保留「近期文章」标题、按钮等静态结构，避免把整块面板当成列表项逐条复制。
+ */
+function renderListField(
+  container: Element,
+  field: DynamicField,
+  data: Record<string, string>[],
+  options: { labelKey: string }
+): void {
+  const resolved = resolveListItemTemplate(container, field)
+  if (!resolved) return
+  const { host, template } = resolved
 
-  const tempDoc = new JSDOM(templateHtml).window.document
-  const templateEl = tempDoc.body.firstElementChild
-  if (!templateEl) return
-
-  container.innerHTML = ""
+  removeSampleItems(host, template)
 
   const mappings: [string, string][] =
     Object.keys(field.fieldMapping).length > 0
       ? Object.entries(field.fieldMapping)
-      : Array.from(mappedElements(templateEl)).map((el) => {
+      : Array.from(mappedElements(template)).map((el) => {
           const name = el.getAttribute("data-map")!
           return [name, name]
         })
 
-  const labelKey = Object.keys(field.fieldMapping)[0] ?? "name"
+  const labelKey = options.labelKey
 
-  for (const item of items) {
-    const clone = templateEl.cloneNode(true) as Element
+  const clones: Element[] = []
+  for (const item of data) {
+    const clone = template.cloneNode(true) as Element
 
     let linkApplied = false
     for (const [mapKey, dataKey] of mappings) {
@@ -668,7 +623,104 @@ function renderCustomListField(container: Element, field: DynamicField): void {
       if (linkEl) linkEl.textContent = item[labelKey]
     }
 
-    container.appendChild(clone)
+    clones.push(clone)
+  }
+
+  template.remove()
+  for (const clone of clones) host.appendChild(clone)
+}
+
+const ITEM_TEMPLATE_TAGS = new Set([
+  "li",
+  "a",
+  "article",
+  "div",
+  "span",
+  "time",
+  "p",
+  "tr",
+  "option",
+  "img",
+  "button",
+  "figure",
+])
+
+/** 判断配置里的 itemTemplate 是否是"单个列表项"而非整块面板（含标题/列表/按钮）。 */
+function looksLikeItemTemplate(html: string): boolean {
+  if (!html) return false
+  const dom = new JSDOM(html).window.document
+  const root = dom.body.firstElementChild
+  if (!root) return false
+  const tag = root.tagName.toLowerCase()
+  if (tag === "ul" || tag === "ol" || tag === "table" || tag === "section") {
+    return false
+  }
+  if (!ITEM_TEMPLATE_TAGS.has(tag)) return false
+  if (root.querySelector("ul, ol")) return false
+  if (!(root.matches("[data-map]") || root.querySelector("[data-map]"))) {
+    return false
+  }
+  return true
+}
+
+/** 找到容器内承载动态列表项的宿主：优先含 [data-map] 的 ul/ol，否则退回容器本身。 */
+function findDynamicListHost(container: Element): Element | null {
+  if (container.matches("ul, ol")) return container
+  for (const list of Array.from(container.querySelectorAll("ul, ol"))) {
+    if (list.querySelector("[data-map]")) return list
+  }
+  return null
+}
+
+/** 在宿主内找到列表项模板：第一个带 [data-map] 的子元素，否则退回首个子元素。 */
+function findItemTemplate(host: Element): Element | null {
+  for (const child of Array.from(host.children) as Element[]) {
+    if (child.matches("[data-map]") || child.querySelector("[data-map]")) {
+      return child
+    }
+  }
+  return host.firstElementChild
+}
+
+/** 解析渲染用的列表宿主与列表项模板：优先使用合法 itemTemplate，否则从 DOM 推导。 */
+function resolveListItemTemplate(
+  container: Element,
+  field: DynamicField
+): { host: Element; template: Element } | null {
+  const host = findDynamicListHost(container) ?? container
+
+  let template: Element | null = null
+  if (looksLikeItemTemplate(field.itemTemplate)) {
+    const dom = new JSDOM(field.itemTemplate).window.document
+    template = dom.body.firstElementChild
+  }
+  if (!template) template = findItemTemplate(host)
+  if (!template) return null
+
+  return { host, template }
+}
+
+/** 清掉宿主中不属于模板的示例项（保留标题/按钮等静态结构）。 */
+function removeSampleItems(host: Element, template: Element): void {
+  const isListHost = host.matches("ul, ol")
+  const tag = template.tagName
+  for (const child of Array.from(host.children) as Element[]) {
+    if (child === template) continue
+    if (isListHost) {
+      child.remove()
+      continue
+    }
+    if (child.tagName !== tag) continue
+    const sameClass =
+      template.classList.length > 0 &&
+      Array.from(child.classList).some((c) => template.classList.contains(c))
+    if (
+      sameClass ||
+      child.matches("[data-map]") ||
+      child.querySelector("[data-map]")
+    ) {
+      child.remove()
+    }
   }
 }
 

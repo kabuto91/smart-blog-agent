@@ -331,3 +331,119 @@ describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
     expect(hostMatch?.[1]).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
   })
 })
+
+describe("renderContent 动态列表不重复整块面板", () => {
+  const PANEL_HTML = `<section class="section" data-content="article-list" data-content-type="dynamic-articles">
+  <div class="container">
+    <h2 class="section-title">近期文章</h2>
+    <ul class="archive-list">
+      <li class="archive-item" data-map="template">
+        <span class="archive-item__date" data-map="date">2024.03.01</span>
+        <a href="#" class="archive-item__title" data-map="link">模板标题</a>
+        <span class="archive-item__cat" data-map="category">设计</span>
+      </li>
+      <li class="archive-item">
+        <span class="archive-item__date">2024.02.22</span>
+        <a href="/blog/a-sample-slug" class="archive-item__title">示例一</a>
+        <span class="archive-item__cat">设计</span>
+      </li>
+      <li class="archive-item">
+        <span class="archive-item__date">2024.02.15</span>
+        <a href="/blog/a-sample-slug" class="archive-item__title">示例二</a>
+        <span class="archive-item__cat">随笔</span>
+      </li>
+    </ul>
+    <div style="text-align: center; margin-top: 64px;">
+      <a href="/blog/archive" class="btn">查看归档</a>
+    </div>
+  </div>
+</section>`
+
+  const PANEL_CONFIG: ContentConfig = {
+    "article-list": {
+      type: "dynamic-articles",
+      label: "article-list",
+      itemTemplate: `<div class="container">
+    <h2 class="section-title">近期文章</h2>
+    <ul class="archive-list">
+      <li class="archive-item" data-map="template">
+        <span class="archive-item__date" data-map="date">2024.03.01</span>
+        <a href="#" class="archive-item__title" data-map="link">模板标题</a>
+        <span class="archive-item__cat" data-map="category">设计</span>
+      </li>
+      <li class="archive-item">
+        <span class="archive-item__date">2024.02.22</span>
+        <a href="/blog/a-sample-slug" class="archive-item__title">示例一</a>
+        <span class="archive-item__cat">设计</span>
+      </li>
+      <li class="archive-item">
+        <span class="archive-item__date">2024.02.15</span>
+        <a href="/blog/a-sample-slug" class="archive-item__title">示例二</a>
+        <span class="archive-item__cat">随笔</span>
+      </li>
+    </ul>
+    <div style="text-align: center; margin-top: 64px;">
+      <a href="/blog/archive" class="btn">查看归档</a>
+    </div>
+  </div>`,
+      fieldMapping: {
+        template: "template",
+        date: "date",
+        link: "link",
+        category: "category",
+      },
+    },
+  }
+
+  const dynamicData = {
+    articles: [
+      { id: 1, title: "真实文章A", excerpt: "", date: "2026-01-01", category: "设计", slug: "real-a" },
+      { id: 2, title: "真实文章B", excerpt: "", date: "2026-01-02", category: "随笔", slug: "real-b" },
+    ],
+  }
+
+  it("itemTemplate 为整块面板时不逐条复制面板，标题/按钮只渲染一次", () => {
+    const out = renderContent(PANEL_HTML, PANEL_CONFIG, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    expect(out.match(/近期文章/g)?.length ?? 0).toBe(1)
+    expect(out.match(/查看归档/g)?.length ?? 0).toBe(1)
+    expect(out).toContain("真实文章A")
+    expect(out).toContain("真实文章B")
+    expect(out).toContain('href="/blog/real-a"')
+    expect(out).toContain('href="/blog/real-b"')
+    expect(out).not.toContain("示例一")
+    expect(out).not.toContain("示例二")
+    expect(out).not.toContain("模板标题")
+  })
+
+  it("首子元素即列表项（常规）时保持原行为，N 项全部渲染", () => {
+    const config: ContentConfig = {
+      articles: {
+        type: "dynamic-articles",
+        label: "articles",
+        itemTemplate: `<li class="archive-item">
+          <time class="archive-item__date" data-map="date">2023.10.24</time>
+          <a href="#" class="archive-item__title" data-map="link"><span data-map="title">模板</span></a>
+          <span class="archive-item__cat" data-map="category">设计</span>
+        </li>`,
+        fieldMapping: {
+          date: "date",
+          link: "link",
+          title: "title",
+          category: "category",
+        },
+      },
+    }
+    const html = `<ul class="archive-list" data-content="articles" data-content-type="dynamic-articles">
+      <li class="archive-item">占位模板</li>
+    </ul>`
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    expect(out).toContain("真实文章A")
+    expect(out).toContain("真实文章B")
+    expect(out).toContain('href="/blog/real-a"')
+    expect(out).not.toContain("占位模板")
+  })
+})

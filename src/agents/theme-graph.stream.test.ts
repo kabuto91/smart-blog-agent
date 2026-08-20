@@ -6,28 +6,13 @@ vi.mock("@/lib/theme/theme-session", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/theme/theme-session")>()
   return { ...mod, addMessage: vi.fn(async () => {}) }
 })
-vi.mock("@/agents/tools/image-search", async () => {
-  const { DynamicStructuredTool } = await import("@langchain/core/tools")
-  const { z } = await import("zod")
-  return {
-    searchImageTool: new DynamicStructuredTool({
-      name: "search_image",
-      description: "搜索一张配图",
-      schema: z.object({ query: z.string() }),
-      func: async () =>
-        JSON.stringify({
-          images: [{ url: "https://example.com/a.jpg", alt: "测试配图" }],
-        }),
-    }),
-  }
-})
 
 import { AIMessageChunk } from "@langchain/core/messages"
 import type { BaseMessage } from "@langchain/core/messages"
 import { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import type { BaseChatModelCallOptions } from "@langchain/core/language_models/chat_models"
 import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager"
-import { createThemeGraph, type ThemeGraphEmitter } from "./theme-graph"
+import { createThemeGraph } from "./theme-graph"
 
 const SKELETON = `<!DOCTYPE html><html><head><style>
 .container{max-width:1080px}.post-card{border:1px solid #eee}.hero{padding:80px 0}.page-title{font-size:32px}.article-body{line-height:1.8}
@@ -53,14 +38,10 @@ function contentFor(sys: string): string {
 /**
  * 流式脚本化模型：输出由系统提示词决定，并通过 handleLLMNewToken 触发
  * graph 的 messages-mode 流式回调（真实路由依赖该契约）。
- * toolFirst=true 时第一轮返回 search_image 工具调用，第二轮返回正文。
  */
 class StreamingScriptedModel extends BaseChatModel<BaseChatModelCallOptions> {
-  toolFirst: boolean
-
-  constructor(toolFirst = false) {
+  constructor() {
     super({})
-    this.toolFirst = toolFirst
   }
 
   _llmType(): string {
@@ -77,27 +58,14 @@ class StreamingScriptedModel extends BaseChatModel<BaseChatModelCallOptions> {
     runManager?: CallbackManagerForLLMRun
   ) {
     const sys = String(messages[0]?.content ?? "")
-    const hasToolResult = messages.some((m) => m._getType() === "tool")
-    const wantsTool = this.toolFirst && !hasToolResult
-
-    const text = wantsTool ? "" : contentFor(sys)
-    const tool_calls = wantsTool
-      ? [
-          {
-            name: "search_image",
-            args: { query: "博客配图" },
-            id: "call_1",
-            type: "tool_call" as const,
-          },
-        ]
-      : undefined
+    const text = contentFor(sys)
 
     await runManager?.handleLLMNewToken(text)
     return {
       generations: [
         {
           text,
-          message: new AIMessageChunk({ content: text, tool_calls }),
+          message: new AIMessageChunk({ content: text }),
         },
       ],
     }
@@ -143,35 +111,5 @@ describe("createThemeGraph 流式契约", () => {
     for (const node of ["planner", "skeleton", "page_home", "page_list", "page_detail"]) {
       expect(nodesSeen.has(node)).toBe(true)
     }
-  })
-
-  it("工具循环：模型先发 search_image 工具调用，随后产出正文", async () => {
-    const toolCalls: { page: string; name: string }[] = []
-    const stages: string[] = []
-    const emitter: ThemeGraphEmitter = {
-      stage: (s) => stages.push(s),
-      tool: (page, name) => toolCalls.push({ page, name }),
-      warn: () => {},
-      metrics: () => {},
-    }
-
-    const graph = await createThemeGraph({
-      llm: new StreamingScriptedModel(true),
-      emitter,
-      judgeEnabled: false,
-    })
-    const res = await graph.invoke(input(), {
-      configurable: { thread_id: "stream-tool" },
-    })
-
-    // 骨架节点先调用工具，再产出骨架 HTML
-    expect(toolCalls.some((t) => t.page === "skeleton" && t.name === "search_image")).toBe(true)
-    expect(res.layoutHtml).toContain("data-page-host")
-    expect(res.pages.home).toContain("hero")
-    expect(res.pages.list).toContain("page-title")
-    expect(res.pages.detail).toContain("article-body")
-    expect(stages).toContain("skeleton")
-    expect(stages).toContain("validator")
-    expect(stages).toContain("commit")
   })
 })
