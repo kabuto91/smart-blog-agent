@@ -88,26 +88,43 @@ const PAGE_SPEC: Record<
 > = {
   home: {
     context: "博客首页 /blog",
-    bodyPrompt: `生成优质首页正文，包含：hero/介绍区（可配图）、精选文章、近期文章卡片列表、统计与作者简介栏等。
-文章列表用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹；【必须】动态区的首个子元素是单个列表项模板（如 <li> 或 <article>，内部用 data-map 标记 title、excerpt、date、category、link 等字段）。「近期文章」标题、包裹列表的 <ul>/<div>、底部按钮等静态结构放在模板项的同级位置（模板项之外），不要包在模板项里面。其余示例项会被清除并替换为真实数据。
-【必须】在作者简介/关于区域放置头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充）。该头像区域不要标记 data-page-type（确保列表页也能显示）。`,
+    bodyPrompt: `根据用户描述的风格和需求，自由组织首页区块布局。首页是博客的门面，可以包含任意区块组合（如英雄区、文章展示、作者介绍、统计、时间线等），由你根据设计方向决定。
+
+【数据绑定规则】
+- 若页面包含文章列表区域，用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹
+- 动态区的首个子元素是单个列表项模板（<li> 或 <article>），模板内用 data-map 标记 title、excerpt、date、category、link 等字段
+- 模板外的静态结构（标题、容器、按钮等）放在模板项同级位置，不要包在模板项里面
+- 其余示例项会被清除并替换为真实数据
+
+【头像占位】
+在需要展示作者信息的区域放置：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充）。该区域不要标记 data-page-type（确保其他页面也能显示）。`,
   },
   list: {
     context: "文章列表页 /blog/archive 等",
-    bodyPrompt: `生成完整的文章列表正文：顶部一个「全部文章」标题，下方用 data-content-type="dynamic-articles" 的动态文章列表（列表会自动填充全部文章并附加分页，正文不要写分页）。`,
+    bodyPrompt: `根据用户描述的风格，自由组织文章列表页布局。页面核心是展示文章列表，但你可以自由设计标题区域、筛选区、分页样式等。
+
+【数据绑定规则】
+- 文章列表用 data-content-type="dynamic-articles" 标记，列表会自动填充全部文章并附加分页，正文不要写分页
+- 可在列表上方或周围添加标题、筛选、搜索等辅助区块
+- 模板项格式：列表项内部用 data-map 标记 title、excerpt、date、category、link 等字段`,
   },
   detail: {
     context: "文章详情页 /blog/{slug}",
-    bodyPrompt: `生成文章详情页正文：包含文章标题、日期、分类等展示元素，并【必须】有一个正文容器：
+    bodyPrompt: `根据用户描述的风格，自由组织文章详情页布局。页面核心是文章内容展示，但你可以自由设计标题区、元信息、作者信息、相关推荐等区块。
+
+【数据绑定规则】
+- 必须有一个文章正文容器：
 <article data-content="article-body" data-content-type="article-body">
   <h2 data-map="title">文章标题</h2>
   <span data-map="date">2024-01-01</span>
   <span data-map="category">分类</span>
   <div data-map="body">这里会被渲染后的正文替换</div>
 </article>
-详情页只会保留导航、页脚与该正文区域（侧边栏、列表会被隐藏），因此正文不要写侧边栏。
-标题/排版/容器直接用骨架已有的类（如 .container/.article-header/.article-body/.post-title）；不要自建 .article-hero 之类的独立类。
-【建议】在文章底部作者信息区放置头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充），该元素不要标记 data-page-type。`,
+- 详情页只会保留导航、页脚与该正文区域（侧边栏、列表会被隐藏），因此正文不要写侧边栏
+- 标题/排版/容器尽量用骨架已有的类
+
+【头像占位】
+在文章底部作者信息区放置：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充），该元素不要标记 data-page-type。`,
   },
 }
 
@@ -123,14 +140,17 @@ export function buildPageSystemPrompt(
 本页（文章详情页）正文不含封面或配图，文章配图会随正文内容自动渲染（data-map="body"）。不要使用任何图片素材。底部可放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；该元素不要标记 data-page-type）。`
       : `【图片规则】
 不要使用任何图片素材（包括外部图片 URL 或编造的图片地址），一律以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
-唯一允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；【必须】在首页 hero/作者简介栏放置，与骨架导航中的头像共用同一 data-content，会同时填充；该头像区域不要标记 data-page-type，确保所有页面都能显示）。`
+唯一允许的例外是作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充；该头像区域不要标记 data-page-type，确保所有页面都能显示）。`
 
-  return `你是一个博客「${spec.context}」的正文设计者。请基于给定的共享骨架（其样式/类名/设计语言已由骨架阶段产出）输出该页面正文。
+  return `你是一个博客「${spec.context}」的正文设计者。请基于给定的共享骨架（其样式/类名/设计语言已由骨架阶段产出），结合用户描述的风格需求，输出该页面正文。
 
 ${context}
 
 【正文要求】
 ${spec.bodyPrompt}
+
+【设计原则】
+根据用户描述的风格和需求自由发挥，决定页面包含哪些区块、如何排布。区块组合没有固定模板，完全由你根据设计方向和用户偏好来组织。保持与骨架视觉语言一致，追求精致的设计感。
 
 【内容标记规则】
 动态内容区域（文章列表等）必须使用 data-content 和 data-content-type 属性标记，容器首个子元素作为模板，模板内用 data-map 标记字段名（如 title、excerpt、date、category、link）。
