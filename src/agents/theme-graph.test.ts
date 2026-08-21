@@ -17,18 +17,35 @@ import { addMessage } from "@/lib/theme/theme-session"
 import { createThemeGraph, type ThemeGraphEmitter } from "./theme-graph"
 
 const SKELETON = `<!DOCTYPE html><html><head><style>
-:root { --nav-h: 60px; --main: #222; --accent: #e5a83d; }
+:root {
+  --nav-h: 64px;
+  --bg: #f7f4ef;
+  --main: #1a1a2e;
+  --accent: #e5a83d;
+  --card-bg: #fff;
+  --radius: 8px;
+  --shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+body { background: var(--bg); color: var(--main); font-family: "Noto Serif SC", Georgia, serif; transition: background .3s; }
 .container { max-width: 1080px; margin: 0 auto; }
 .nav { display: flex; }
-.post-card { border: 1px solid #eee; }
+.post-card { border: 1px solid #eee; border-radius: var(--radius); box-shadow: var(--shadow); transition: box-shadow .2s, transform .2s; }
+.post-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); transform: translateY(-2px); }
 .hero { padding: 80px 0; }
-.btn { display: inline-block; }
-.section-title { font-size: 28px; }
+.btn { display: inline-block; transition: background .2s; }
+.btn:hover { background: var(--accent); }
+.section-title { font-size: 28px; font-family: "Noto Serif SC", Georgia, serif; }
 .page-title { font-size: 32px; }
 .article-body { line-height: 1.8; }
 .article-header { margin-bottom: 24px; }
 .sidebar { width: 260px; }
 .post-title { font-size: 24px; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
+.article-list { display: grid; gap: 24px; }
+@media (max-width: 768px) {
+  .container { padding: 0 16px; }
+  .hero { padding: 48px 0; }
+}
 </style></head><body>
 <nav data-content="main-nav" data-content-type="nav-list"><a href="/blog">首页</a><a href="/blog/archive">全部文章</a></nav>
 <div data-page-host=""></div>
@@ -72,7 +89,7 @@ function scriptedModel(failPage?: "list"): BaseChatModel {
     if (sys.includes("设计总监")) {
       text = '{"style":"极简杂志","palette":"米白+黑+赭石","typography":"衬线标题","layout":"居中","image":"none","notes":""}'
     } else if (sys.includes("资深前端设计师")) {
-      text = '{"score":88,"reason":"整体精致"}'
+      text = '{"dimensions":{"briefMatch":{"score":88,"issues":[]},"visualPolish":{"score":85,"issues":[]},"typography":{"score":82,"issues":[]},"color":{"score":80,"issues":[]},"layout":{"score":84,"issues":[]},"editability":{"score":86,"issues":[]}},"reason":"整体精致"}'
     } else if (sys.includes("任务分为两阶段")) {
       text = SKELETON
     } else if (sys.includes("博客首页")) {
@@ -110,7 +127,7 @@ describe("createThemeGraph", () => {
     stages.length = 0
   })
 
-  it("首次生成：planner → skeleton → 并行三页 → validator → judge → commit", async () => {
+  it("首次生成：planner → skeleton → 并行三页 → validator → audit → judge → commit", async () => {
     const graph = await createThemeGraph({
       llm: scriptedModel(),
       emitter,
@@ -129,10 +146,12 @@ describe("createThemeGraph", () => {
     expect(res.validation.list?.ok).toBe(true)
     expect(res.validation.detail?.ok).toBe(true)
     expect(res.qualityScore).toBeGreaterThan(0)
+    expect(Object.keys(res.qualityDimensions).length).toBeGreaterThan(0)
 
     expect(stages).toContain("planner")
     expect(stages).toContain("skeleton")
     expect(stages).toContain("validator")
+    expect(stages).toContain("audit")
     expect(stages).toContain("judge")
     expect(stages).toContain("commit")
 

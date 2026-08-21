@@ -92,7 +92,8 @@ export function ensureLayoutContract(layoutHtml: string): string {
     body.appendChild(script)
   }
 
-  return dom.serialize()
+  // 4. 间距兜底：强制 clamp 过大的 padding/margin/gap
+  return normalizeThemeSpacing(dom.serialize())
 }
 
 /** 根据布局占位标记拼装完整页面 HTML（正文插入占位处；缺失占位时自动补插）。 */
@@ -301,4 +302,89 @@ function stripLayout(html: string): string {
   }
 
   return body.innerHTML
+}
+
+// ---------------------------------------------------------------------------
+// normalizeThemeSpacing — 后处理强制修正过大的间距值
+// ---------------------------------------------------------------------------
+
+/** 间距属性及其 clamp 上限（px）。 */
+const SPACING_LIMITS: Record<string, number> = {
+  "padding-top": 40,
+  "padding-bottom": 40,
+  "padding": 40,
+  "margin-top": 48,
+  "margin-bottom": 48,
+  "margin": 48,
+  gap: 24,
+}
+
+/** 匹配 CSS 值中的 px 数字（如 48px、0.5rem 不处理）。 */
+const PX_RE = /(\d+(?:\.\d+)?)px/g
+
+/**
+ * 将 CSS 值中超限的 px 数字 clamp 到上限。
+ * 只处理 px 单位，rem/em/% 等保持不动。
+ */
+function clampPxValue(value: string, limit: number): string {
+  return value.replace(PX_RE, (_match, num: string) => {
+    const px = parseFloat(num)
+    if (px > limit) return `${limit}px`
+    return `${px}px`
+  })
+}
+
+/**
+ * 对 <style> 中的 CSS 文本做间距 clamp。
+ * 策略：仅对"可能产生大间距的选择器"做处理，避免误伤紧凑元素。
+ */
+function clampCssSpacing(css: string): string {
+  // 匹配完整的 CSS 规则块：选择器 { ... }
+  return css.replace(
+    /([^{}]+)\{([^{}]*)\}/g,
+    (fullMatch: string, selectorPart: string, body: string) => {
+      const sel = selectorPart.toLowerCase()
+      // 只对 section / hero / footer / .section / .hero / .footer 等大容器做 clamp
+      const isTarget =
+        /(?:^|[\s,>+~(])(?:section|\.section|\.hero|\.banner|\.intro|footer|\.footer)(?:$|[\s,.:#\[{>~+)])/i.test(
+          sel
+        )
+      if (!isTarget) return fullMatch
+
+      let changed = false
+      let newBody = body
+      for (const [prop, limit] of Object.entries(SPACING_LIMITS)) {
+        // 匹配 prop: value; 或 prop: value}（最后一个声明无分号）
+        const propRe = new RegExp(
+          `(?:^|;)\\s*${prop}\\s*:\\s*([^;${'}'}]+)`,
+          "gi"
+        )
+        newBody = newBody.replace(propRe, (decl: string, val: string) => {
+          const clamped = clampPxValue(val, limit)
+          if (clamped !== val.trim()) changed = true
+          return decl.replace(val, clamped)
+        })
+      }
+      return changed
+        ? `${selectorPart}{${newBody}}`
+        : fullMatch
+    }
+  )
+}
+
+/**
+ * 后处理：强制修正骨架 HTML 中过大的间距值。
+ * 在 ensureLayoutContract 之后调用，作为 LLM 生成间距不规范的兜底。
+ */
+export function normalizeThemeSpacing(layoutHtml: string): string {
+  const dom = new JSDOM(layoutHtml)
+  const doc = dom.window.document
+
+  for (const style of Array.from(doc.querySelectorAll("style"))) {
+    if (style.textContent) {
+      style.textContent = clampCssSpacing(style.textContent)
+    }
+  }
+
+  return dom.serialize()
 }

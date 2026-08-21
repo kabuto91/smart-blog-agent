@@ -69,9 +69,10 @@ const STAGE_META: Record<string, { label: string; order: number }> = {
   page_list: { label: "文章列表页", order: 4 },
   page_detail: { label: "文章详情页", order: 5 },
   validator: { label: "校验骨架一致性", order: 6 },
-  judge: { label: "评估设计质量", order: 7 },
-  revise: { label: "修订页面", order: 8 },
-  commit: { label: "保存会话快照", order: 9 },
+  audit: { label: "静态样式审计", order: 7 },
+  judge: { label: "评估设计质量", order: 8 },
+  revise: { label: "修订页面", order: 9 },
+  commit: { label: "保存会话快照", order: 10 },
 }
 const STAGE_LIST = Object.entries(STAGE_META)
   .sort((a, b) => a[1].order - b[1].order)

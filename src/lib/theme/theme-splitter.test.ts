@@ -5,6 +5,7 @@ import {
   sanitizePageFragment,
   collectThemeClasses,
   validatePageFragment,
+  normalizeThemeSpacing,
 } from "@/lib/theme/theme-splitter"
 import { injectPageIntoLayout } from "@/lib/theme/layout-inject"
 
@@ -157,5 +158,89 @@ describe("validatePageFragment", () => {
     const res = validatePageFragment(alien, layoutClasses)
     expect(res.ok).toBe(false)
     expect(res.overlap).toBeLessThan(0.15)
+  })
+})
+
+describe("normalizeThemeSpacing", () => {
+  const layoutWithBigSpacing = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .section { padding-top: 72px; padding-bottom: 64px; }
+    .hero { padding-top: 80px; padding-bottom: 56px; }
+    footer { margin-top: 72px; }
+    .post-grid { gap: 32px; }
+    .compact { padding: 8px; margin: 4px; gap: 12px; }
+  </style>
+</head>
+<body>
+  <div data-page-host=""></div>
+</body>
+</html>`
+
+  it("clamp section padding-top 超限值", () => {
+    const result = normalizeThemeSpacing(layoutWithBigSpacing)
+    expect(result).toMatch(/padding-top:\s*40px/)
+    expect(result).not.toMatch(/padding-top:\s*72px/)
+  })
+
+  it("clamp section padding-bottom 超限值", () => {
+    const result = normalizeThemeSpacing(layoutWithBigSpacing)
+    expect(result).toMatch(/padding-bottom:\s*40px/)
+    expect(result).not.toMatch(/padding-bottom:\s*64px/)
+  })
+
+  it("clamp hero padding 超限值", () => {
+    const result = normalizeThemeSpacing(layoutWithBigSpacing)
+    // hero 也是 section，padding-top:80px 应被 clamp 到 40px
+    expect(result).not.toMatch(/padding-top:\s*80px/)
+    expect(result).not.toMatch(/padding-bottom:\s*56px/)
+  })
+
+  it("clamp footer margin-top 超限值", () => {
+    const result = normalizeThemeSpacing(layoutWithBigSpacing)
+    expect(result).toMatch(/margin-top:\s*48px/)
+    expect(result).not.toMatch(/margin-top:\s*72px/)
+  })
+
+  it("不修改未超限的值", () => {
+    const result = normalizeThemeSpacing(layoutWithBigSpacing)
+    // .compact 的 padding: 8px 不应被修改
+    expect(result).toMatch(/padding:\s*8px/)
+    expect(result).toMatch(/margin:\s*4px/)
+    expect(result).toMatch(/gap:\s*12px/)
+  })
+
+  it("不修改非目标选择器的值", () => {
+    const layout = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .card { padding: 72px; margin: 80px; gap: 40px; }
+  </style>
+</head>
+<body><div data-page-host=""></div></body>
+</html>`
+    const result = normalizeThemeSpacing(layout)
+    // .card 不是 section/hero/footer 选择器，不应被修改
+    expect(result).toMatch(/padding:\s*72px/)
+    expect(result).toMatch(/margin:\s*80px/)
+    expect(result).toMatch(/gap:\s*40px/)
+  })
+
+  it("保留 rem/em/% 等非 px 单位不处理", () => {
+    const layout = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .section { padding-top: 4rem; padding-bottom: 3em; gap: 5%; }
+  </style>
+</head>
+<body><div data-page-host=""></div></body>
+</html>`
+    const result = normalizeThemeSpacing(layout)
+    expect(result).toMatch(/padding-top:\s*4rem/)
+    expect(result).toMatch(/padding-bottom:\s*3em/)
+    expect(result).toMatch(/gap:\s*5%/)
   })
 })

@@ -72,6 +72,14 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
 常用字段命名参考：
 ${FIELD_REFERENCE}
 
+【间距规范】
+- 章节（section）的 padding-top 和 padding-bottom 控制在 24~40px，不要超过 48px
+- 标题与内容之间的 gap 控制在 12~20px
+- 卡片网格（post-grid 等）的 gap 控制在 16~24px
+- hero 区域 padding-top 建议 32~48px，padding-bottom 建议 24~32px
+- footer 与正文之间的 margin-top 建议 32~48px
+- 整体风格紧凑精致，避免大面积空白；间距要让人感觉"透气但不松散"
+
 直接输出内容，不要有任何额外的解释性文字。`
 
 const PAGE_SPEC: Record<

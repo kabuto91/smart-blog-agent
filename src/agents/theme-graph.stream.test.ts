@@ -15,7 +15,10 @@ import type { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager
 import { createThemeGraph } from "./theme-graph"
 
 const SKELETON = `<!DOCTYPE html><html><head><style>
-.container{max-width:1080px}.post-card{border:1px solid #eee}.hero{padding:80px 0}.page-title{font-size:32px}.article-body{line-height:1.8}
+:root { --nav-h:64px; --bg:#f7f4ef; --main:#1a1a2e; --accent:#e5a83d; --radius:8px; --shadow:0 2px 8px rgba(0,0,0,.08); }
+body { background:var(--bg); color:var(--main); font-family:"Noto Serif SC",Georgia,serif; transition:background .3s; }
+.container{max-width:1080px;margin:0 auto}.post-card{border:1px solid #eee;border-radius:var(--radius);box-shadow:var(--shadow);transition:box-shadow .2s,transform .2s}.post-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.12)}.hero{padding:80px 0}.section-title{font-size:28px}.page-title{font-size:32px}.article-body{line-height:1.8}.article-list{display:grid;gap:24px}.post-title{font-size:24px}
+@media(max-width:768px){.container{padding:0 16px}.hero{padding:48px 0}}
 </style></head><body>
 <nav data-content="main-nav" data-content-type="nav-list"><a href="/blog">首页</a></nav>
 <div data-page-host=""></div>
@@ -27,7 +30,7 @@ const DETAIL = `<section class="container"><article class="article-body"><h2 cla
 
 function contentFor(sys: string): string {
   if (sys.includes("设计总监")) return '{"style":"极简杂志","palette":"米白+黑"}'
-  if (sys.includes("资深前端设计师")) return '{"score":85,"reason":"ok"}'
+  if (sys.includes("资深前端设计师")) return '{"dimensions":{"briefMatch":{"score":85,"issues":[]},"visualPolish":{"score":80,"issues":[]},"typography":{"score":78,"issues":[]},"color":{"score":82,"issues":[]},"layout":{"score":80,"issues":[]},"editability":{"score":85,"issues":[]}},"reason":"ok"}'
   if (sys.includes("任务分为两阶段")) return SKELETON
   if (sys.includes("博客首页")) return HOME
   if (sys.includes("文章列表页")) return LIST
