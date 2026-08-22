@@ -310,13 +310,13 @@ function stripLayout(html: string): string {
 
 /** 间距属性及其 clamp 上限（px）。 */
 const SPACING_LIMITS: Record<string, number> = {
-  "padding-top": 40,
-  "padding-bottom": 40,
-  "padding": 40,
-  "margin-top": 48,
-  "margin-bottom": 48,
-  "margin": 48,
-  gap: 24,
+  "padding-top": 60,
+  "padding-bottom": 60,
+  "padding": 60,
+  "margin-top": 64,
+  "margin-bottom": 64,
+  "margin": 64,
+  gap: 32,
 }
 
 /** 匹配 CSS 值中的 px 数字（如 48px、0.5rem 不处理）。 */

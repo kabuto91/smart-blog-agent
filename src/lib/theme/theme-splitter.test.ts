@@ -180,26 +180,27 @@ describe("normalizeThemeSpacing", () => {
 
   it("clamp section padding-top 超限值", () => {
     const result = normalizeThemeSpacing(layoutWithBigSpacing)
-    expect(result).toMatch(/padding-top:\s*40px/)
+    expect(result).toMatch(/padding-top:\s*60px/)
     expect(result).not.toMatch(/padding-top:\s*72px/)
   })
 
   it("clamp section padding-bottom 超限值", () => {
     const result = normalizeThemeSpacing(layoutWithBigSpacing)
-    expect(result).toMatch(/padding-bottom:\s*40px/)
+    expect(result).toMatch(/padding-bottom:\s*60px/)
     expect(result).not.toMatch(/padding-bottom:\s*64px/)
   })
 
   it("clamp hero padding 超限值", () => {
     const result = normalizeThemeSpacing(layoutWithBigSpacing)
-    // hero 也是 section，padding-top:80px 应被 clamp 到 40px
+    // hero 也是 section，padding-top:80px 应被 clamp 到 60px
     expect(result).not.toMatch(/padding-top:\s*80px/)
-    expect(result).not.toMatch(/padding-bottom:\s*56px/)
+    // padding-bottom:56px 未超限（上限60px），保留原值
+    expect(result).toMatch(/padding-bottom:\s*56px/)
   })
 
   it("clamp footer margin-top 超限值", () => {
     const result = normalizeThemeSpacing(layoutWithBigSpacing)
-    expect(result).toMatch(/margin-top:\s*48px/)
+    expect(result).toMatch(/margin-top:\s*64px/)
     expect(result).not.toMatch(/margin-top:\s*72px/)
   })
 

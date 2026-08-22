@@ -53,10 +53,10 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
 【骨架应包含】
 1. <head> 中的完整 <style>：这是整站设计系统，所有页面共享。
    - 用 CSS 变量（:root）统一管理配色、字体、字号阶梯、行高、间距、圆角、阴影、动效参数
-   - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、hero 区（.hero）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body）、标签等
+   - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
    - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。若导航为 position: fixed，页面正文将由布局读取该变量自动让位，.data-page-host 无需、也不应自行写 padding-top。
-2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把：root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）需放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充），并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
+2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把：root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）可选择放置作者头像占位：<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充），并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
 4. body 中【必须】包含一个正文占位节点，且仅此一个：
    <div data-page-host=""></div>
@@ -64,7 +64,7 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
 
 【图片规则】
 - 不要使用任何图片素材（包括外部图片 URL 或编造的图片地址），一律以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
-- 唯一允许的例外是作者头像占位 <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充，见上方导航要求）。
+- 唯一允许的例外是作者头像占位 <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">（src 留空，渲染时自动填充）。
 
 【内容标记规则】
 - 导航/页脚等链接列表用 data-content + data-content-type="nav-list" 标记。
@@ -76,7 +76,6 @@ ${FIELD_REFERENCE}
 - 章节（section）的 padding-top 和 padding-bottom 控制在 24~40px，不要超过 48px
 - 标题与内容之间的 gap 控制在 12~20px
 - 卡片网格（post-grid 等）的 gap 控制在 16~24px
-- hero 区域 padding-top 建议 32~48px，padding-bottom 建议 24~32px
 - footer 与正文之间的 margin-top 建议 32~48px
 - 整体风格紧凑精致，避免大面积空白；间距要让人感觉"透气但不松散"
 
@@ -88,7 +87,7 @@ const PAGE_SPEC: Record<
 > = {
   home: {
     context: "博客首页 /blog",
-    bodyPrompt: `根据用户描述的风格和需求，自由组织首页区块布局。首页是博客的门面，可以包含任意区块组合（如英雄区、文章展示、作者介绍、统计、时间线等），由你根据设计方向决定。
+    bodyPrompt: `根据用户描述的风格和需求，自由组织首页区块布局。首页是博客的门面，可以包含任意区块组合（如文章展示、作者介绍、统计、时间线等），由你根据设计方向决定。
 
 【数据绑定规则】
 - 若页面包含文章列表区域，用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹

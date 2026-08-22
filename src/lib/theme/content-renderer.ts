@@ -146,6 +146,7 @@ export function pruneHomeSections(doc: Document): void {
     }
     if (isInside(el, "nav") || isInside(el, "footer")) continue
     if (el.querySelector('[data-content-type="dynamic-articles"]')) continue
+    if (el.querySelector("[data-content]")) continue
     el.remove()
   }
 
@@ -246,7 +247,7 @@ export function pruneDetailPage(doc: Document): void {
     const tag = parent.tagName.toLowerCase()
     if (tag === "body" || tag === "html") break
     for (const child of Array.from(parent.children) as Element[]) {
-      if (child !== node && !isChromeElement(child)) child.remove()
+      if (child !== node && !isChromeElement(child) && !child.hasAttribute("data-content")) child.remove()
     }
     node = parent
   }
@@ -667,6 +668,10 @@ function looksLikeItemTemplate(html: string): boolean {
 function findDynamicListHost(container: Element): Element | null {
   if (container.matches("ul, ol")) return container
   for (const list of Array.from(container.querySelectorAll("ul, ol"))) {
+    if (list.querySelector("[data-map]")) return list
+  }
+  // 支持更多容器类型（div/section/article）
+  for (const list of Array.from(container.querySelectorAll("div, section, article"))) {
     if (list.querySelector("[data-map]")) return list
   }
   return null
