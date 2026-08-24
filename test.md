@@ -1,19 +1,4 @@
-## AUI form组件validate方法校验无响应
 
-当model里面的值无对应的字段的话，validate没有任何的响应，会一直阻塞当前进程
-
-## 路由检查查看卡死问题
-3.0 路由管理-健康检查状态卡死问题分析：
-经排查得出，只有多域名路由或者多条上下文根的会报这个问题，在测试环境上能复现出来
-
-![](./images/1685026001868_image.png)
-
-![](./images/1685063038411_image.png)
-
-查看代码发现，Tabs页签在v-for循环时没有赋name属性（标识当前页签），所以可能导致在渲染页签的时候没有发现当前页签从而导致组件会一直渲染下去
-
-**解决方法：**
-* 加上name属性即可
 
 ## vite运行项目报错cannot find module @rollup/rollup-win32-x64-msvc
 因为vite引入的rollup版本突然更新，而中心仓里面的rollup版本跨度太大，可能导致最新的rollup版本不兼容当前版本导致，在package.json里面把rollup版本固定即可
