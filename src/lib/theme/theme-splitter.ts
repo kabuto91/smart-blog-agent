@@ -124,13 +124,18 @@ export function ensureLayoutContract(layoutHtml: string): string {
   safety.textContent = THEME_SAFETY_CSS
   doc.head.appendChild(safety)
 
-  // 4. 运行时测量脚本（幂等）
-  if (!body.querySelector("script[data-theme-nav-measure]")) {
-    const script = doc.createElement("script")
-    script.setAttribute("data-theme-nav-measure", "")
-    script.textContent = `(function(){var sync=function(){var nav=document.querySelector('nav[data-content="main-nav"]')||document.querySelector('nav')||document.querySelector('header');var h=0;if(nav&&window.getComputedStyle(nav).position==='fixed'){h=nav.getBoundingClientRect().height;}document.documentElement.style.setProperty('--nav-h',h+'px');};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();`
-    body.appendChild(script)
+  // 4. 运行时测量脚本（版本化重注入：先移除旧版脚本再注入当前版，
+  //    使存量主题在下次渲染时自动升级；旧版只取第一个匹配元素检查 fixed，
+  //    会误把固定 header 内的静态 <nav> 当成导航而把 --nav-h 置 0）。
+  for (const el of Array.from(
+    body.querySelectorAll("script[data-theme-nav-measure]")
+  )) {
+    el.remove()
   }
+  const script = doc.createElement("script")
+  script.setAttribute("data-theme-nav-measure", "")
+  script.textContent = `(function(){var sync=function(){var els=document.querySelectorAll('nav[data-content="main-nav"], nav, header');var h=0;for(var i=0;i<els.length;i++){var el=els[i];if(window.getComputedStyle(el).position==='fixed'){h=el.getBoundingClientRect().height;break;}}document.documentElement.style.setProperty('--nav-h',h+'px');};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();`
+  body.appendChild(script)
 
   // 5. 间距兜底：强制 clamp 过大的 padding/margin/gap
   return normalizeThemeSpacing(dom.serialize())
@@ -155,11 +160,31 @@ export function mergeThemePage(
   }
 
   host.innerHTML = pageHtml
-  if (options?.navClearance) {
+  // 布局自身已在 body 上提供 var(--nav-h) 级留白时不再叠加 host 留白（避免双重间距）
+  if (options?.navClearance && !hasBodyNavClearance(doc)) {
     host.style.paddingTop = "var(--nav-h, 0px)"
   }
 
   return dom.serialize()
+}
+
+/**
+ * 检测布局 CSS 是否已为固定导航提供 body 级留白
+ * （body / html,body 规则中的 padding/margin 引用 var(--nav-h)）。
+ * 此类留白随测量值联动，host 再叠加一层会造成双重间距。
+ */
+function hasBodyNavClearance(doc: Document): boolean {
+  for (const style of Array.from(doc.querySelectorAll("style"))) {
+    const css = style.textContent ?? ""
+    const blockRe = /(?:^|[{};,])\s*(?:html\s*,\s*body|body)\s*\{([^}]*)\}/gi
+    let m: RegExpExecArray | null
+    while ((m = blockRe.exec(css)) !== null) {
+      if (/(?:padding|margin)(?:-top)?\s*:\s*[^;}]*var\(--nav-h/.test(m[1])) {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 /**
@@ -289,6 +314,29 @@ export function validatePageFragment(
   const overlap = pageClasses.size > 0 ? matched / pageClasses.size : 0
   if (overlap < 0.15 && pageClasses.size > 0) {
     issues.push(`页面类名与骨架类库重叠率过低 (${(overlap * 100).toFixed(0)}%)`)
+  }
+
+  // 内容标记覆盖率：h1-h6 / p 是后台可自定义的基本文本单元，
+  // 若自身或祖先均无 data-content，则该文本无法被编辑。
+  const uncoveredTextUnits = Array.from(
+    doc.querySelectorAll("h1,h2,h3,h4,h5,h6,p")
+  ).filter(
+    (el) =>
+      (el.textContent ?? "").trim().length > 0 &&
+      el.closest("[data-content]") === null
+  )
+  // 容忍 1 个漏网（如极小的装饰性文本），≥2 个视为结构性漏标
+  if (uncoveredTextUnits.length > 1) {
+    const sample = uncoveredTextUnits
+      .slice(0, 3)
+      .map(
+        (el) =>
+          `<${el.tagName.toLowerCase()} class="${el.getAttribute("class") ?? ""}">`
+      )
+      .join("、")
+    issues.push(
+      `有 ${uncoveredTextUnits.length} 处标题/段落文本未标记 data-content（如 ${sample}），这些内容将无法在后台自定义；请为其补充 data-content + data-content-type="text"`
+    )
   }
 
   return { ok: issues.length === 0, overlap, issues }

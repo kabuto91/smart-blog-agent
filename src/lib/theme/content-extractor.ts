@@ -112,6 +112,9 @@ export function extractContentConfig(
   const config: ContentConfig = {}
   const usedKeys = new Set<string>()
 
+  // 兜底：先给 LLM 漏标的标题/段落补 data-content 标记，再统一提取
+  markUnmarkedTextUnits(doc)
+
   const elements = doc.querySelectorAll("[data-content]")
   for (const el of elements) {
     const key = el.getAttribute("data-content")
@@ -153,6 +156,35 @@ function uniqueKey(base: string, used: Set<string>): string {
   let i = 2
   while (used.has(`${base}-${i}`)) i++
   return `${base}-${i}`
+}
+
+/**
+ * 兜底：对未标记的标题/段落自动补 data-content=text 标记（LLM 漏标时避免内容不可编辑）。
+ * 只给叶子文本元素（h1-h6/p）打标、不打容器——text 字段渲染是 textContent 替换，
+ * 打容器会破坏内部嵌套结构；打叶子安全。
+ */
+function markUnmarkedTextUnits(doc: Document): void {
+  const units = Array.from(doc.querySelectorAll("h1,h2,h3,h4,h5,h6,p")).filter(
+    (el) =>
+      (el.textContent ?? "").trim().length > 0 &&
+      el.closest("[data-content]") === null
+  )
+  const used = new Set(
+    Array.from(doc.querySelectorAll("[data-content]"))
+      .map((el) => el.getAttribute("data-content") ?? "")
+      .filter(Boolean)
+  )
+  for (const el of units) {
+    // key 优先取类名 kebab 化（.post-title → post-title），无类名用 tag 名
+    const rawClass = (el.getAttribute("class") ?? "").split(/\s+/)[0] ?? ""
+    const base =
+      rawClass.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+      el.tagName.toLowerCase()
+    const key = uniqueKey(base, used)
+    used.add(key)
+    el.setAttribute("data-content", key)
+    el.setAttribute("data-content-type", "text")
+  }
 }
 
 function findUnmarkedNavs(doc: Document): { el: Element; baseKey: string }[] {

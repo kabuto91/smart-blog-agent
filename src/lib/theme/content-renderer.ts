@@ -765,17 +765,35 @@ function resolveListItemTemplate(
   container: Element,
   field: DynamicField
 ): { host: Element; template: Element } | null {
-  const host = findDynamicListHost(container) ?? container
-
   let template: Element | null = null
   if (looksLikeItemTemplate(field.itemTemplate)) {
     const dom = new JSDOM(field.itemTemplate).window.document
     template = dom.body.firstElementChild
   }
+
+  let host = findDynamicListHost(container) ?? container
+
+  // 宿主与模板同构（同标签 + 同类名集合）说明 findDynamicListHost 把唯一样本项
+  // 误认成了宿主：此时真正的宿主是 container 自身，避免克隆项被嵌套进样本项
+  // （样本项多为 flex 行布局，嵌套会导致列表横向排列）。
+  if (template && host !== container && isSameElementShape(host, template)) {
+    host = container
+  }
+
   if (!template) template = findItemTemplate(host)
   if (!template) return null
 
   return { host, template }
+}
+
+/** 同构判定：标签相同且类名集合一致（要求双方类名非空，避免误伤无类包装容器）。 */
+function isSameElementShape(a: Element, b: Element): boolean {
+  if (a.tagName !== b.tagName) return false
+  if (a.classList.length === 0 || b.classList.length === 0) return false
+  return (
+    Array.from(a.classList).sort().join(" ") ===
+    Array.from(b.classList).sort().join(" ")
+  )
 }
 
 /** 清掉宿主中不属于模板的示例项（保留标题/按钮等静态结构）。 */

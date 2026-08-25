@@ -191,6 +191,7 @@ const PAGE_SPEC: Record<
 
 【数据绑定规则】
 ${DYNAMIC_ARTICLES_RULE}
+- 首页自由组织的区块（作者介绍、统计、时间线、特色卡片组合等）内的所有标题（h2/h3/h4）与段落文本（p）都必须标记 data-content + data-content-type="text"，key 用语义化英文命名（如 core-modules-title、feature-card-desc）。
 
 【头像占位】
 如需在正文展示作者信息，可放一个作者头像占位：${AVATAR_PLACEHOLDER}（渲染期会确保全局只有 1 个；该区域不要标记 data-page-type）。`,
@@ -250,7 +251,7 @@ ${imageSection}
 
 【内容标记规则】
 动态内容区域（文章列表等）必须使用 data-content 和 data-content-type 属性标记，容器首个子元素作为模板，模板内用 data-map 标记字段名（如 title、excerpt、date、category、link）。
-普通文本区域（标题、段落、页脚文字等）建议用 data-content + data-content-type="text" 标记，便于后续编辑。
+普通文本区域（标题、段落、标签组、卡片文字、统计数字、时间线条目、说明文字等）必须用 data-content + data-content-type="text" 标记，否则该内容无法在后台自定义。每个独立区块内的标题与正文文本元素都要分别标记（例如一个卡片区块的标题一个 key、摘要一个 key）。
 常用字段命名参考：
 ${FIELD_REFERENCE}
 示例：<h1 data-content="blog-title" data-content-type="text">我的博客</h1>

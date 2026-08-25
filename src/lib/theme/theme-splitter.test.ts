@@ -79,6 +79,21 @@ describe("ensureLayoutContract", () => {
     expect(twice.match(/data-theme-nav-measure/g) ?? []).toHaveLength(1)
   })
 
+  it("旧版测量脚本被替换升级为遍历候选版本", () => {
+    // 模拟历史版本：只取第一个匹配元素检查 fixed 的旧脚本
+    const legacy = LAYOUT.replace(
+      "</body>",
+      `<script data-theme-nav-measure="">(function(){var sync=function(){var nav=document.querySelector('nav[data-content="main-nav"]')||document.querySelector('nav')||document.querySelector('header');var h=0;if(nav&&window.getComputedStyle(nav).position==='fixed'){h=nav.getBoundingClientRect().height;}document.documentElement.style.setProperty('--nav-h',h+'px');};sync();})();</script></body>`
+    )
+    const fixed = ensureLayoutContract(legacy)
+    // 新版：遍历所有候选元素取第一个 fixed
+    expect(fixed).toContain("querySelectorAll('nav[data-content=\"main-nav\"], nav, header')")
+    // 旧版短路特征不再存在
+    expect(fixed).not.toContain("||document.querySelector('nav')")
+    // 仍只有一个脚本实例
+    expect(fixed.match(/data-theme-nav-measure/g) ?? []).toHaveLength(1)
+  })
+
   it("安全层幂等且旧版被替换升级（不产生重复 style）", () => {
     // 模拟历史版本：含旧的（特异性过高的）安全层
     const legacy = LAYOUT.replace(
@@ -127,7 +142,21 @@ describe("mergeThemePage / injectPageIntoLayout", () => {
 
   it("navClearance 应用 --nav-h 留白", () => {
     const merged = mergeThemePage(LAYOUT, "<p>x</p>", { navClearance: true })
-    expect(merged).toContain("--nav-h")
+    expect(merged).toContain('style="padding-top: var(--nav-h, 0px);"')
+  })
+
+  it("布局已有 body 级 var(--nav-h) 留白时不再叠加 host 留白", () => {
+    const withBodyClearance = LAYOUT.replace(
+      ".container { max-width: 800px; margin: 0 auto; }",
+      "body { padding-top: var(--nav-h); } .container { max-width: 800px; margin: 0 auto; }"
+    )
+    const merged = mergeThemePage(withBodyClearance, "<p>x</p>", {
+      navClearance: true,
+    })
+    expect(merged).not.toContain('style="padding-top: var(--nav-h')
+    // 未开启 navClearance 的既有行为不受影响
+    const plain = mergeThemePage(withBodyClearance, "<p>x</p>")
+    expect(plain).not.toContain('style="padding-top: var(--nav-h')
   })
 
   it("injectPageIntoLayout 与 mergeThemePage 行为一致（占位缺失也不丢正文）", () => {
@@ -192,6 +221,25 @@ describe("validatePageFragment", () => {
     const res = validatePageFragment(alien, layoutClasses)
     expect(res.ok).toBe(false)
     expect(res.overlap).toBeLessThan(0.15)
+  })
+
+  it("多处标题/段落未标记 data-content 时校验失败", () => {
+    const html = `<div class="card"><section class="container">
+      <article class="post-card"><h3 class="post-title">卡片一</h3><p class="post-card-excerpt">摘要一</p></article>
+      <article class="post-card"><h3 class="post-title">卡片二</h3><p class="post-card-excerpt">摘要二</p></article>
+    </section></div>`
+    const res = validatePageFragment(html, layoutClasses)
+    expect(res.ok).toBe(false)
+    expect(res.issues.join("\n")).toContain("未标记 data-content")
+  })
+
+  it("文本被 data-content 祖先覆盖时不误报", () => {
+    const html = `<div class="card">
+      <h2 class="container" data-content="t" data-content-type="text">标题</h2>
+      <p class="container" data-content="d" data-content-type="text">描述</p>
+    </div>`
+    const res = validatePageFragment(html, layoutClasses)
+    expect(res.issues.join("\n")).not.toContain("未标记 data-content")
   })
 })
 

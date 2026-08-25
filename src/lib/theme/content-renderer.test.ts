@@ -422,7 +422,7 @@ describe("renderContent 动态列表不重复整块面板", () => {
 
   it("首子元素即列表项（常规）时保持原行为，N 项全部渲染", () => {
     const config: ContentConfig = {
-      articles: {
+      "articles": {
         type: "dynamic-articles",
         label: "articles",
         itemTemplate: `<li class="archive-item">
@@ -448,6 +448,50 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(out).toContain("真实文章B")
     expect(out).toContain('href="/blog/real-a"')
     expect(out).not.toContain("占位模板")
+  })
+
+  it("容器直接含单个样本项且与 itemTemplate 同构时，克隆项平铺不嵌套", () => {
+    // 复现列表页 bug：section 直接含唯一样本 <article class="post-list-item">，
+    // itemTemplate 与样本同构（同标签同类名），宿主应回退为 section 自身
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: `<article class="post-list-item">
+          <span class="date" data-map="date">2023-10-24</span>
+          <a class="title" data-map="link" href="#"><span data-map="title">模板标题</span></a>
+        </article>`,
+        fieldMapping: {
+          date: "date",
+          link: "link",
+          title: "title",
+        },
+      },
+    }
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-list-item">
+        <span class="date" data-map="date">2023-10-24</span>
+        <a class="title" data-map="link" href="#"><span data-map="title">样本标题</span></a>
+      </article>
+    </section>`
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const dom = new JSDOM(out)
+    const doc = dom.window.document
+    const section = doc.querySelector('[data-content="article-list"]')
+    expect(section).toBeTruthy()
+    // 克隆项是 section 的直接子元素（不嵌套进样本项内部）
+    const directItems = section!.querySelectorAll(":scope > article.post-list-item")
+    expect(directItems.length).toBe(2)
+    // 没有嵌套 article（article 内不再包含 article）
+    expect(section!.querySelectorAll("article article").length).toBe(0)
+    // 样本项被清除，克隆项内容正确
+    expect(out).not.toContain("样本标题")
+    expect(directItems[0].textContent).toContain("真实文章A")
+    expect(directItems[1].textContent).toContain("真实文章B")
+    expect(directItems[0].querySelector("a")!.getAttribute("href")).toBe("/blog/real-a")
+    expect(directItems[0].querySelector(".date")!.textContent).toBe("2026-01-01")
   })
 })
 

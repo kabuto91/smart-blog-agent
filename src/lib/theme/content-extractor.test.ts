@@ -152,3 +152,45 @@ describe("extractContentConfig 动态列表项模板", () => {
     expect(field.itemTemplate).toContain('data-map="title"')
   })
 })
+
+describe("extractContentConfig 兜底补标", () => {
+  it("未标记的标题/段落自动补 text 标记，key 取类名", () => {
+    const html = `<div class="card"><h3 class="post-title">卡片标题</h3><p class="post-card-excerpt">摘要文本</p></div>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    expect(contentConfig["post-title"]).toMatchObject({
+      type: "text",
+      value: "卡片标题",
+    })
+    expect(contentConfig["post-card-excerpt"]).toMatchObject({
+      type: "text",
+      value: "摘要文本",
+    })
+    expect(htmlTemplate).toContain('data-content="post-title"')
+    expect(htmlTemplate).toContain(
+      'data-content="post-card-excerpt" data-content-type="text"'
+    )
+  })
+
+  it("重复类名自动去重（post-title / post-title-2）", () => {
+    const html = `<div class="card"><h3 class="post-title">A</h3><h3 class="post-title">B</h3></div>`
+    const { contentConfig } = extractContentConfig(html)
+    expect(contentConfig["post-title"]).toMatchObject({ value: "A" })
+    expect(contentConfig["post-title-2"]).toMatchObject({ value: "B" })
+  })
+
+  it("已有 data-content 祖先覆盖的文本不重复补标", () => {
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles"><div><h3 class="post-title">模板标题</h3></div></section>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    expect(contentConfig["post-title"]).toBeUndefined()
+    expect(htmlTemplate).not.toContain('data-content="post-title"')
+  })
+
+  it("无类名元素用标签名作为 key", () => {
+    const html = `<div><h3>无类标题</h3></div>`
+    const { contentConfig } = extractContentConfig(html)
+    expect(contentConfig["h3"]).toMatchObject({
+      type: "text",
+      value: "无类标题",
+    })
+  })
+})
