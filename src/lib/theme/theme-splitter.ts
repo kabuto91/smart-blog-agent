@@ -19,10 +19,10 @@ html, body { max-width: 100%; overflow-x: clip; }
 [data-page-host] { box-sizing: border-box; max-width: 100%; }
 [data-page-host], [data-page-host] *,
 [data-page-host] *::before, [data-page-host] *::after { box-sizing: border-box; }
-[data-page-host] > *,
-[data-page-host] .container > *,
-[data-page-host] [class*="grid"] > *,
-[data-page-host] [class*="list"] > * { min-width: 0; max-width: 100%; }
+/* 行内/host 子元素最小宽度修正，避免 flex/grid 子项撑破容器。
+   用 :where() 包裹降为 0 特异性，避免覆盖骨架设计系统的限宽容器（max-width 变量等）。 */
+:where([data-page-host] > *, [data-page-host] .container > *,
+  [data-page-host] [class*="grid"] > *, [data-page-host] [class*="list"] > *) { min-width: 0; max-width: 100%; }
 [data-page-host] img, [data-page-host] video, [data-page-host] iframe,
 [data-page-host] canvas, [data-page-host] svg, [data-page-host] table { max-width: 100%; }
 [data-page-host] img { height: auto; }
@@ -34,6 +34,8 @@ html, body { max-width: 100%; overflow-x: clip; }
 }
 [data-page-host] .article-body,
 [data-page-host] [data-map="body"] { overflow-wrap: anywhere; word-break: break-word; }
+/* 导航链接 li 的兜底：骨架可能生成 div 直接包 li（非法结构），清除 UA 默认圆点标记 */
+:where(nav li, [data-content-type="nav-list"] li) { list-style: none; }
 /* === /theme-safety === */`
 
 export interface SplitPageResult {
@@ -111,13 +113,16 @@ export function ensureLayoutContract(layoutHtml: string): string {
     doc.head.appendChild(style)
   }
 
-  // 3. 安全兜底样式层（作为 head 最后的 <style>，保证优先级最高）
-  if (!doc.querySelector("style[data-theme-safety]")) {
-    const safety = doc.createElement("style")
-    safety.setAttribute("data-theme-safety", "")
-    safety.textContent = THEME_SAFETY_CSS
-    doc.head.appendChild(safety)
+  // 3. 安全兜底样式层（作为 head 最后的 <style>，保证优先级最高）。
+  //    版本化重注入：先移除旧版安全层（含历史上特异性过高的版本），再注入当前版，
+  //    使存量主题在下次渲染（mergeThemePage → ensureLayoutContract）时自动升级。
+  for (const el of Array.from(doc.querySelectorAll("style[data-theme-safety]"))) {
+    el.remove()
   }
+  const safety = doc.createElement("style")
+  safety.setAttribute("data-theme-safety", "")
+  safety.textContent = THEME_SAFETY_CSS
+  doc.head.appendChild(safety)
 
   // 4. 运行时测量脚本（幂等）
   if (!body.querySelector("script[data-theme-nav-measure]")) {
@@ -353,7 +358,7 @@ function stripLayout(html: string): string {
 // normalizeThemeSpacing — 后处理强制修正过大的间距值
 // ---------------------------------------------------------------------------
 
-/** 间距属性及其 clamp 上限（px）。 */
+/** 间距属性及其 clamp 上限（px）——普通区块。 */
 const SPACING_LIMITS: Record<string, number> = {
   "padding-top": 60,
   "padding-bottom": 60,
@@ -362,6 +367,17 @@ const SPACING_LIMITS: Record<string, number> = {
   "margin-bottom": 64,
   "margin": 64,
   gap: 32,
+}
+
+/** hero/feature 等视觉大区块的放宽上限（px）：允许大留白等大胆设计意图保留，仅防离谱值。 */
+const HERO_SPACING_LIMITS: Record<string, number> = {
+  "padding-top": 120,
+  "padding-bottom": 120,
+  "padding": 120,
+  "margin-top": 96,
+  "margin-bottom": 96,
+  "margin": 96,
+  gap: 48,
 }
 
 /** 匹配 CSS 值中的 px 数字（如 48px、0.5rem 不处理）。 */
@@ -379,12 +395,23 @@ function clampPxValue(value: string, limit: number): string {
   })
 }
 
-/** 标题字号上限（px），防止巨大标题撑破行宽/容器。 */
+/** 标题字号上限（px）——全局，防止巨大标题撑破行宽/容器。 */
 const HEADING_FONT_LIMITS: Record<string, number> = {
-  h1: 40,
-  h2: 34,
-  h3: 28,
+  h1: 56,
+  h2: 40,
+  h3: 32,
 }
+
+/** hero/feature 区块内标题的放宽上限（px），允许超大展示型标题。 */
+const HERO_HEADING_FONT_LIMITS: Record<string, number> = {
+  h1: 80,
+  h2: 56,
+  h3: 40,
+}
+
+/** 判定选择器是否属于 hero 类视觉大区块（.hero/.banner/.feature/.cover/.jumbotron/.masthead）。 */
+const HERO_SELECTOR_RE =
+  /(?:^|[\s,>+~(])(?:\.hero|\.banner|\.feature|\.cover|\.jumbotron|\.masthead)(?:$|[\s,.:#\[{>~+)])/i
 
 /** 判定单个宽度声明值是否应被 clamp 到 100%（仅针对会导致溢出的硬编码宽值）。 */
 function clampWidthValue(value: string): string {
@@ -414,7 +441,8 @@ function clampProperty(
 
 /**
  * 对 <style> 中的 CSS 文本做间距/字号/宽度 clamp。
- * 策略：仅对"可能产生大间距/大字号/超宽"的选择器做处理，避免误伤紧凑元素。
+ * 策略：按选择器分级——hero 类视觉大区块用放宽上限（保留大留白/大标题设计意图），
+ * 普通区块用常规上限；仅处理"可能产生大间距/大字号/超宽"的选择器，避免误伤紧凑元素。
  */
 function clampCssSpacing(css: string): string {
   // 匹配完整的 CSS 规则块：选择器 { ... }
@@ -427,14 +455,20 @@ function clampCssSpacing(css: string): string {
         /(?:^|[\s,>+~(])(?:section|\.section|\.hero|\.banner|\.intro|footer|\.footer)(?:$|[\s,.:#\[{>~+)])/i.test(
           sel
         )
+      const isHero = HERO_SELECTOR_RE.test(sel)
       const isHeading = /\bh[1-3]\b/.test(sel)
       if (!isTarget && !isHeading) return fullMatch
+
+      const spacingLimits = isHero ? HERO_SPACING_LIMITS : SPACING_LIMITS
+      const headingLimits = isHero
+        ? HERO_HEADING_FONT_LIMITS
+        : HEADING_FONT_LIMITS
 
       let changed = false
       let newBody = body
 
       if (isTarget) {
-        for (const [prop, limit] of Object.entries(SPACING_LIMITS)) {
+        for (const [prop, limit] of Object.entries(spacingLimits)) {
           const r = clampProperty(newBody, prop, (v) => clampPxValue(v, limit))
           newBody = r.body
           if (r.changed) changed = true
@@ -448,7 +482,7 @@ function clampCssSpacing(css: string): string {
       }
 
       if (isHeading) {
-        for (const [tag, limit] of Object.entries(HEADING_FONT_LIMITS)) {
+        for (const [tag, limit] of Object.entries(headingLimits)) {
           if (!new RegExp(`\\b${tag}\\b`, "i").test(sel)) continue
           const r = clampProperty(newBody, "font-size", (v) =>
             clampPxValue(v, limit)

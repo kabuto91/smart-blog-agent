@@ -46,11 +46,94 @@ export function extractHtmlFromContent(content: string): string {
   return ""
 }
 
-/**
- * 作者头像占位。src 留空，渲染时自动填入选中的头像 URL；
+/** 作者头像占位。src 留空，渲染时自动填入选中的头像 URL；
  * 渲染期（content-renderer）会自动注入并按需全局去重，确保全站只有一个头像。
  */
 export const AVATAR_PLACEHOLDER = `<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">`
+
+// ---------------------------------------------------------------------------
+// 随机设计种子：从原型池随机抽取组合，注入 planner 简报，避免每次生成都
+// 收敛到同一批"安全"美学方向。
+// ---------------------------------------------------------------------------
+
+export type DesignRhythm = "compact" | "balanced" | "airy"
+
+export interface DesignSeeds {
+  /** 美学方向 */
+  aesthetic: string
+  /** 布局原型 */
+  layout: string
+  /** 配色策略 */
+  palette: string
+  /** 标题排版 */
+  typography: string
+  /** 节奏档位 */
+  rhythm: DesignRhythm
+}
+
+export const DESIGN_SEED_POOLS = {
+  aesthetic: [
+    "瑞士国际主义（网格驱动、无衬线、克制配色）",
+    "Brutalism 粗野主义（裸露结构、粗边框、硬阴影、原生质感）",
+    "玻璃拟态（半透明层、模糊背景、柔和光晕）",
+    "暗色极客终端（近黑底、等宽字、扫描线/光标细节）",
+    "纸墨书法（宣纸底色、墨色层级、笔触留白）",
+    "Zine 拼贴（剪切感、倾斜元素、胶带/贴纸细节）",
+    "孟菲斯几何（波点、锯齿、撞色几何装饰）",
+    "报刊印刷（栏线、字距紧凑、黑白灰+单点红）",
+    "北欧极简（原木色温、大量留白、细线条）",
+    "赛博霓虹（深紫蓝底、霓虹描边、发光边缘）",
+    "新艺术装饰（对称卷曲线条、金色描边、复古纹样）",
+    "蓝图工程风（网格纸底、标注线、单色线稿感）",
+  ],
+  layout: [
+    "顶部导航 + 居中单栏",
+    "顶部导航 + 双栏（正文 + 侧边栏）",
+    "左侧竖排导航 + 右侧内容",
+    "杂志多栏网格（不等宽栏目穿插）",
+    "全宽卡片纵列流（一屏一卡）",
+    "紧凑列表流（无卡片边框、分隔线分组）",
+  ],
+  palette: [
+    "高对比单色 + 锐利点缀色",
+    "低饱和柔和（莫兰迪系）",
+    "深色底 + 荧光强调色",
+    "双色调（仅两个色相构建全部层级）",
+    "大胆撞色互补（如橙蓝、红绿）",
+    "暖调大地色（陶土、赭石、亚麻）",
+  ],
+  typography: [
+    "超大展示型标题（远超常规字号、强对比）",
+    "衬线标题 × 无衬线正文对比",
+    "等宽字体系统（全局等宽，工程感）",
+    "细字重大留白（超细字重 + 极疏行距）",
+  ],
+  rhythm: ["compact", "balanced", "airy"] as DesignRhythm[],
+} satisfies Record<keyof DesignSeeds, string[]> & {
+  rhythm: DesignRhythm[]
+}
+
+/** 节奏档位的中文描述（用于 prompt 注入与简报展示）。 */
+export const RHYTHM_LABELS: Record<DesignRhythm, string> = {
+  compact: "紧凑（信息密集，section padding 20~36px）",
+  balanced: "均衡（标准节奏，section padding 32~56px）",
+  airy: "大留白（呼吸感，section padding 64~110px，hero 可到 120px）",
+}
+
+function pick<T>(pool: T[]): T {
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
+/** 每次全新生成时随机抽取一组设计方向种子。 */
+export function rollDesignSeeds(): DesignSeeds {
+  return {
+    aesthetic: pick(DESIGN_SEED_POOLS.aesthetic),
+    layout: pick(DESIGN_SEED_POOLS.layout),
+    palette: pick(DESIGN_SEED_POOLS.palette),
+    typography: pick(DESIGN_SEED_POOLS.typography),
+    rhythm: pick(DESIGN_SEED_POOLS.rhythm),
+  }
+}
 
 /** 通用图片规则：除作者头像外，禁止任何图片素材，一律用纯 CSS 视觉手段完成设计。 */
 const IMAGE_RULE = `【图片规则】
@@ -73,7 +156,7 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
    - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
    - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。若导航为 position: fixed，页面正文将由布局读取该变量自动让位，.data-page-host 无需、也不应自行写 padding-top。
-2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把 :root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）如需放置作者头像占位：${AVATAR_PLACEHOLDER}，并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
+2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，链接列表必须用 <ul>/<ol> 包裹 <li>（li 不要直接挂在 div 下），包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把 :root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）如需放置作者头像占位：${AVATAR_PLACEHOLDER}，并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
 4. body 中【必须】包含一个正文占位节点，且仅此一个：
    <div data-page-host=""></div>
@@ -88,12 +171,13 @@ ${IMAGE_RULE}
 常用字段命名参考：
 ${FIELD_REFERENCE}
 
-【间距规范】
-- 章节（section）的 padding-top 和 padding-bottom 控制在 24~40px，不要超过 48px
-- 标题与内容之间的 gap 控制在 12~20px
-- 卡片网格（post-grid 等）的 gap 控制在 16~24px
-- footer 与正文之间的 margin-top 建议 32~48px
-- 整体风格紧凑精致，避免大面积空白；间距要让人感觉"透气但不松散"
+【间距与节奏】
+根据设计简报中的节奏档位决定间距体系，三档参考：
+- 紧凑（compact）：section padding 20~36px，gap 12~20px，信息密集；
+- 均衡（balanced）：section padding 32~56px，gap 16~28px；
+- 大留白（airy）：section padding 64~110px，hero 区可到 120px，gap 24~40px，强调呼吸感。
+同档内保持一致，禁止跨档混用；hero/banner 类视觉大区块可在档位基础上再放大约 1.5 倍。
+footer 与正文之间的 margin-top 建议 32~64px。
 
 直接输出内容，不要有任何额外的解释性文字。`
 
@@ -227,7 +311,9 @@ export function buildPagePromptContext(
 - 不要输出任何 <style>、<script>、<link>、<meta>、<title> 标签；不要使用 !important；不要书写自定义 @media 规则（响应式已由骨架统一处理）；
 - 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；
 - 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已通过 --nav-h 统一处理该间距；
-- 正文以 data-page-host 下的单层结构组织，不要自建整份 fixed 宽度的全屏容器；不得使用固定 px/vw 的 width、min-width、max-width、height，也不得用固定 px 字号覆盖骨架（layout 与字号交给骨架设计变量），以免造成溢出或错乱。`)
+- 正文以 data-page-host 下的单层结构组织，不要自建整份 fixed 宽度的全屏容器；不得使用固定 px/vw 的 width、min-width、max-width、height，也不得用固定 px 字号覆盖骨架（layout 与字号交给骨架设计变量），以免造成溢出或错乱；
+- 封面/头图占位类（如 post-cover 等）只能用于网格/多列卡片容器内，全宽列表卡片内不要放 16:9 大幅封面块；
+- 不要把 section 间距类与 container 容器类叠加在同一元素上（两者的 padding 会互相覆盖，导致容器失去左右内边距）。`)
   return parts.join("\n\n")
 }
 

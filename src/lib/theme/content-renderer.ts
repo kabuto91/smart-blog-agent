@@ -520,6 +520,8 @@ function renderTextField(doc: Document, key: string, value: string): void {
       continue
     }
 
+    // 配置值为空（未配置）时保留主题生成的占位文本，不清空页面
+    if (!value) continue
     el.textContent = value
   }
 }

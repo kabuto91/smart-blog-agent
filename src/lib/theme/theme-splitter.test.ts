@@ -78,6 +78,35 @@ describe("ensureLayoutContract", () => {
     const twice = ensureLayoutContract(once)
     expect(twice.match(/data-theme-nav-measure/g) ?? []).toHaveLength(1)
   })
+
+  it("安全层幂等且旧版被替换升级（不产生重复 style）", () => {
+    // 模拟历史版本：含旧的（特异性过高的）安全层
+    const legacy = LAYOUT.replace(
+      "</head>",
+      `<style data-theme-safety="">[data-page-host] > * { max-width: 100%; }</style></head>`
+    )
+    const once = ensureLayoutContract(legacy)
+    const twice = ensureLayoutContract(once)
+    for (const html of [once, twice]) {
+      const dom = new JSDOM(html)
+      const styles = dom.window.document.querySelectorAll(
+        "style[data-theme-safety]"
+      )
+      expect(styles.length).toBe(1)
+      expect(styles[0].textContent).toContain(":where(")
+    }
+    // 升级后不应再残留旧版的高特异性规则
+    expect(once).not.toMatch(
+      /<style data-theme-safety="">\[data-page-host\] > \*/
+    )
+  })
+
+  it("安全层容器子项选择器使用 :where() 以免覆盖设计系统限宽", () => {
+    const fixed = ensureLayoutContract(LAYOUT)
+    expect(fixed).toContain(":where([data-page-host] > *")
+    // 不应再出现未降特异性的容器子项规则
+    expect(fixed).not.toMatch(/^\[data-page-host\] > \*/m)
+  })
 })
 
 describe("mergeThemePage / injectPageIntoLayout", () => {
@@ -195,12 +224,50 @@ describe("normalizeThemeSpacing", () => {
     expect(result).not.toMatch(/padding-bottom:\s*64px/)
   })
 
-  it("clamp hero padding 超限值", () => {
+  it("hero 区块用放宽上限，大留白不被削平", () => {
     const result = normalizeThemeSpacing(layoutWithBigSpacing)
-    // hero 也是 section，padding-top:80px 应被 clamp 到 60px
-    expect(result).not.toMatch(/padding-top:\s*80px/)
-    // padding-bottom:56px 未超限（上限60px），保留原值
+    // hero 用放宽上限（padding ≤120px），80px 属于合法大留白，保留
+    expect(result).toMatch(/padding-top:\s*80px/)
     expect(result).toMatch(/padding-bottom:\s*56px/)
+  })
+
+  it("hero 区块超放宽上限仍被 clamp", () => {
+    const layout = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .hero { padding-top: 200px; padding-bottom: 140px; margin-top: 128px; gap: 64px; }
+  </style>
+</head>
+<body><div data-page-host=""></div></body>
+</html>`
+    const result = normalizeThemeSpacing(layout)
+    expect(result).toMatch(/padding-top:\s*120px/)
+    expect(result).toMatch(/padding-bottom:\s*120px/)
+    expect(result).toMatch(/margin-top:\s*96px/)
+    expect(result).toMatch(/gap:\s*48px/)
+  })
+
+  it("hero 内超大展示标题保留，全局超大标题仍被 clamp", () => {
+    const layout = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    .hero h1 { font-size: 72px; }
+    .banner h2 { font-size: 48px; }
+    h1 { font-size: 72px; }
+    section h1 { font-size: 60px; }
+  </style>
+</head>
+<body><div data-page-host=""></div></body>
+</html>`
+    const result = normalizeThemeSpacing(layout)
+    // hero 上下文内 h1 ≤80 / h2 ≤56：72px、48px 保留
+    expect(result).toMatch(/\.hero h1\s*\{\s*font-size:\s*72px/)
+    expect(result).toMatch(/\.banner h2\s*\{\s*font-size:\s*48px/)
+    // 全局 h1 ≤56：72px、60px 均 clamp
+    expect(result).toMatch(/^\s*h1\s*\{\s*font-size:\s*56px/m)
+    expect(result).toMatch(/section h1\s*\{\s*font-size:\s*56px/)
   })
 
   it("clamp footer margin-top 超限值", () => {

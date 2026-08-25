@@ -35,6 +35,9 @@ import {
   buildPagePromptContext,
   extractHtmlFromContent,
   pageTypeLabel,
+  rollDesignSeeds,
+  RHYTHM_LABELS,
+  type DesignSeeds,
   type ThemePageType,
 } from "@/agents/theme-agent"
 
@@ -219,7 +222,8 @@ function makePlannerNode(ctx: NodeContext) {
   return async function plannerNode(state: GraphState) {
     if (state.iteration) return {}
     ctx.emitter?.stage("planner", "规划设计方向", "start")
-    const brief = await generateDesignBrief(ctx.llm, state.userRequest)
+    const seeds = rollDesignSeeds()
+    const brief = await generateDesignBrief(ctx.llm, state.userRequest, seeds)
     ctx.emitter?.stage("planner", "规划设计方向", "done", brief)
     return { designBrief: brief }
   }
@@ -227,16 +231,27 @@ function makePlannerNode(ctx: NodeContext) {
 
 async function generateDesignBrief(
   llm: BaseChatModel,
-  userRequest: string
+  userRequest: string,
+  seeds: DesignSeeds
 ): Promise<string> {
   const messages = [
     new SystemMessage(
       `你是一个博客主题设计总监。从用户需求中提炼一份简短的设计简报，用于统一指导后续的主题骨架与三个页面生成，保证风格一致。
 只输出一个 JSON 对象，不要其它内容，格式：
 {"style":"美学方向（如：极简杂志风/复古未来/日式侘寂/工业实用）","palette":"主色+点缀色（用中文描述，不输出色值）","typography":"标题与正文字体风格","layout":"页面布局倾向（如：左导航右内容/居中单栏）","image":"是否需要图片素材及用途（如：hero背景/文章缩略图，不需要则写 none）","notes":"其它要点（50字内）"}
-如果用户已给出明确风格，直接提炼；否则选择你认为合适的方向。`
+如果用户已给出明确风格，直接提炼；否则以【随机设计方向种子】为基准展开细化。`
     ),
-    new HumanMessage(`用户需求：${userRequest}`),
+    new HumanMessage(
+      `用户需求：${userRequest}
+
+【随机设计方向种子】
+本次必须以此组合为基础展开细化（仅当用户需求中已明确指定某维度的方向时，才用用户的覆盖对应维度，其余维度必须遵循种子）：
+美学方向：${seeds.aesthetic}
+布局原型：${seeds.layout}
+配色策略：${seeds.palette}
+标题排版：${seeds.typography}
+节奏档位：${RHYTHM_LABELS[seeds.rhythm]}`
+    ),
   ]
   try {
     const response = await llm.invoke(messages)
@@ -249,6 +264,7 @@ async function generateDesignBrief(
       parsed.palette && `配色：${parsed.palette}`,
       parsed.typography && `字体：${parsed.typography}`,
       parsed.layout && `布局：${parsed.layout}`,
+      `节奏：${RHYTHM_LABELS[seeds.rhythm]}`,
       parsed.image && parsed.image !== "none" && `配图：${parsed.image}`,
       parsed.notes && `要点：${parsed.notes}`,
     ]
