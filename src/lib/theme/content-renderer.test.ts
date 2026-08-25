@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { renderContent } from "./content-renderer"
+import { JSDOM } from "jsdom"
+import { renderContent, ensureSingleAuthorAvatar } from "./content-renderer"
 import type { ContentConfig } from "../types/content-config"
 
 describe("renderContent pageSpecific", () => {
@@ -279,7 +280,7 @@ describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
     expect(out).toContain("作者简介")
   })
 
-  it("无 aside 也无 author 容器时，注入到 data-page-host 顶部", () => {
+  it("无 aside 也无 author 容器时，不注入裸头像到正文顶部", () => {
     const html = withHost("<p>正文内容</p>")
     const out = renderContent(
       html,
@@ -288,7 +289,9 @@ describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
       { "author-avatar": AVATAR_URL },
       { pageSpecific: true }
     )
-    expect(out).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
+    const hostMatch = out.match(/data-page-host=""[^>]*>([\s\S]*?)<\/div>/)
+    const hostContent = hostMatch?.[1] ?? ""
+    expect(hostContent).not.toContain(`<img class="avatar" src="${AVATAR_URL}"`)
   })
 
   it("无 data-page-host 时不报错", () => {
@@ -312,8 +315,8 @@ describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
     expect(out).not.toContain(`class="avatar" src=`)
   })
 
-  it("导航栏有头像但正文区域无头像时，正文区域仍会注入", () => {
-    // 模拟：导航栏有 avatar（通过骨架生成），但正文区域没有
+  it("导航栏有头像但正文无作者容器时，正文区域不注入裸头像", () => {
+    // 模拟：导航栏有 avatar（通过骨架生成），但正文区域没有可承载作者信息的容器
     const html = `<body>
       <nav><img class="avatar" src="/nav-avatar.png" alt="导航头像"><a href="/">首页</a></nav>
       <div data-page-host=""><p>正文内容</p></div>
@@ -326,9 +329,9 @@ describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
       { "author-avatar": AVATAR_URL },
       { pageSpecific: true }
     )
-    // 正文区域应被注入头像
+    // 正文区域不应被注入孤立头像
     const hostMatch = out.match(/data-page-host=""[^>]*>([\s\S]*?)<\/div>/)
-    expect(hostMatch?.[1]).toContain(`<img class="avatar" src="${AVATAR_URL}"`)
+    expect(hostMatch?.[1]).not.toContain(`<img class="avatar" src="${AVATAR_URL}"`)
   })
 })
 
@@ -445,5 +448,60 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(out).toContain("真实文章B")
     expect(out).toContain('href="/blog/real-a"')
     expect(out).not.toContain("占位模板")
+  })
+})
+
+describe("ensureSingleAuthorAvatar", () => {
+  function count(doc: Document): number {
+    return doc.querySelectorAll(
+      '[data-content="author-avatar"], img.avatar, [class*="avatar"]'
+    ).length
+  }
+
+  it("同一页面 3 个头像时只保留 1 个", () => {
+    const dom = new JSDOM(`<body>
+      <nav><img class="avatar" data-content="author-avatar" src="" alt="导航头像"></nav>
+      <section class="hero"><img class="avatar" data-content="author-avatar" src="" alt="hero头像"></section>
+      <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
+    </body>`)
+    ensureSingleAuthorAvatar(dom.window.document)
+    expect(count(dom.window.document)).toBe(1)
+    // 优先保留作者/简介区内的头像
+    expect(dom.window.document.querySelector(".author-bio")).not.toBeNull()
+    expect(dom.window.document.querySelector(".author-bio img")).not.toBeNull()
+  })
+
+  it("移除多余头像时保留兄弟文字与结构", () => {
+    const dom = new JSDOM(`<body>
+      <nav><img class="avatar" data-content="author-avatar" src="" alt="导航头像"></nav>
+      <aside class="author-bio"><h3>关于我</h3><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
+    </body>`)
+    ensureSingleAuthorAvatar(dom.window.document)
+    expect(count(dom.window.document)).toBe(1)
+    // 作者区文字仍在，头像被保留
+    expect(dom.window.document.querySelector(".author-bio h3")?.textContent).toBe(
+      "关于我"
+    )
+    expect(dom.window.document.querySelector("nav img")).toBeNull()
+  })
+
+  it("仅 1 个头像时不破坏布局", () => {
+    const dom = new JSDOM(`<body>
+      <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
+    </body>`)
+    ensureSingleAuthorAvatar(dom.window.document)
+    expect(count(dom.window.document)).toBe(1)
+  })
+
+  it("装饰性渐变圆不作为头像被删除", () => {
+    const dom = new JSDOM(`<body>
+      <div class="blob" style="border-radius:50%;width:80px;height:80px;background:radial-gradient(circle,#fff,#000)"></div>
+      <div class="blob" style="border-radius:50%;width:120px;height:120px;background:linear-gradient(135deg,#f00,#00f)"></div>
+      <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
+    </body>`)
+    ensureSingleAuthorAvatar(dom.window.document)
+    // 两个装饰渐变圆保留，作者头像保留，总计 3 个视觉元素
+    expect(dom.window.document.querySelectorAll(".blob").length).toBe(2)
+    expect(dom.window.document.querySelector('[data-content="author-avatar"]')).not.toBeNull()
   })
 })

@@ -204,6 +204,27 @@ export function collectElementClasses(html: string): Set<string> {
   return classes
 }
 
+/** 收集片段内联 style 中会导致横向溢出的刚性宽度（vw>100、px>1400）。 */
+function collectInlineRigidSizes(html: string): string[] {
+  const dom = new JSDOM(html)
+  const found: string[] = []
+  for (const el of Array.from(
+    dom.window.document.querySelectorAll<HTMLElement>("[style]")
+  )) {
+    const style = el.getAttribute("style") ?? ""
+    const re = /(?:width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|vw)/gi
+    let m: RegExpExecArray | null
+    while ((m = re.exec(style)) !== null) {
+      const n = parseFloat(m[1])
+      if ((m[2] === "vw" && n > 100) || (m[2] === "px" && n > 1400)) {
+        found.push(`内联样式 ${(el.getAttribute("class") ?? el.tagName.toLowerCase())} 使用 ${m[0]}，可能横向溢出`)
+        break
+      }
+    }
+  }
+  return found
+}
+
 /** 复用 theme-splitter 同款逻辑收集骨架类库（元素类名 + CSS 声明类名）。 */
 function collectSkeletonClasses(layoutHtml: string): Set<string> {
   const dom = new JSDOM(layoutHtml)
@@ -248,6 +269,7 @@ export function analyzeSkeletonStyles(
   const pageIssues: Record<string, string[]> = {}
   if (css.trim()) {
     const skeletonClasses = collectSkeletonClasses(layoutHtml)
+    const navAvatarCount = countNavAvatars(layoutHtml)
     for (const [type, html] of Object.entries(pages)) {
       if (!html) continue
       const missing = Array.from(collectElementClasses(html))
@@ -258,8 +280,43 @@ export function analyzeSkeletonStyles(
           `页面使用了骨架未定义的类名（将失去样式）：${missing.join(", ")}`,
         ]
       }
+
+      const rigidSizes = collectInlineRigidSizes(html)
+      if (rigidSizes.length > 0) {
+        ;(pageIssues[type] ??= []).push(...rigidSizes)
+      }
+
+      const pageAvatarCount = countAvatars(html)
+      if (pageAvatarCount > 1) {
+        ;(pageIssues[type] ??= []).push(
+          `页面正文出现 ${pageAvatarCount} 个作者头像，重复展示显得廉价，应只保留 1 个（author-avatar 全站唯一）`
+        )
+      }
+      if (navAvatarCount > 0 && pageAvatarCount > 0) {
+        ;(pageIssues[type] ??= []).push(
+          "导航已含作者头像，正文又放置头像，造成同页重复，请移除正文中的头像"
+        )
+      }
     }
   }
 
   return { skeletonIssues, warnings, pageIssues }
+}
+
+/** 统计 HTML 中的作者头像视觉元素数量（仅显式标记，不含装饰性渐变圆）。 */
+function countAvatars(html: string): number {
+  const dom = new JSDOM(html)
+  return dom.window.document.querySelectorAll(
+    '[data-content="author-avatar"], img.avatar'
+  ).length
+}
+
+/** 统计骨架中位于 <nav> 内的作者头像数量。 */
+function countNavAvatars(html: string): number {
+  const dom = new JSDOM(html)
+  return Array.from(
+    dom.window.document.querySelectorAll(
+      '[data-content="author-avatar"], img.avatar'
+    )
+  ).filter((el) => !!el.closest("nav")).length
 }

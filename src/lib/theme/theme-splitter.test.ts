@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest"
+import { JSDOM } from "jsdom"
 import {
   ensureLayoutContract,
   mergeThemePage,
@@ -58,7 +59,11 @@ describe("ensureLayoutContract", () => {
       '<div data-page-host=""></div>'
     )
     const fixed = ensureLayoutContract(dup)
-    const count = (fixed.match(/data-page-host/g) ?? []).length
+    // 安全兜底样式层里会引用 [data-page-host] 选择器，因此用 DOM 统计带该属性的元素而非子串。
+    const dom = new JSDOM(fixed)
+    const count = dom.window.document.querySelectorAll(
+      '[data-page-host]'
+    ).length
     expect(count).toBe(1)
   })
 

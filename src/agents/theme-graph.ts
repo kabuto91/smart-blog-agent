@@ -371,7 +371,10 @@ function makePageNode(pageType: ThemePageType, ctx: NodeContext) {
     if (!html) html = rawText
     html = ensureAvatarOverflow(html)
     const result = extractContentConfig(html, state.siteConfig)
-    const fragment = sanitizePageFragment(result.htmlTemplate)
+    const fragment = sanitizePageFragment(
+      result.htmlTemplate,
+      collectThemeClasses(state.layoutHtml)
+    )
 
     ctx.emitter?.stage(`page_${pageType}`, `生成${pageTypeLabel(pageType)}`, "done")
     return {
@@ -390,7 +393,10 @@ function makeValidatorNode(ctx: NodeContext) {
     for (const pt of state.activePages) {
       const html = state.pages[pt]
       if (!html) continue
-      const issue = validatePageFragment(sanitizePageFragment(html), layoutClasses)
+      const issue = validatePageFragment(
+        sanitizePageFragment(html, layoutClasses),
+        layoutClasses
+      )
       validation[pt] = issue
       if (!issue.ok) {
         ctx.emitter?.warn(
@@ -500,6 +506,9 @@ interface JudgeResult {
 const JUDGE_SYSTEM_PROMPT = `你是资深前端设计师与博客产品评审。请基于用户需求、设计简报与完整样式代码评估主题质量，只输出一个 JSON 对象，格式：
 {"dimensions":{"briefMatch":{"score":0到100整数,"issues":["具体问题"]},"visualPolish":{"score":0,"issues":[]},"typography":{"score":0,"issues":[]},"color":{"score":0,"issues":[]},"layout":{"score":0,"issues":[]},"editability":{"score":0,"issues":[]}},"reason":"一句话总评"}
 维度说明：briefMatch 是否符合用户需求与设计简报；visualPolish 视觉精致度与"AI 感"程度（背景层次、动效、细节打磨，避免平淡）；typography 排版与字体系统；color 配色体系（主色+点缀色、对比与层次）；layout 布局层次与信息密度；editability 可编辑性（data-content 标记、动态列表模板）。
+重点排查（常见低分点，命中请在对应维度 issues 给出可执行的修改建议）：
+- 同一页面重复展示同一视觉元素，尤其是作者头像（author-avatar）在导航、hero、作者介绍、文章标题区、页脚等多处出现。作者头像全站只允许 1 个，应集中在作者/简介区块；重复出现直接拉低 visualPolish 与 layout 评分。
+- 其它无意义重复的 UI 模块（如两个相同的作者卡、重复的统计区）。
 每个维度的 issues 用具体可执行的修改建议填充（没有问题则为空数组），它们会被直接用于指导修订。`
 
 function buildJudgeInput(state: GraphState): string {
@@ -809,7 +818,7 @@ export async function createThemeGraph(
     emitter,
     judgeEnabled: options.judgeEnabled ?? true,
     scoreThreshold: options.scoreThreshold ?? 70,
-    maxAttempts: options.maxAttempts ?? 1,
+    maxAttempts: options.maxAttempts ?? 2,
     runStartedAt,
     stageDurations,
     emitMetrics: (metrics) => emitter?.metrics?.(metrics),

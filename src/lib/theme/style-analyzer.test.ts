@@ -81,6 +81,34 @@ describe("analyzeSkeletonStyles", () => {
     const report = analyzeSkeletonStyles(GOOD_SKELETON, { home: GOOD_PAGE })
     expect(Object.keys(report.pageIssues)).toHaveLength(0)
   })
+
+  it("页面正文出现 2 个作者头像 → 报重复头像 error", () => {
+    const page = `<section class="hero"><img class="avatar" data-content="author-avatar" src="" alt="hero"></section>
+      <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="bio"></aside>`
+    const report = analyzeSkeletonStyles(GOOD_SKELETON, { home: page })
+    expect(report.pageIssues.home).toBeDefined()
+    expect(
+      report.pageIssues.home.some((s) => s.includes("作者头像") && s.includes("重复"))
+    ).toBe(true)
+  })
+
+  it("导航含头像且正文又放头像 → 报同页重复 error", () => {
+    const skeleton = `<!DOCTYPE html><html><head><style>:root{--nav-h:64px}</style></head><body>
+      <nav><img class="avatar" data-content="author-avatar" src="" alt="nav"></nav>
+      <div data-page-host=""></div></body></html>`
+    const page = `<aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="bio"></aside>`
+    const report = analyzeSkeletonStyles(skeleton, { home: page })
+    expect(report.pageIssues.home).toBeDefined()
+    expect(
+      report.pageIssues.home.some((s) => s.includes("导航已含作者头像"))
+    ).toBe(true)
+  })
+
+  it("正文仅 1 个作者头像、导航无头像 → 不报重复", () => {
+    const page = `<section class="container"><img data-content="author-avatar" src="" alt="bio"></section>`
+    const report = analyzeSkeletonStyles(GOOD_SKELETON, { home: page })
+    expect(report.pageIssues.home ?? []).toHaveLength(0)
+  })
 })
 
 describe("extractCssFromLayout", () => {

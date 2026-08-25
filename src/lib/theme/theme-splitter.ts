@@ -9,6 +9,33 @@ export type BuiltinPageType = "home" | "list" | "detail"
 
 export const BUILTIN_PAGE_TYPES: BuiltinPageType[] = ["home", "list", "detail"]
 
+/**
+ * 安全兜底样式层：作为布局 <head> 的最后一个 <style> 注入。
+ * 只作用于 [data-page-host] 正文区（不影响导航/页脚），机械保证真实内容不外溢，
+ * 弥补 LLM 骨架对长文本、固定宽度、刚性 grid 等溢出场景没有兜底的缺口。
+ */
+export const THEME_SAFETY_CSS = `/* === theme-safety: 溢出安全兜底，勿手工修改 === */
+html, body { max-width: 100%; overflow-x: clip; }
+[data-page-host] { box-sizing: border-box; max-width: 100%; }
+[data-page-host], [data-page-host] *,
+[data-page-host] *::before, [data-page-host] *::after { box-sizing: border-box; }
+[data-page-host] > *,
+[data-page-host] .container > *,
+[data-page-host] [class*="grid"] > *,
+[data-page-host] [class*="list"] > * { min-width: 0; max-width: 100%; }
+[data-page-host] img, [data-page-host] video, [data-page-host] iframe,
+[data-page-host] canvas, [data-page-host] svg, [data-page-host] table { max-width: 100%; }
+[data-page-host] img { height: auto; }
+[data-page-host] pre { max-width: 100%; overflow-x: auto; }
+[data-page-host] p, [data-page-host] h1, [data-page-host] h2, [data-page-host] h3,
+[data-page-host] h4, [data-page-host] h5, [data-page-host] h6, [data-page-host] li,
+[data-page-host] dd, [data-page-host] a, [data-page-host] td, [data-page-host] th {
+  overflow-wrap: anywhere; word-break: break-word;
+}
+[data-page-host] .article-body,
+[data-page-host] [data-map="body"] { overflow-wrap: anywhere; word-break: break-word; }
+/* === /theme-safety === */`
+
 export interface SplitPageResult {
   type: BuiltinPageType
   html: string
@@ -84,7 +111,15 @@ export function ensureLayoutContract(layoutHtml: string): string {
     doc.head.appendChild(style)
   }
 
-  // 3. 运行时测量脚本（幂等）
+  // 3. 安全兜底样式层（作为 head 最后的 <style>，保证优先级最高）
+  if (!doc.querySelector("style[data-theme-safety]")) {
+    const safety = doc.createElement("style")
+    safety.setAttribute("data-theme-safety", "")
+    safety.textContent = THEME_SAFETY_CSS
+    doc.head.appendChild(safety)
+  }
+
+  // 4. 运行时测量脚本（幂等）
   if (!body.querySelector("script[data-theme-nav-measure]")) {
     const script = doc.createElement("script")
     script.setAttribute("data-theme-nav-measure", "")
@@ -92,7 +127,7 @@ export function ensureLayoutContract(layoutHtml: string): string {
     body.appendChild(script)
   }
 
-  // 4. 间距兜底：强制 clamp 过大的 padding/margin/gap
+  // 5. 间距兜底：强制 clamp 过大的 padding/margin/gap
   return normalizeThemeSpacing(dom.serialize())
 }
 
@@ -154,7 +189,10 @@ const CLASS_BRIDGE: Record<string, string> = {
   "hero-post": "post-card",
 }
 
-export function sanitizePageFragment(rawHtml: string): string {
+export function sanitizePageFragment(
+  rawHtml: string,
+  layoutClasses?: Set<string>
+): string {
   const dom = new JSDOM(rawHtml)
   const doc = dom.window.document
   const body = doc.body
@@ -170,7 +208,14 @@ export function sanitizePageFragment(rawHtml: string): string {
 
   for (const el of Array.from(body.querySelectorAll<HTMLElement>("[class]"))) {
     const classes = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
-    const next = classes.map((cls) => CLASS_BRIDGE[cls] ?? cls)
+    const next = classes.map((cls) => {
+      const target = CLASS_BRIDGE[cls]
+      // 上下文感知：仅当映射目标确实存在于骨架类集时才改写，
+      // 否则保留原类名，避免改写成不存在的类而无声丢样。
+      if (target === undefined) return cls
+      if (layoutClasses && !layoutClasses.has(target)) return cls
+      return target
+    })
     const final = Array.from(new Set(next))
     if (final.length !== classes.length || final.some((c, i) => c !== classes[i])) {
       el.setAttribute("class", final.join(" ") || el.tagName.toLowerCase())
@@ -334,9 +379,42 @@ function clampPxValue(value: string, limit: number): string {
   })
 }
 
+/** 标题字号上限（px），防止巨大标题撑破行宽/容器。 */
+const HEADING_FONT_LIMITS: Record<string, number> = {
+  h1: 40,
+  h2: 34,
+  h3: 28,
+}
+
+/** 判定单个宽度声明值是否应被 clamp 到 100%（仅针对会导致溢出的硬编码宽值）。 */
+function clampWidthValue(value: string): string {
+  const m = /^\s*(\d+(?:\.\d+)?)(px|vw)\s*$/.exec(value)
+  if (!m) return value.trim()
+  const n = parseFloat(m[1])
+  if (m[2] === "vw" && n > 100) return "100%"
+  if (m[2] === "px" && n > 1400) return "100%"
+  return value.trim()
+}
+
+/** 对整个声明块中某个属性应用 clamp 函数；返回新块与是否有改动。 */
+function clampProperty(
+  body: string,
+  prop: string,
+  clamp: (value: string) => string
+): { body: string; changed: boolean } {
+  const propRe = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;}]+)`, "gi")
+  let changed = false
+  const newBody = body.replace(propRe, (decl: string, val: string) => {
+    const out = clamp(val)
+    if (out !== val.trim()) changed = true
+    return decl.replace(val, out)
+  })
+  return { body: newBody, changed }
+}
+
 /**
- * 对 <style> 中的 CSS 文本做间距 clamp。
- * 策略：仅对"可能产生大间距的选择器"做处理，避免误伤紧凑元素。
+ * 对 <style> 中的 CSS 文本做间距/字号/宽度 clamp。
+ * 策略：仅对"可能产生大间距/大字号/超宽"的选择器做处理，避免误伤紧凑元素。
  */
 function clampCssSpacing(css: string): string {
   // 匹配完整的 CSS 规则块：选择器 { ... }
@@ -349,22 +427,37 @@ function clampCssSpacing(css: string): string {
         /(?:^|[\s,>+~(])(?:section|\.section|\.hero|\.banner|\.intro|footer|\.footer)(?:$|[\s,.:#\[{>~+)])/i.test(
           sel
         )
-      if (!isTarget) return fullMatch
+      const isHeading = /\bh[1-3]\b/.test(sel)
+      if (!isTarget && !isHeading) return fullMatch
 
       let changed = false
       let newBody = body
-      for (const [prop, limit] of Object.entries(SPACING_LIMITS)) {
-        // 匹配 prop: value; 或 prop: value}（最后一个声明无分号）
-        const propRe = new RegExp(
-          `(?:^|;)\\s*${prop}\\s*:\\s*([^;${'}'}]+)`,
-          "gi"
-        )
-        newBody = newBody.replace(propRe, (decl: string, val: string) => {
-          const clamped = clampPxValue(val, limit)
-          if (clamped !== val.trim()) changed = true
-          return decl.replace(val, clamped)
-        })
+
+      if (isTarget) {
+        for (const [prop, limit] of Object.entries(SPACING_LIMITS)) {
+          const r = clampProperty(newBody, prop, (v) => clampPxValue(v, limit))
+          newBody = r.body
+          if (r.changed) changed = true
+        }
+        // 宽度兜底：超大 px / 超宽 vw 硬编码 clamp 到 100%，杜绝横向溢出
+        for (const prop of ["width", "min-width"]) {
+          const r = clampProperty(newBody, prop, clampWidthValue)
+          newBody = r.body
+          if (r.changed) changed = true
+        }
       }
+
+      if (isHeading) {
+        for (const [tag, limit] of Object.entries(HEADING_FONT_LIMITS)) {
+          if (!new RegExp(`\\b${tag}\\b`, "i").test(sel)) continue
+          const r = clampProperty(newBody, "font-size", (v) =>
+            clampPxValue(v, limit)
+          )
+          newBody = r.body
+          if (r.changed) changed = true
+        }
+      }
+
       return changed
         ? `${selectorPart}{${newBody}}`
         : fullMatch

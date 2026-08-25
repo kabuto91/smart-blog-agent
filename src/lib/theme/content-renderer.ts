@@ -96,6 +96,7 @@ export function renderContent(
   ensureMultipleAvatarPlaces(doc, siteConfig?.["author-avatar"])
   applyAvatarOverflow(doc, siteConfig?.["author-avatar"])
   fillGradientAvatarPlaceholders(doc, siteConfig?.["author-avatar"])
+  ensureSingleAuthorAvatar(doc)
 
   return dom.serialize()
 }
@@ -283,22 +284,111 @@ export function ensureMultipleAvatarPlaces(doc: Document, avatarUrl?: string): v
   if (hasAvatarInBody) return
 
   // 按优先级寻找注入位置：<aside> > 含 author/bio/sidebar 的容器 > 正文首部
-  const targets = [
-    host.querySelector("aside"),
-    host.querySelector<HTMLElement>(
-      "[class*='author'], [class*='bio'], [class*='sidebar'], [class*='widget'], [class*='about']"
-    ),
-  ]
-  const target = targets.find(Boolean)
+  const target = (
+    [
+      host.querySelector("aside"),
+      host.querySelector<HTMLElement>(
+        "[class*='author'], [class*='bio'], [class*='sidebar'], [class*='widget'], [class*='about']"
+      ),
+    ] as (Element | null)[]
+  )
+    .filter((el): el is Element => !!el)
+    .find((el) => containerHasTextBesidesAvatar(el))
 
   const avatarHtml = `<img class="avatar" src="${avatarUrl}" alt="作者头像" style="width:64px;height:64px;border-radius:50%;object-fit:cover;overflow:hidden;">`
 
+  // 仅当作者信息容器内已有可读文字（姓名/简介）时才注入头像，
+  // 避免出现「只有头像、没有文字」的孤立区块。
+  // 若正文没有任何可承载作者信息的容器，则不再强行在正文顶部插入裸头像。
   if (target) {
     target.insertAdjacentHTML("afterbegin", avatarHtml)
-  } else {
-    // 兜底：插入到正文容器最前面
-    host.insertAdjacentHTML("afterbegin", avatarHtml)
   }
+}
+
+/**
+ * 判断容器内（除头像元素外）是否还有可读文字，
+ * 避免把头像注入到空容器后形成孤立头像块。
+ */
+function containerHasTextBesidesAvatar(el: Element): boolean {
+  const clone = el.cloneNode(true) as Element
+  for (const avatar of Array.from(
+    clone.querySelectorAll(
+      "img.avatar, img[class*='avatar'], [class*='avatar']"
+    )
+  )) {
+    avatar.remove()
+  }
+  return (clone.textContent ?? "").replace(/\s/g, "").length > 0
+}
+
+const AUTHOR_AREA_RE = /(author|bio|about|sidebar|widget|intro|profile)/i
+
+/** 判断元素是否位于作者/简介相关容器内（用于挑选应保留的头像）。 */
+function hasAuthorAncestor(el: Element): boolean {
+  let node: Element | null = el
+  while (node) {
+    const cls = node.getAttribute("class") ?? ""
+    const id = node.getAttribute("id") ?? ""
+    if (AUTHOR_AREA_RE.test(cls) || AUTHOR_AREA_RE.test(id)) return true
+    node = node.parentElement
+  }
+  return false
+}
+
+/** 收集文档中的作者头像元素（仅显式标记，不含装饰性渐变圆）。 */
+function collectAvatarElements(doc: Document): Element[] {
+  return Array.from(
+    doc.querySelectorAll<HTMLElement>(
+      '[data-content="author-avatar"], img.avatar'
+    )
+  )
+}
+
+/**
+ * 渲染兜底：保证全页作者头像只出现 1 个，消除「导航+hero+作者区」多处重复。
+ * 优先保留作者/简介区内的头像，其次正文区，最后取文档首个；其余多余头像直接移除
+ * （仅移除头像元素本身，保留兄弟文字与结构）。
+ */
+export function ensureSingleAuthorAvatar(doc: Document): void {
+  const avatars = collectAvatarElements(doc)
+  if (avatars.length <= 1) return
+
+  const keeper =
+    avatars.find((el) => el.closest("[data-page-host]") && hasAuthorAncestor(el)) ||
+    avatars.find((el) => hasAuthorAncestor(el)) ||
+    avatars.find((el) => !!el.closest("[data-page-host]")) ||
+    avatars[0]
+
+  for (const el of avatars) {
+    if (el !== keeper) el.remove()
+  }
+}
+
+/** 判断元素是否为「纯 CSS 圆形渐变头像占位」（无 data-content、无 img、无文字）。 */
+function isGradientAvatarEl(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag !== "div" && tag !== "span") return false
+  if (el.hasAttribute("data-content")) return false
+  if (el.querySelector("img")) return false
+  if ((el.textContent ?? "").trim() !== "") return false
+  const style = (el.getAttribute("style") ?? "")
+    .replace(/\s/g, "")
+    .toLowerCase()
+  if (!style) return false
+  const isRound =
+    /(?:^|;)border-radius:\s*(?:var\(--radius-full\)|50%|100%|9999px)(?:;|$)/.test(
+      style
+    )
+  if (!isRound) return false
+  if (!/(linear|radial)-gradient/.test(style)) return false
+  const w = /(?:^|;)width:(\d+(?:\.\d+)?)px(?:;|$)/.exec(style)
+  const h = /(?:^|;)height:(\d+(?:\.\d+)?)px(?:;|$)/.exec(style)
+  if (!w || !h) return false
+  const width = Number(w[1])
+  const height = Number(h[1])
+  if (Math.abs(width - height) > 1) return false
+  if (width < 24 || width > 200) return false
+  return true
 }
 
 /**
@@ -311,27 +401,8 @@ function fillGradientAvatarPlaceholders(
 ): void {
   if (!avatarUrl) return
   for (const el of Array.from(doc.querySelectorAll<HTMLElement>("div, span"))) {
-    if (el.hasAttribute("data-content")) continue
-    if (el.querySelector("img")) continue
     if (el.closest('[data-content="article-body"]')) continue
-    if ((el.textContent ?? "").trim() !== "") continue
-    const style = (el.getAttribute("style") ?? "")
-      .replace(/\s/g, "")
-      .toLowerCase()
-    if (!style) continue
-    const isRound =
-      /(?:^|;)border-radius:\s*(?:var\(--radius-full\)|50%|100%|9999px)(?:;|$)/.test(
-        style
-      )
-    if (!isRound) continue
-    if (!/(linear|radial)-gradient/.test(style)) continue
-    const w = /(?:^|;)width:(\d+(?:\.\d+)?)px(?:;|$)/.exec(style)
-    const h = /(?:^|;)height:(\d+(?:\.\d+)?)px(?:;|$)/.exec(style)
-    if (!w || !h) continue
-    const width = Number(w[1])
-    const height = Number(h[1])
-    if (Math.abs(width - height) > 1) continue
-    if (width < 24 || width > 200) continue
+    if (!isGradientAvatarEl(el)) continue
     el.style.backgroundImage = `url("${avatarUrl}")`
     el.style.backgroundSize = "cover"
     el.style.backgroundPosition = "center"
