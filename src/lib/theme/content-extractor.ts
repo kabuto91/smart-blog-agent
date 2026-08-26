@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom"
 import type { ContentConfig, TextField, DynamicField, NavField, CustomListItem } from "../types/content-config"
-import { FIELD_DEFINITIONS } from "../field-registry"
+import { FIELD_DEFINITIONS, GLOBAL_FIELDS } from "../field-registry"
 
 const KNOWN_DYNAMIC_TYPES = new Set([
   "dynamic-articles",
@@ -111,9 +111,11 @@ export function extractContentConfig(
   const doc = dom.window.document
   const config: ContentConfig = {}
   const usedKeys = new Set<string>()
+  // 记录每个原始 key 的首个已处理元素，用于 text 同文本复用 key 的判定
+  const primaryByKey = new Map<string, Element>()
 
   // 兜底：先给 LLM 漏标的标题/段落补 data-content 标记，再统一提取
-  markUnmarkedTextUnits(doc)
+  markUnmarkedTextUnits(doc, siteConfig)
 
   const elements = doc.querySelectorAll("[data-content]")
   for (const el of elements) {
@@ -128,11 +130,19 @@ export function extractContentConfig(
     const type = el.getAttribute("data-content-type")
     if (!key || !type) continue
 
-    const unique = uniqueKey(key, usedKeys)
+    const primary = primaryByKey.get(key)
+    // 同 key 的 text 元素且文本完全相同时复用原 key（整体同步），避免二次拆成 -N
+    const reuseKey =
+      type === "text" &&
+      !!primary &&
+      (primary.textContent ?? "").trim() === (el.textContent ?? "").trim()
+
+    const unique = reuseKey ? key : uniqueKey(key, usedKeys)
     if (unique !== key) {
       el.setAttribute("data-content", unique)
     }
     usedKeys.add(unique)
+    if (!primaryByKey.has(key)) primaryByKey.set(key, el)
 
     if (type === "text") {
       config[unique] = extractTextField(el, unique, siteConfig)
@@ -166,11 +176,41 @@ function uniqueKey(base: string, used: Set<string>): string {
 }
 
 /**
+ * 从已标记元素里建立 key → {text, isText}，用于"同文本复用同一 key"：
+ * 当重复 base key 对应元素文本相同时复用原 key，避免生成 blog-title-2 之类多余参数。
+ */
+function collectMarkedUnits(doc: Document): Map<string, { text: string; isText: boolean }> {
+  const map = new Map<string, { text: string; isText: boolean }>()
+  for (const el of doc.querySelectorAll("[data-content]")) {
+    const key = el.getAttribute("data-content") ?? ""
+    if (!key || map.has(key)) continue
+    map.set(key, {
+      text: (el.textContent ?? "").trim(),
+      isText: el.getAttribute("data-content-type") === "text",
+    })
+  }
+  return map
+}
+
+/**
  * 兜底：对未标记的标题/段落自动补 data-content=text 标记（LLM 漏标时避免内容不可编辑）。
  * 只给叶子文本元素（h1-h6/p）打标、不打容器——text 字段渲染是 textContent 替换，
- * 打容器会破坏内部嵌套结构；打叶子安全。
+ * 打容器会破坏内部嵌套结构；打叶子安全。文本与已标记同 key 元素相同时复用 key，
+ * 避免把同一段内容（如站点标题）拆成需单独维护的 -N 参数。
  */
-function markUnmarkedTextUnits(doc: Document): void {
+function matchGlobalFieldValue(
+  text: string,
+  siteConfig?: Record<string, string>
+): string | undefined {
+  if (!siteConfig) return undefined
+  for (const key of Object.keys(GLOBAL_FIELDS)) {
+    const value = siteConfig[key]
+    if (value && value.trim() === text) return key
+  }
+  return undefined
+}
+
+function markUnmarkedTextUnits(doc: Document, siteConfig?: Record<string, string>): void {
   const units = Array.from(doc.querySelectorAll("h1,h2,h3,h4,h5,h6,p")).filter(
     (el) =>
       (el.textContent ?? "").trim().length > 0 &&
@@ -183,14 +223,22 @@ function markUnmarkedTextUnits(doc: Document): void {
       .map((el) => el.getAttribute("data-content") ?? "")
       .filter(Boolean)
   )
+  const marked = collectMarkedUnits(doc)
   for (const el of units) {
     // key 优先取类名 kebab 化（.post-title → post-title），无类名用 tag 名
+    const text = (el.textContent ?? "").trim()
+    const globalKey = matchGlobalFieldValue(text, siteConfig)
     const rawClass = (el.getAttribute("class") ?? "").split(/\s+/)[0] ?? ""
     const base =
-      rawClass.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
-      el.tagName.toLowerCase()
-    const key = uniqueKey(base, used)
+      globalKey ??
+      (rawClass.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+        el.tagName.toLowerCase())
+    const existing = marked.get(base)
+    // 文本完全相同的 text 元素复用同一 key（渲染时整体同步），仅文本不同才追加 -N
+    const reuseKey = existing && existing.isText && existing.text === text
+    const key = reuseKey ? base : uniqueKey(base, used)
     used.add(key)
+    marked.set(key, { text, isText: true })
     el.setAttribute("data-content", key)
     el.setAttribute("data-content-type", "text")
   }

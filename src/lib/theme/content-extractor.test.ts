@@ -222,6 +222,54 @@ describe("extractContentConfig 兜底补标", () => {
     expect(contentConfig["post-title-2"]).toMatchObject({ value: "B" })
   })
 
+  it("与已标记文本相同的漏标元素复用同一 key，不生成 blog-title-2", () => {
+    const html = `<h1 data-content="blog-title" data-content-type="text">我的博客</h1><h2 class="blog-title">我的博客</h2>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    expect(contentConfig["blog-title-2"]).toBeUndefined()
+    expect(contentConfig["blog-title"]).toMatchObject({ value: "我的博客" })
+    // 两处都是同 key，随单一字段整体更新
+    expect(htmlTemplate).toContain('data-content="blog-title"')
+    expect(htmlTemplate.match(/data-content="blog-title"/g)?.length).toBe(2)
+  })
+
+  it("同文本的多个未标记元素只产生一个字段", () => {
+    const html = `<h3 class="section-title">章节</h3><h3 class="section-title">章节</h3>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    expect(contentConfig["section-title-2"]).toBeUndefined()
+    expect(contentConfig["section-title"]).toMatchObject({ value: "章节" })
+    expect(htmlTemplate.match(/data-content="section-title"/g)?.length).toBe(2)
+  })
+
+  it("非 text 类型同 key 容器仍拆成 -N，避免误合并同类元素", () => {
+    const html = `<div data-content="tag-cloud" data-content-type="dynamic-tags"><a data-map="name">A</a></div><div data-content="tag-cloud" data-content-type="dynamic-tags"><a data-map="name">B</a></div>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    expect(contentConfig["tag-cloud"]).toBeTruthy()
+    expect(contentConfig["tag-cloud-2"]).toBeTruthy()
+    expect(htmlTemplate).toContain('data-content="tag-cloud-2"')
+  })
+
+  it("文本匹配已配置的全局字段值时，绑定到全局 key（hero-title→blog-title）", () => {
+    const html = `<h1 class="hero-title">我的博客</h1>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html, {
+      "blog-title": "我的博客",
+    })
+    expect(contentConfig["hero-title"]).toBeUndefined()
+    expect(contentConfig["blog-title"]).toMatchObject({
+      type: "text",
+      value: "我的博客",
+    })
+    expect(htmlTemplate).toContain('data-content="blog-title"')
+  })
+
+  it("文本不匹配全局字段值时，仍按类名派生 key", () => {
+    const html = `<h1 class="hero-title">探索 AI 世界</h1>`
+    const { contentConfig } = extractContentConfig(html, {
+      "blog-title": "我的博客",
+    })
+    expect(contentConfig["hero-title"]).toMatchObject({ value: "探索 AI 世界" })
+    expect(contentConfig["blog-title"]).toBeUndefined()
+  })
+
   it("已有 data-content 祖先覆盖的文本不重复补标", () => {
     const html = `<section data-content="article-list" data-content-type="dynamic-articles"><div><h3 class="post-title">模板标题</h3></div></section>`
     const { contentConfig, htmlTemplate } = extractContentConfig(html)
