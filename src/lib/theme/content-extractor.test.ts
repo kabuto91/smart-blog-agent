@@ -151,6 +151,50 @@ describe("extractContentConfig 动态列表项模板", () => {
     expect(field.itemTemplate).toContain("<li")
     expect(field.itemTemplate).toContain('data-map="title"')
   })
+
+  it("卡片内嵌分类标签组 ul 时不误判为包装容器", () => {
+    // 复现真实 bug：卡片（article.post-card）内部有 ul.tag-list 分类标签组，
+    // 提取器曾把标签组 li 当成项模板导致 fieldMapping 只剩 category
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card">
+        <div class="meta" data-map="date">2049.10.24</div>
+        <h3 class="post-title"><a data-map="link" href="/blog/x"><span data-map="title">样本标题</span></a></h3>
+        <p class="excerpt" data-map="excerpt">样本摘要</p>
+        <ul class="tag-list"><li><span class="tag" data-map="category">CYBER</span></li></ul>
+      </article>
+    </section>`
+    const { contentConfig } = extractContentConfig(html)
+    const field = contentConfig["article-list"] as DynamicField
+    // 模板是整张卡片而非标签组 li
+    expect(field.itemTemplate).toContain("<article")
+    expect(field.itemTemplate).toContain('data-map="title"')
+    // fieldMapping 收齐全部字段
+    expect(field.fieldMapping).toMatchObject({
+      date: "date",
+      link: "link",
+      title: "title",
+      excerpt: "excerpt",
+      category: "category",
+    })
+  })
+
+  it("包装容器内 ul 的 li 字段齐全时仍取 li 作模板", () => {
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <div class="post-list">
+        <ul>
+          <li><span data-map="date">2023.10.24</span><a href="#" data-map="link"><span data-map="title">模板</span></a></li>
+        </ul>
+      </div>
+    </section>`
+    const { contentConfig } = extractContentConfig(html)
+    const field = contentConfig["article-list"] as DynamicField
+    expect(field.itemTemplate).toContain("<li")
+    expect(field.fieldMapping).toMatchObject({
+      date: "date",
+      link: "link",
+      title: "title",
+    })
+  })
 })
 
 describe("extractContentConfig 兜底补标", () => {

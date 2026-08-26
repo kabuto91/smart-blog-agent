@@ -98,6 +98,8 @@ export function renderContent(
   fillGradientAvatarPlaceholders(doc, siteConfig?.["author-avatar"])
   ensureSingleAuthorAvatar(doc)
 
+  renderStaticTaxonomyLists(doc, dynamicData)
+
   return dom.serialize()
 }
 
@@ -361,6 +363,105 @@ export function ensureSingleAuthorAvatar(doc: Document): void {
 
   for (const el of avatars) {
     if (el !== keeper) el.remove()
+  }
+}
+
+/**
+ * 静态分类/标签列表兜底：LLM 生成的主题常在同一个容器（如 <ul class="tag-list">）
+ * 里硬编码混合的标签与分类链接（<a href="/blog/tag/xxx">、<a href="/blog/category/xxx">），
+ * 且未标记 data-content-type="dynamic-tags"/"dynamic-categories"，导致后台维护的分类/标签无法注入。
+ * 此处识别这类"未标记的分类/标签链接列表"，用数据库分类/标签逐项重建列表数据
+ * （保留如 ALL 等非分类/标签项，并移除无数据的冗余坑位），保证展示的即后台维护的数据。
+ */
+function renderStaticTaxonomyLists(doc: Document, data?: DynamicData): void {
+  const tags = data?.tags ?? []
+  const categories = data?.categories ?? []
+  if (tags.length === 0 && categories.length === 0) return
+
+  // 跳过由正规动态渲染/导航维护的容器（其内的分类/标签链接不属硬编码列表）
+  const inManagedContainer = (a: Element): boolean =>
+    !!a.closest(
+      '[data-content-type="dynamic-tags"],' +
+        '[data-content-type="dynamic-categories"],' +
+        '[data-content-type="nav-list"],' +
+        "nav, footer"
+    )
+
+  const taxonomySelector = 'a[href*="/blog/tag/"], a[href*="/blog/category/"]'
+  const anchors = Array.from(
+    doc.querySelectorAll<HTMLAnchorElement>(taxonomySelector)
+  )
+
+  const processed = new Set<Element>()
+  for (const anchor of anchors) {
+    if (inManagedContainer(anchor)) continue
+    // 从链接向祖先找分类/标签列表容器，要求容器内分类/标签链接总数 ≥2
+    let anc: Element | null = anchor.parentElement
+    while (anc && anc.tagName.toLowerCase() !== "body" && anc.tagName.toLowerCase() !== "html") {
+      const children = Array.from(anc.children).filter((c) =>
+        c.querySelector?.(taxonomySelector)
+      )
+      if (children.length >= 2 && !processed.has(anc)) {
+        processed.add(anc)
+        rebuildTaxonomyList(anc, tags, categories)
+        break
+      }
+      anc = anc.parentElement
+    }
+  }
+}
+
+/** 用数据库分类/标签按序重建容器内的列表项；保留非分类/标签项（如 ALL）。
+ * 一个容器按"是否含分类链接"整体判定为分类列表或标签列表，避免分类区混入标签。 */
+function rebuildTaxonomyList(
+  container: Element,
+  tags: TagData[],
+  categories: CategoryData[]
+): void {
+  const items = Array.from(container.children) as Element[]
+  const catSelector = 'a[href*="/blog/category/"]'
+  const tagSelector = 'a[href*="/blog/tag/"]'
+  const taxonomySelector = `${catSelector}, ${tagSelector}`
+
+  const hasCategory = items.some((i) => i.querySelector?.(catSelector))
+  const template =
+    items.find((i) => i.querySelector?.(hasCategory ? catSelector : tagSelector)) ??
+    null
+  const data = (hasCategory ? categories : tags) as (TagData | CategoryData)[]
+  const hrefPrefix = hasCategory ? "/blog/category/" : "/blog/tag/"
+
+  // 用模板项克隆出单个列表项，并替换分类/标签链接为维护数据
+  const makeItem = (template: Element, href: string, name: string): Element => {
+    const li = template.cloneNode(true) as Element
+    for (const node of li.querySelectorAll<HTMLElement>("[data-content], [data-map]")) {
+      node.removeAttribute("data-content")
+      node.removeAttribute("data-content-type")
+      node.removeAttribute("data-map")
+    }
+    const a = li.querySelector<HTMLAnchorElement>("a[href]")
+    if (a) {
+      a.setAttribute("href", href)
+      a.textContent = name
+    }
+    return li
+  }
+
+  let index = 0
+  for (const li of items) {
+    if (!li.querySelector(taxonomySelector)) continue
+    if (index < data.length) {
+      li.replaceWith(
+        makeItem(
+          template as Element,
+          `${hrefPrefix}${data[index].slug}`,
+          data[index].name
+        )
+      )
+      index++
+    } else {
+      // 无数据可填的坑位：整项移除，避免残留空 <li>
+      li.remove()
+    }
   }
 }
 
@@ -655,6 +756,11 @@ function renderListField(
   const { host, template } = resolved
 
   removeSampleItems(host, template)
+  if (host !== container) {
+    // 宿主是容器内部的包装（如网格 div）时，容器直接子级可能残留被提取为
+    // 模板的样例卡片（在包装外），需一并清除避免样例内容漏到线上
+    removeSampleItems(container, template, host)
+  }
 
   const mappings: [string, string][] =
     Object.keys(field.fieldMapping).length > 0
@@ -705,6 +811,8 @@ function renderListField(
       if (linkEl) linkEl.textContent = item[labelKey]
     }
 
+    fillTagAnchorText(clone, item)
+
     clones.push(clone)
   }
 
@@ -738,22 +846,103 @@ function looksLikeItemTemplate(html: string): boolean {
     return false
   }
   if (!ITEM_TEMPLATE_TAGS.has(tag)) return false
-  if (root.querySelector("ul, ol")) return false
+  if (root.querySelector("ul, ol")) {
+    // 模板内嵌列表（如卡片内的分类标签组）时：列表项字段是模板字段的
+    // 真子集说明主字段在列表外，模板本身仍是合法项模板（如含标签组的卡片）
+    const list = root.querySelector<Element>("ul, ol")
+    const first = list?.firstElementChild ?? null
+    const liKeys = first ? mapKeysOf(first) : []
+    const rootKeys = mapKeysOf(root)
+    const isProperSubset =
+      liKeys.length > 0 &&
+      liKeys.every((k) => rootKeys.includes(k)) &&
+      rootKeys.some((k) => !liKeys.includes(k))
+    if (!isProperSubset) return false
+  }
   if (!(root.matches("[data-map]") || root.querySelector("[data-map]"))) {
     return false
   }
   return true
 }
 
+/** 收集元素内（含自身）的全部 data-map 字段名，排序后用于结构比对。 */
+function mapKeysOf(el: Element): string[] {
+  const keys = new Set<string>()
+  if (el.matches("[data-map]")) {
+    const name = el.getAttribute("data-map")
+    if (name) keys.add(name)
+  }
+  for (const mapped of Array.from(el.querySelectorAll("[data-map]"))) {
+    const name = mapped.getAttribute("data-map")
+    if (name) keys.add(name)
+  }
+  return Array.from(keys).sort()
+}
+
 /** 找到容器内承载动态列表项的宿主：优先含 [data-map] 的 ul/ol，否则退回容器本身。 */
 function findDynamicListHost(container: Element): Element | null {
   if (container.matches("ul, ol")) return container
   for (const list of Array.from(container.querySelectorAll("ul, ol"))) {
-    if (list.querySelector("[data-map]")) return list
+    if (!list.querySelector("[data-map]")) continue
+    // 跳过嵌在列表项内部的标签组 ul（如卡片内的分类标签组）：
+    // ul 的 li 字段是其容器内某个祖先（卡片）字段的真子集时，
+    // 说明它是卡片内部的嵌套列表，仅把承载列表主字段的 ul 视为宿主
+    const liKeys = mapKeysOf(list.firstElementChild ?? list)
+    if (liKeys.length > 0 && isNestedItemList(list, container, liKeys)) {
+      continue
+    }
+    return list
   }
   // 支持更多容器类型（div/section/article）
   for (const list of Array.from(container.querySelectorAll("div, section, article"))) {
     if (list.querySelector("[data-map]")) return list
+  }
+  return null
+}
+
+/** 判断 ul 是否嵌在容器内的卡片形祖先里（li 字段是祖先字段的真子集）。 */
+function isNestedItemList(
+  list: Element,
+  container: Element,
+  liKeys: string[]
+): boolean {
+  for (
+    let anc: Element | null = list.parentElement;
+    anc && anc !== container;
+    anc = anc.parentElement
+  ) {
+    const ancKeys = mapKeysOf(anc)
+    if (ancKeys.length > liKeys.length && liKeys.every((k) => ancKeys.includes(k))) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * 容器内寻找承载多个同构样本项的包装容器（如 .magazine-grid）：
+ * 返回包含 ≥2 个与样本项同标签且共享类名的子元素的首个（最浅）容器。
+ * 用于样本项被误判为宿主时找回真正的列表包装容器。
+ */
+function findRepeatedItemWrapper(container: Element, sample: Element): Element | null {
+  const tag = sample.tagName
+  const sampleClasses = Array.from(sample.classList)
+  if (sampleClasses.length === 0) return null
+
+  for (const el of Array.from(
+    container.querySelectorAll<Element>("div, section, ul, ol")
+  )) {
+    if (el === sample || sample.contains(el)) continue
+    let count = 0
+    for (const child of Array.from(el.children)) {
+      if (
+        child.tagName === tag &&
+        sampleClasses.some((c) => child.classList.contains(c))
+      ) {
+        count++
+      }
+    }
+    if (count >= 2) return el
   }
   return null
 }
@@ -782,10 +971,11 @@ function resolveListItemTemplate(
   let host = findDynamicListHost(container) ?? container
 
   // 宿主与模板同构（同标签 + 同类名集合）说明 findDynamicListHost 把唯一样本项
-  // 误认成了宿主：此时真正的宿主是 container 自身，避免克隆项被嵌套进样本项
+  // 误认成了宿主：优先找回承载多个同构样本项的包装容器（如网格 div），让
+  // 真实数据渲染进包装内；找不到时才退回容器自身，避免克隆项被嵌套进样本项
   // （样本项多为 flex 行布局，嵌套会导致列表横向排列）。
   if (template && host !== container && isSameElementShape(host, template)) {
-    host = container
+    host = findRepeatedItemWrapper(container, host) ?? container
   }
 
   if (!template) template = findItemTemplate(host)
@@ -804,12 +994,40 @@ function isSameElementShape(a: Element, b: Element): boolean {
   )
 }
 
+const TAG_LIKE_CLASS_RE = /(^|[\s_-])(tags?|chips?|badges?)([\s_-]|$)/i
+
+/** 判断锚点是否形似标签 chips（自身或最近列表带 tag/chip/badge 类）。 */
+function isTagLikeAnchor(anchor: Element): boolean {
+  if (TAG_LIKE_CLASS_RE.test(anchor.getAttribute("class") ?? "")) return true
+  const list = anchor.closest("ul, ol")
+  return TAG_LIKE_CLASS_RE.test(list?.getAttribute("class") ?? "")
+}
+
+/**
+ * 标签残留兜底：data-map="link" 的标签形锚点（无嵌套字段、文本未被映射覆盖）
+ * 会一直显示模板样例文本（如 SYNTHWAVE），用分类填充避免样例标签漏到线上。
+ * 首个 link 锚点（通常是标题链接，由 labelKey 兜底负责）跳过。
+ */
+function fillTagAnchorText(clone: Element, item: Record<string, string>): void {
+  if (!item.category) return
+  const anchors = Array.from(
+    clone.querySelectorAll<Element>('a[data-map="link"]')
+  )
+  for (const anchor of anchors.slice(1)) {
+    if (anchor.querySelector("[data-map]")) continue
+    if ((anchor.textContent ?? "").trim() === "") continue
+    if (!isTagLikeAnchor(anchor)) continue
+    anchor.textContent = item.category
+  }
+}
+
 /** 清掉宿主中不属于模板的示例项（保留标题/按钮等静态结构）。 */
-function removeSampleItems(host: Element, template: Element): void {
+function removeSampleItems(host: Element, template: Element, protect?: Element): void {
   const isListHost = host.matches("ul, ol")
   const tag = template.tagName
   for (const child of Array.from(host.children) as Element[]) {
     if (child === template) continue
+    if (child === protect) continue
     if (isListHost) {
       child.remove()
       continue

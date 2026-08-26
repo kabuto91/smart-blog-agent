@@ -320,7 +320,17 @@ function findRepeatableItemTemplate(root: Element): Element | null {
   if (list) {
     const first = list.firstElementChild
     if (first && (first.matches("[data-map]") || first.querySelector("[data-map]"))) {
-      return first
+      // 候选 li 字段是 root 字段的真子集时，root 自身携带更完整的项字段
+      // （如卡片含 title/date/excerpt 且内部嵌分类标签组 ul），root 才是项模板，
+      // 不能因内部嵌套的标签组把卡片误判为包装容器
+      const rootKeys = mapKeysOf(root)
+      const liKeys = mapKeysOf(first)
+      const isProperSubset =
+        liKeys.every((k) => rootKeys.includes(k)) &&
+        rootKeys.some((k) => !liKeys.includes(k))
+      if (!isProperSubset) {
+        return first
+      }
     }
   }
 

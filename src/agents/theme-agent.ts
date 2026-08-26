@@ -146,6 +146,11 @@ const DYNAMIC_ARTICLES_RULE = `- 文章列表区域用 <section data-content="ar
 - 模板外的静态结构（标题、容器、按钮等）放在模板项同级位置，不要包在模板项里面；
 - 模板之外的示例项会被清除并替换为真实数据。`
 
+/** 动态标签/分类列表的数据绑定规则（首页/列表页若有标签云或分类侧栏时使用）。 */
+const DYNAMIC_TAG_RULE = `- 标签云区域用 <div data-content="tag-cloud" data-content-type="dynamic-tags"> 包裹，容器内首个子元素作为单个标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接（href 写占位 # 即可）；
+- 若设计了分类列表区域，用 data-content-type="dynamic-categories" 同理标记（模板内 data-map="name" 标记分类名）。
+- 请勿用静态链接硬编码标签/分类列表——运行时会用后台维护的真实标签/分类自动替换（即便列表内同时混有标签与分类链接、或仅为分类链接，也会被替换）。`
+
 export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计师，任务分为两阶段：
 1. 本阶段只负责产出【主题骨架】——即共享布局 HTML（包含 <!DOCTYPE html>、<html>、<head>、<body>）。
 2. 后续阶段会基于这份骨架，并行生成三个页面的正文（首页 /blog、列表页 /blog/archive、详情页 /blog/{slug}），填入骨架的正文占位节点。
@@ -191,6 +196,7 @@ const PAGE_SPEC: Record<
 
 【数据绑定规则】
 ${DYNAMIC_ARTICLES_RULE}
+${DYNAMIC_TAG_RULE}
 - 首页自由组织的区块（作者介绍、统计、时间线、特色卡片组合等）内的所有标题（h2/h3/h4）与段落文本（p）都必须标记 data-content + data-content-type="text"，key 用语义化英文命名（如 core-modules-title、feature-card-desc）。
 
 【头像占位】
@@ -202,6 +208,7 @@ ${DYNAMIC_ARTICLES_RULE}
 
 【数据绑定规则】
 ${DYNAMIC_ARTICLES_RULE}
+${DYNAMIC_TAG_RULE}
 - 列表会自动填充全部文章并附加分页，正文不要写分页；
 - 可在列表上方或周围添加标题、筛选、搜索等辅助区块。`,
   },
@@ -253,7 +260,7 @@ ${imageSection}
 
 【内容标记规则】
 动态内容区域（文章列表等）必须使用 data-content 和 data-content-type 属性标记，容器首个子元素作为模板，模板内用 data-map 标记字段名（如 title、excerpt、date、category、link）。
-普通文本区域（标题、段落、标签组、卡片文字、统计数字、时间线条目、说明文字等）必须用 data-content + data-content-type="text" 标记，否则该内容无法在后台自定义。每个独立区块内的标题与正文文本元素都要分别标记（例如一个卡片区块的标题一个 key、摘要一个 key）。
+普通文本区域（标题、段落、卡片文字、统计数字、时间线条目、说明文字等）必须用 data-content + data-content-type="text" 标记，否则该内容无法在后台自定义。每个独立区块内的标题与正文文本元素都要分别标记（例如一个卡片区块的标题一个 key、摘要一个 key）。注意：标签云 / 分类列表属于动态列表，应按上述动态标签规则用 data-content-type="dynamic-tags" / "dynamic-categories" 标记，勿把它们当普通文本。
 常用字段命名参考：
 ${FIELD_REFERENCE}
 示例：<h1 data-content="blog-title" data-content-type="text">我的博客</h1>

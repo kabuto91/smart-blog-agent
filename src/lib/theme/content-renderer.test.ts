@@ -493,6 +493,141 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(directItems[0].querySelector("a")!.getAttribute("href")).toBe("/blog/real-a")
     expect(directItems[0].querySelector(".date")!.textContent).toBe("2026-01-01")
   })
+
+  it("卡片模板内嵌分类标签组 ul 时仍是合法模板，克隆卡片平铺且字段齐全", () => {
+    // 复现真实 bug：卡片内嵌 <ul class="tag-list"><li><span data-map="category">>
+    // 曾导致 looksLikeItemTemplate 拒绝卡片模板 + findDynamicListHost 误取标签组 ul，
+    // 克隆出只有 category 的残缺 li
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: `<article class="post-card">
+          <div class="meta" data-map="date">2049.10.24</div>
+          <h3 class="post-title"><a data-map="link" href="#"><span data-map="title">模板标题</span></a></h3>
+          <p class="excerpt" data-map="excerpt">模板摘要</p>
+          <ul class="tag-list"><li><span class="tag" data-map="category">CYBER</span></li></ul>
+        </article>`,
+        fieldMapping: {
+          date: "date",
+          link: "link",
+          title: "title",
+          excerpt: "excerpt",
+          category: "category",
+        },
+      },
+    }
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card">
+        <div class="meta" data-map="date">2049.10.24</div>
+        <h3 class="post-title"><a data-map="link" href="#"><span data-map="title">样本标题</span></a></h3>
+        <p class="excerpt" data-map="excerpt">样本摘要</p>
+        <ul class="tag-list"><li><span class="tag" data-map="category">CYBER</span></li></ul>
+      </article>
+    </section>`
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const dom = new JSDOM(out)
+    const doc = dom.window.document
+    const section = doc.querySelector('[data-content="article-list"]')
+    expect(section).toBeTruthy()
+    // 克隆卡片是 section 直接子元素且数量正确
+    const cards = section!.querySelectorAll(":scope > article.post-card")
+    expect(cards.length).toBe(2)
+    // 卡片未被嵌套进其他卡片，也没有残缺 li 克隆散落
+    expect(section!.querySelectorAll("article article").length).toBe(0)
+    // 样本内容被清除
+    expect(out).not.toContain("样本标题")
+    expect(out).not.toContain("样本摘要")
+    // 字段全部替换为真实数据（含内嵌标签组里的 category）
+    expect(cards[0].querySelector('[data-map="title"]')!.textContent).toContain("真实文章A")
+    expect(cards[0].querySelector('[data-map="date"]')!.textContent).toBe("2026-01-01")
+    expect(cards[0].querySelector('[data-map="link"]')!.getAttribute("href")).toBe("/blog/real-a")
+    expect(cards[0].querySelector('[data-map="category"]')!.textContent).toBe("设计")
+    expect(cards[1].querySelector('[data-map="category"]')!.textContent).toBe("随笔")
+  })
+
+  it("游离模板卡 + 网格包装容器时，真实卡片渲染进网格、样例全部清除", () => {
+    // 复现首页真实 bug：容器首个子元素是被提取为 itemTemplate 的样例卡（带
+    // data-map），真正的列表宿主是网格包装 div.magazine-grid（内部样例卡无
+    // data-map）。曾导致真实文章被追加到 section、网格内样例卡残留。
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: `<article class="post-card">
+          <div class="meta">
+            <span data-map="date">2084.11.05</span> // <span data-map="category">CYBER</span>
+          </div>
+          <h3 class="post-title"><a href="#" data-map="link"><span data-map="title">模板标题</span></a></h3>
+          <p class="excerpt" data-map="excerpt">模板摘要</p>
+          <ul class="tag-list"><li><a class="tag" href="#" data-map="link">SYNTHWAVE</a></li></ul>
+        </article>`,
+        fieldMapping: {
+          date: "date",
+          category: "category",
+          link: "link",
+          title: "title",
+          excerpt: "excerpt",
+        },
+      },
+    }
+    const html = `<section class="section" data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card">
+        <div class="meta">
+          <span data-map="date">2084.11.05</span> // <span data-map="category">CYBER</span>
+        </div>
+        <h3 class="post-title"><a href="#" data-map="link"><span data-map="title">样本标题</span></a></h3>
+        <p class="excerpt" data-map="excerpt">样本摘要</p>
+        <ul class="tag-list"><li><a class="tag" href="#" data-map="link">SYNTHWAVE</a></li></ul>
+      </article>
+      <h2 class="section-title">最新电波</h2>
+      <div class="magazine-grid">
+        <article class="post-card"><div class="meta">2084.10.28 // TECH</div><h3 class="post-title">样例一</h3></article>
+        <article class="post-card"><div class="meta">2084.10.12 // RETRO</div><h3 class="post-title">样例二</h3></article>
+        <article class="post-card"><div class="meta">2084.09.30 // CODE</div><h3 class="post-title">样例三</h3></article>
+      </div>
+      <div><a class="btn" href="/blog/archive">查看全部档案</a></div>
+    </section>`
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const dom = new JSDOM(out)
+    const doc = dom.window.document
+    const section = doc.querySelector('[data-content="article-list"]')
+    expect(section).toBeTruthy()
+
+    // 真实卡片渲染进网格包装内（不是 section 直接子级）
+    const grid = section!.querySelector("div.magazine-grid")
+    expect(grid).toBeTruthy()
+    const cards = grid!.querySelectorAll(":scope > article.post-card")
+    expect(cards.length).toBe(2)
+    expect(section!.querySelectorAll(":scope > article.post-card").length).toBe(0)
+
+    // section 的静态结构保留：标题 + 查看按钮
+    expect(section!.querySelector("h2.section-title")?.textContent).toContain("最新电波")
+    expect(out).toContain("查看全部档案")
+
+    // 全部样例内容被清除（游离模板卡 + 网格内样例卡）
+    expect(out).not.toContain("样本标题")
+    expect(out).not.toContain("样本摘要")
+    expect(out).not.toContain("样例一")
+    expect(out).not.toContain("样例二")
+    expect(out).not.toContain("样例三")
+    expect(out).not.toContain("2084.10.28")
+
+    // 字段全部替换为真实数据
+    expect(cards[0].querySelector('[data-map="title"]')!.textContent).toContain("真实文章A")
+    expect(cards[0].querySelector('[data-map="date"]')!.textContent).toBe("2026-01-01")
+    expect(cards[0].querySelector('[data-map="category"]')!.textContent).toBe("设计")
+    expect(cards[0].querySelector("a[data-map=link]")!.getAttribute("href")).toBe("/blog/real-a")
+
+    // 标签形 link 锚点文本被分类填充，不再残留 SYNTHWAVE 样例
+    expect(out).not.toContain("SYNTHWAVE")
+    expect(cards[0].querySelector("a.tag")!.textContent).toBe("设计")
+    expect(cards[1].querySelector("a.tag")!.textContent).toBe("随笔")
+  })
 })
 
 describe("ensureSingleAuthorAvatar", () => {
@@ -628,5 +763,171 @@ describe("renderContent 详情页正文占位", () => {
     expect(out).toContain("2026-08-01")
     expect(out).not.toContain("样本标题")
     expect(out).not.toContain("样本分类")
+  })
+})
+
+describe("renderContent 静态标签云兜底", () => {
+  const tags = [
+    { id: "1", name: "Next.js", slug: "next-js" },
+    { id: "2", name: "TypeScript", slug: "typescript" },
+    { id: "3", name: "CSS", slug: "css" },
+  ]
+  const TS = (s: string) => ({ id: s, name: s, slug: s.toLowerCase() })
+
+  const TAG_CLOUD_HTML = `<aside class="sidebar">
+  <h3>标签云</h3>
+  <ul class="tag-cloud">
+    <li><a href="/blog/tag/retro">RETRO</a></li>
+    <li><a href="/blog/tag/synthwave">SYNTHWAVE</a></li>
+    <li><a href="/blog/tag/css">CSS</a></li>
+    <li><a href="/blog/tag/sci-fi">SCI-FI</a></li>
+    <li><a href="/blog/tag/design">DESIGN</a></li>
+    <li><a href="/blog/tag/cyberpunk">CYBERPUNK</a></li>
+  </ul>
+</aside>`
+
+  it("未标记静态标签链接被数据库标签替换 href 与文本", () => {
+    const out = renderContent(
+      `<!DOCTYPE html><body><main>${TAG_CLOUD_HTML}</main></body>`,
+      {},
+      { tags },
+      undefined,
+      { pageSpecific: true }
+    )
+    const dom = new JSDOM(out)
+    const doc = dom.window.document
+    const links = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href*="/blog/tag/"]'))
+    expect(links.length).toBe(3)
+    expect(links[0].getAttribute("href")).toBe("/blog/tag/next-js")
+    expect(links[0].textContent).toBe("Next.js")
+    expect(links[1].getAttribute("href")).toBe("/blog/tag/typescript")
+    expect(links[1].textContent).toBe("TypeScript")
+    expect(links[2].getAttribute("href")).toBe("/blog/tag/css")
+    expect(links[2].textContent).toBe("CSS")
+    // 样本默认标签文本不再残留
+    expect(out).not.toContain("RETRO")
+    expect(out).not.toContain("SYNTHWAVE")
+    expect(out).not.toContain("CYBERPUNK")
+  })
+
+  it("页面坑位少于数据库标签时按坑位数替换，不改变结构", () => {
+    const html = `<body><ul class="tag-cloud">
+      <li><a href="/blog/tag/retro">RETRO</a></li>
+      <li><a href="/blog/tag/synthwave">SYNTHWAVE</a></li>
+    </ul></body>`
+    const out = renderContent(html, {}, { tags: [...tags, TS("架构")] }, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const links = doc.querySelectorAll('a[href*="/blog/tag/"]')
+    expect(links.length).toBe(2)
+    expect(links[0].getAttribute("href")).toBe("/blog/tag/next-js")
+    expect(links[1].getAttribute("href")).toBe("/blog/tag/typescript")
+  })
+
+  it("已标记 dynamic-tags 的区域不受影响（保留 data-map 结构）", () => {
+    const html = `<body><section data-content="tag-cloud" data-content-type="dynamic-tags">
+      <a href="#" data-map="link"><span data-map="name">占位</span></a>
+    </section></body>`
+    const out = renderContent(html, {}, { tags }, undefined, { pageSpecific: true })
+    // 已标记区域不应被静态兜底触碰：data-map 结构保留，且不会被注入数据库标签链接
+    expect(out).toContain('data-content="tag-cloud"')
+    expect(out).toContain('data-map="link"')
+    expect(out).toContain('data-map="name"')
+    expect(out).not.toContain("/blog/tag/next-js")
+  })
+
+  const categories = [
+    { id: "c1", name: "技术", slug: "tech" },
+    { id: "c2", name: "设计", slug: "design" },
+  ]
+  const CAT = (s: string) => ({ id: s, name: s, slug: s.toLowerCase() })
+
+  it("含分类链接的容器整体按分类列表重建，不混入标签", () => {
+    const html = `<body><h2>筛选</h2><ul class="tag-list">
+      <li><a href="/blog/archive">ALL</a></li>
+      <li><a href="/blog/category/tech" class="tag">TECH</a></li>
+      <li><a href="/blog/tag/next-js" class="tag">Next.js</a></li>
+      <li><a href="/blog/category/design" class="tag">DESIGN</a></li>
+      <li><a href="/blog/category/cyber" class="tag">CYBER</a></li>
+    </ul></body>`
+    const out = renderContent(
+      html,
+      {},
+      { tags, categories },
+      undefined,
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    const catLinks = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href*="/blog/category/"]'))
+    // 容器判定为分类列表：全部槽位用分类填充，标签槽位(Next.js)同样被分类(slot1)替换，
+    // cyber 超出 categories 长度(2) 整项移除，故只剩 2 个分类链接
+    expect(catLinks).toHaveLength(2)
+    expect(catLinks[0].getAttribute("href")).toBe("/blog/category/tech")
+    expect(catLinks[0].textContent).toBe("技术")
+    expect(catLinks[1].getAttribute("href")).toBe("/blog/category/design")
+    expect(catLinks[1].textContent).toBe("设计")
+    // 非分类项 ALL 未被触碰
+    expect(out).toContain('href="/blog/archive"')
+    expect(out).not.toContain("DESIGN")
+    expect(out).not.toContain("CYBER")
+    // 不再向分类容器注入标签
+    expect(out).not.toContain("/blog/tag/Next.js")
+    expect(out).not.toContain(">Next.js<")
+  })
+
+  it("仅含标签链接的容整体按标签列表重建", () => {
+    const html = `<body><ul class="tag-list">
+      <li><a href="/blog/tag/retro" class="tag">RETRO</a></li>
+      <li><a href="/blog/tag/synthwave" class="tag">SYNTHWAVE</a></li>
+      <li><a href="/blog/tag/cyberpunk" class="tag">CYBERPUNK</a></li>
+    </ul></body>`
+    const out = renderContent(
+      html,
+      {},
+      { tags, categories },
+      undefined,
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    const links = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href*="/blog/tag/"]'))
+    expect(links).toHaveLength(3)
+    expect(links[0].textContent).toBe("Next.js")
+    expect(links[1].textContent).toBe("TypeScript")
+    expect(links[2].textContent).toBe("CSS")
+    expect(out).not.toContain("RETRO")
+  })
+
+  it("仅分类列表：分类链接被替换，且不依赖标签链接数量", () => {
+    const html = `<body><ul class="tag-list">
+      <li><a href="/blog/category/tech" class="tag">TECH</a></li>
+      <li><a href="/blog/category/design" class="tag">DESIGN</a></li>
+    </ul></body>`
+    const out = renderContent(
+      html,
+      {},
+      { categories: [...categories, CAT("建筑")] },
+      undefined,
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    const links = Array.from(doc.querySelectorAll<HTMLAnchorElement>('a[href*="/blog/category/"]'))
+    expect(links).toHaveLength(2)
+    expect(links[0].getAttribute("href")).toBe("/blog/category/tech")
+    expect(links[0].textContent).toBe("技术")
+    expect(links[1].getAttribute("href")).toBe("/blog/category/design")
+    expect(links[1].textContent).toBe("设计")
+    expect(out).not.toContain('>TECH<')
+    expect(out).not.toContain('>DESIGN<')
+  })
+
+  it("无标签也无分类数据时不触碰页面", () => {
+    const html = `<body><ul class="tag-list">
+      <li><a href="/blog/tag/retro">RETRO</a></li>
+      <li><a href="/blog/category/tech">TECH</a></li>
+    </ul></body>`
+    const out = renderContent(html, {}, {}, undefined, { pageSpecific: true })
+    expect(out).toContain("RETRO")
+    expect(out).toContain("TECH")
   })
 })
