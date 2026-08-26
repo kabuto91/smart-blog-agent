@@ -53,7 +53,8 @@ export function renderContent(
   contentConfig: ContentConfig,
   dynamicData?: DynamicData,
   siteConfig?: Record<string, string>,
-  options?: RenderOptions
+  options?: RenderOptions,
+  reusableTexts?: Record<string, string>
 ): string {
   const dom = new JSDOM(htmlTemplate)
   const doc = dom.window.document
@@ -63,7 +64,7 @@ export function renderContent(
 
   for (const [key, field] of Object.entries(fields)) {
     if (field.type === "text") {
-      const value = resolveTextValue(field, siteConfig)
+      const value = resolveTextValue(field, siteConfig, reusableTexts)
       renderTextField(doc, key, value)
     } else if (
       field.type.startsWith("dynamic-") ||
@@ -585,10 +586,19 @@ function augmentGlobalFields(
 
 function resolveTextValue(
   field: TextField,
-  siteConfig?: Record<string, string>
+  siteConfig?: Record<string, string>,
+  reusableTexts?: Record<string, string>
 ): string {
   if (field.source === "global" && field.globalKey && siteConfig?.[field.globalKey] !== undefined) {
     return siteConfig[field.globalKey]
+  }
+  if (
+    field.source === "reusable-text" &&
+    reusableTexts &&
+    Object.prototype.hasOwnProperty.call(reusableTexts, field.textKey ?? "")
+  ) {
+    const v = reusableTexts[field.textKey ?? ""]
+    if (v !== undefined) return v
   }
   return field.value
 }

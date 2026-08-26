@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Save, Loader2, Eye, BookOpen, ThumbsUp, Upload } from "lucide-react"
+import { Save, Loader2, Eye, BookOpen, ThumbsUp, Upload, Bookmark, Plus, Trash2 } from "lucide-react"
 import { FIELD_DEFINITIONS, EDITABLE_KEYS } from "@/lib/field-registry"
 import type { StatFieldKey } from "@/lib/field-registry"
 
@@ -23,6 +23,14 @@ export default function SettingsPage() {
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // 可复用文本库（独立于主配置）
+  const [texts, setTexts] = useState<Record<string, string>>({})
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [reuseSaving, setReuseSaving] = useState(false)
+  const [reuseSuccess, setReuseSuccess] = useState(false)
+  const [newKey, setNewKey] = useState("")
+  const [newText, setNewText] = useState("")
+
   useEffect(() => {
     fetch("/api/site-config")
       .then((res) => res.json())
@@ -31,6 +39,19 @@ export default function SettingsPage() {
         setLoading(false)
       })
       .catch(() => setLoading(false))
+    fetch("/api/reusable-text")
+      .then((res) => res.json())
+      .then((data) => {
+        const lib =
+          data && typeof data === "object" && !Array.isArray(data)
+            ? (data as Record<string, string>)
+            : {}
+        setTexts(lib)
+        setDrafts({ ...lib })
+      })
+      .catch(() => {
+        // 可复用文本加载失败不阻塞页面
+      })
   }, [])
 
     const persistConfig = useCallback(async (cfg: Record<string, string>) => {
@@ -91,9 +112,74 @@ export default function SettingsPage() {
     if (file) handleAvatarUpload(file)
   }
 
+  function updateReuseValue(key: string, value: string) {
+    setDrafts((prev) => ({ ...prev, [key]: value }))
+  }
+
+  function removeReuseValue(key: string) {
+    setDrafts((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  function addReuseValue() {
+    const key = newKey.trim()
+    if (!key) return
+    setDrafts((prev) => ({ ...prev, [key]: newText }))
+    setNewKey("")
+    setNewText("")
+  }
+
+  function reuseLabel(key: string) {
+    return FIELD_DEFINITIONS[key]?.label || key
+  }
+
+  async function handleReuseSave() {
+    setReuseSaving(true)
+    setReuseSuccess(false)
+    try {
+      const jobs: Promise<unknown>[] = []
+      for (const [key, value] of Object.entries(drafts)) {
+        if (texts[key] !== value) {
+          const p = fetch("/api/reusable-text", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, text: value }),
+          }).then((res) => {
+            if (!res.ok) throw new Error(`保存可复用文本失败：${key}`)
+          })
+          jobs.push(p)
+        }
+      }
+      for (const key of Object.keys(texts)) {
+        if (!(key in drafts)) {
+          const p = fetch("/api/reusable-text", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, action: "delete" }),
+          }).then((res) => {
+            if (!res.ok) throw new Error(`删除可复用文本失败：${key}`)
+          })
+          jobs.push(p)
+        }
+      }
+      if (jobs.length > 0) await Promise.all(jobs)
+      setTexts({ ...drafts })
+      setReuseSuccess(true)
+      setTimeout(() => setReuseSuccess(false), 2000)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "保存失败")
+    } finally {
+      setReuseSaving(false)
+    }
+  }
+
   const editableEntries = Object.entries(FIELD_DEFINITIONS)
     .filter(([, def]) => !def.readonly)
     .map(([key]) => [key, config[key] ?? ""] as const)
+  const draftEntries = Object.entries(drafts)
   const readonlyEntries = Object.entries(FIELD_DEFINITIONS)
     .filter(([, def]) => def.readonly)
     .map(([key]) => [key as StatFieldKey, config[key] ?? "0"] as const)
@@ -179,6 +265,113 @@ export default function SettingsPage() {
               )}
             </div>
           ))}
+
+          {/* 可复用文本（共享配置）：独立区块，单独保存 */}
+          <hr className="my-2 border-black/[0.06]" />
+          <div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-1.5 text-sm font-medium text-[#1C1C1E]">
+                  <Bookmark className="size-3.5 text-[#E5A83D]" />
+                  可复用文本（共享配置）
+                </h2>
+                <p className="mt-0.5 text-xs text-[#6B7280]">
+                  在主题配置中被保存为可复用的文本，统一在这里编辑后同步应用到所有绑定主题
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-3">
+              {draftEntries.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-black/[0.08] px-3 py-6 text-center text-xs text-[#9CA3AF]">
+                  暂无可复用文本，可在主题配置中"保存为可复用"后到这里统一编辑
+                </div>
+              ) : (
+                draftEntries.map(([key, value]) => (
+                  <div
+                    key={key}
+                    className="rounded-lg border border-black/[0.08] bg-[#F9F9F8] px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs text-[#6B7280]">
+                        {reuseLabel(key)}
+                        {reuseLabel(key) !== key && (
+                          <span className="ml-1.5 font-mono text-[10px] text-[#9CA3AF]">
+                            {key}
+                          </span>
+                        )}
+                      </label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeReuseValue(key)}
+                        className="h-6 gap-1 text-xs text-[#6B7280] hover:text-red-500"
+                      >
+                        <Trash2 className="size-3" />
+                        删除
+                      </Button>
+                    </div>
+                    <Input
+                      value={value}
+                      onChange={(e) => updateReuseValue(key, e.target.value)}
+                      className="mt-1.5 w-full"
+                      placeholder={`输入${reuseLabel(key)}`}
+                    />
+                  </div>
+                ))
+              )}
+
+              {/* 新增可复用文本 */}
+              <div className="rounded-lg border border-black/[0.08] bg-white px-3 py-2">
+                <p className="text-xs font-medium text-[#1C1C1E]">新增可复用文本</p>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value)}
+                    className="w-40"
+                    placeholder="名称（key）"
+                  />
+                  <Input
+                    value={newText}
+                    onChange={(e) => setNewText(e.target.value)}
+                    className="flex-1"
+                    placeholder="文本内容"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={addReuseValue}
+                    className="h-9 gap-1"
+                  >
+                    <Plus className="size-3.5" />
+                    添加
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={handleReuseSave}
+                  disabled={reuseSaving || draftEntries.length === 0}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                >
+                  {reuseSaving ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Save className="size-3.5" />
+                  )}
+                  保存可复用文本
+                </Button>
+                {reuseSuccess && (
+                  <span className="text-sm text-green-600 animate-in fade-in">
+                    已保存
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
 
           {readonlyEntries.length > 0 && (
             <>

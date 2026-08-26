@@ -8,6 +8,7 @@ import {
 } from "@/lib/theme/content-renderer"
 import { mergeThemePage } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
+import { getReusableTexts } from "@/lib/reusable-text"
 import { extractHtmlFromContent } from "@/agents/theme-agent"
 import { createLLM } from "@/lib/llm/client"
 import type { ContentConfig } from "@/lib/types/content-config"
@@ -128,12 +129,13 @@ export async function POST(request: Request) {
         try {
           const config = (JSON.parse(contentConfigJson) ?? {}) as ContentConfig
           const siteConfig = await getSiteConfig()
+          const reusableTexts = await getReusableTexts()
           const mergedHtml = mergeThemePage(theme.layoutHtml, normalizedHtml, {
             navClearance: true,
           })
           previewHtml = renderContent(mergedHtml, config, undefined, siteConfig, {
             pageSpecific: true,
-          })
+          }, reusableTexts)
         } catch {
           // preview 构建失败时回退到原始生成 HTML
         }

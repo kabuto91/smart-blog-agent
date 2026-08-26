@@ -931,3 +931,35 @@ describe("renderContent 静态标签云兜底", () => {
     expect(out).toContain("TECH")
   })
 })
+
+describe("renderContent 可复用文本库绑定", () => {
+  const HTML = `<div><p data-content="slogan"></p></div>`
+
+  it("绑定可复用文本时渲染库中内容", () => {
+    const config: ContentConfig = {
+      slogan: {
+        type: "text",
+        label: "标语",
+        value: "本地标语",
+        source: "reusable-text",
+        textKey: "slogan",
+      },
+    }
+    const out = renderContent(HTML, config, undefined, undefined, undefined, {
+      slogan: "共享标语",
+    })
+    expect(out).toContain("共享标语")
+    expect(out).not.toContain("本地标语")
+  })
+
+  it("未绑定（source=theme）回退到主题本地值", () => {
+    const config: ContentConfig = {
+      slogan: { type: "text", label: "标语", value: "本地标语", source: "theme" },
+    }
+    const out = renderContent(HTML, config, undefined, undefined, undefined, {
+      slogan: "共享标语",
+    })
+    expect(out).toContain("本地标语")
+    expect(out).not.toContain("共享标语")
+  })
+})

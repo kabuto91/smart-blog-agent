@@ -8,9 +8,10 @@ datasource db {
 }
 
 model SiteConfig {
-  id     Int    @id @default(1)
-  config String
-  
+  id          Int    @id @default(1)
+  config      String
+  textLibrary String @default("{}") @map("text_library")
+
   @@map("site_config")
 }
 

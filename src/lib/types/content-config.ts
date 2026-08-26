@@ -2,8 +2,9 @@ export interface TextField {
   type: "text"
   label: string
   value: string
-  source?: "theme" | "global" | "readonly"
+  source?: "theme" | "global" | "readonly" | "reusable-text"
   globalKey?: string
+  textKey?: string
 }
 
 export type DynamicFieldType =

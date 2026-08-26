@@ -1,6 +1,7 @@
 import { renderMarkdown } from "./markdown"
 import { getActiveTheme, pageContentConfig } from "./theme/theme"
 import { getSiteConfig } from "./site-config"
+import { getReusableTexts } from "./reusable-text"
 import { renderContent, resolvePageType } from "./theme/content-renderer"
 import { mergeThemePage } from "./theme/theme-splitter"
 import { normalizeRoute } from "./theme/custom-pages"
@@ -168,6 +169,7 @@ export async function renderBlogTheme(
     }
 
     const siteConfig = await getSiteConfig()
+    const reusableTexts = await getReusableTexts()
     const contentConfig: ContentConfig =
       pageContentConfig(activeTheme, pageType) ?? {}
 
@@ -180,7 +182,8 @@ const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
       contentConfig,
       dynamicData,
       siteConfig,
-      { pageSpecific: true }
+      { pageSpecific: true },
+      reusableTexts
     )
 
     return new Response(renderedHtml, {
@@ -212,6 +215,7 @@ export async function renderCustomThemePage(
   if (!page) return null
 
   const siteConfig = await getSiteConfig()
+  const reusableTexts = await getReusableTexts()
   const contentConfig: ContentConfig =
     pageContentConfig(activeTheme, "custom") ?? {}
 
@@ -220,5 +224,5 @@ export async function renderCustomThemePage(
   })
   return renderContent(mergedHtml, contentConfig, undefined, siteConfig, {
     pageSpecific: true,
-  })
+  }, reusableTexts)
 }

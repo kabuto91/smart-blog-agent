@@ -1,6 +1,7 @@
 import { renderContent } from "@/lib/theme/content-renderer"
 import { mergeThemePage } from "@/lib/theme/theme-splitter"
 import { getSiteConfig } from "@/lib/site-config"
+import { getReusableTexts } from "@/lib/reusable-text"
 import type { ContentConfig } from "@/lib/types/content-config"
 
 export const runtime = "nodejs"
@@ -41,12 +42,14 @@ export async function POST(request: Request) {
     }
 
     const siteConfig = await getSiteConfig()
+    const reusableTexts = await getReusableTexts()
     const renderedHtml = renderContent(
       template,
       body.contentConfig ?? {},
       undefined,
       siteConfig,
-      { pageSpecific: !!isSplit }
+      { pageSpecific: !!isSplit },
+      reusableTexts
     )
 
     return Response.json({ html: renderedHtml })

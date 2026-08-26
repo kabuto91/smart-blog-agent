@@ -10,10 +10,11 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Plus, Trash2, GripVertical, Loader2, Globe, ExternalLink } from "lucide-react"
+import { Plus, Trash2, GripVertical, Loader2, Globe, ExternalLink, Bookmark, Unlink } from "lucide-react"
 import Link from "next/link"
 import type { ContentConfig, ContentField, NavItem, TextField, NavField, DynamicField, CustomListItem } from "@/lib/types/content-config"
 import { FIELD_DEFINITIONS } from "@/lib/field-registry"
+import type { ReusableTextLibrary } from "@/lib/reusable-text"
 import { UrlCombobox, type UrlComboboxOption } from "@/components/admin/url-combobox"
 
 interface ContentEditorDialogProps {
@@ -60,6 +61,109 @@ export function ContentEditorDialog({
     }
   }, [])
 
+  const [texts, setTexts] = useState<ReusableTextLibrary>({})
+  const [textFormOpen, setTextFormOpen] = useState(false)
+
+  const loadTexts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/reusable-text")
+      const data = await res.json()
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        setTexts(data)
+        // 补齐：已绑定可复用文本但对应 textKey 缺失于库中时（历史写库失败或跨环境），
+        // 用当前值写回，保证博客设置里统一可见。
+        const missing = Object.entries(config).filter(
+          ([, f]) =>
+            isTextConfig(f) &&
+            f.source === "reusable-text" &&
+            !!f.textKey &&
+            !Object.prototype.hasOwnProperty.call(data, f.textKey)
+        )
+        if (missing.length > 0) {
+          for (const [, f] of missing) {
+            const tf = f as TextField
+            try {
+              await fetch("/api/reusable-text", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ key: tf.textKey, text: tf.value }),
+              })
+            } catch {
+              // backfill failed silently; 下次打开仍会尝试
+            }
+          }
+          const freshRes = await fetch("/api/reusable-text")
+          const fresh = await freshRes.json()
+          if (fresh && typeof fresh === "object" && !Array.isArray(fresh)) {
+            setTexts(fresh)
+          }
+        }
+      }
+    } catch {
+      // text library load failed silently
+    }
+  }, [config])
+
+  const upsertText = useCallback(async (key: string, text: string) => {
+    try {
+      const res = await fetch("/api/reusable-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, text }),
+      })
+      const data = await res.json()
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        setTexts(data)
+      }
+    } catch {
+      // text library write failed silently
+    }
+  }, [])
+
+  const deleteText = useCallback(async (key: string) => {
+    try {
+      const res = await fetch("/api/reusable-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, action: "delete" }),
+      })
+      const data = await res.json()
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        setTexts(data)
+      }
+    } catch {
+      // text library delete failed silently
+    }
+  }, [])
+
+  /** 绑定文本字段到可复用文本库某项。 */
+  function bindTextField(key: string, textKey: string) {
+    const field = config[key] as TextField | undefined
+    if (!field) return
+    handleConfigChange({
+      ...config,
+      [key]: { ...field, source: "reusable-text", textKey },
+    })
+  }
+
+  /** 解除绑定，回退到主题本地值。 */
+  function unbindTextField(key: string) {
+    const field = config[key] as TextField | undefined
+    if (!field) return
+    handleConfigChange({
+      ...config,
+      [key]: { ...field, source: "theme", textKey: undefined },
+    })
+  }
+
+  /** 把主题文本字段的当前值存入可复用文本库并立即绑定。 */
+  function saveTextFieldAsReuse(key: string) {
+    const field = config[key] as TextField | undefined
+    if (!field) return
+    upsertText(key, field.value)
+    bindTextField(key, key)
+  }
+
   const updatePreview = useCallback(async (cfg: ContentConfig) => {
     setPreviewLoading(true)
     try {
@@ -84,6 +188,7 @@ export function ContentEditorDialog({
     const t = window.setTimeout(() => {
       updatePreview(config)
       loadUrlOptions()
+      loadTexts()
     }, 0)
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -97,7 +202,9 @@ export function ContentEditorDialog({
 
   function updateTextField(key: string, value: string) {
     const field = config[key] as TextField | undefined
-    if (!field || field.source === "global") return
+    // global 与可复用文本均不在主题侧编辑（可复用文本统一在博客设置中配置）
+    if (!field || field.source === "global" || field.source === "reusable-text")
+      return
     handleConfigChange({ ...config, [key]: { ...field, value } })
   }
 
@@ -279,22 +386,112 @@ export function ContentEditorDialog({
               {/* Theme-level text fields (editable) */}
               {themeTextFields.length > 0 && (
                 <div>
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
-                    文本内容
+                  <h3 className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-[#6B7280]">
+                    <span>文本内容</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTextFormOpen(true)}
+                      className="h-6 gap-1 normal-case"
+                    >
+                      <Bookmark className="size-3" />
+                      新增可复用文本
+                    </Button>
                   </h3>
                   <div className="flex flex-col gap-3">
-                    {themeTextFields.map(([key, field]) => (
-                      <div key={key}>
-                        <label className="mb-1 block text-xs text-[#6B7280]">
-                          {field.label}
-                        </label>
-                        <Input
-                          value={(field as TextField).value}
-                          onChange={(e) => updateTextField(key, e.target.value)}
-                          className="w-full"
-                        />
-                      </div>
-                    ))}
+                    {themeTextFields.map(([key, field]) => {
+                      const tf = field as TextField
+                      const bound = tf.source === "reusable-text" && !!tf.textKey
+                      const effValue =
+                        bound && texts[tf.textKey ?? key] !== undefined
+                          ? texts[tf.textKey ?? key]
+                          : tf.value
+                      const hasMatching = !bound && texts[key] !== undefined
+                      return (
+                        <div key={key} className="rounded-lg border border-black/[0.08] bg-[#F9F9F8] px-3 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-xs text-[#6B7280]">{tf.label}</label>
+                            <div className="flex items-center gap-1">
+                              {bound ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => unbindTextField(key)}
+                                  className="h-6 gap-1 text-xs text-[#6B7280] hover:text-red-500"
+                                >
+                                  <Unlink className="size-3" />
+                                  解除
+                                </Button>
+                              ) : hasMatching ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => bindTextField(key, key)}
+                                  className="h-6 gap-1 text-xs text-[#8a6d1f] hover:text-[#E5A83D]"
+                                >
+                                  <Bookmark className="size-3" />
+                                  绑定可复用文本
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => saveTextFieldAsReuse(key)}
+                                  className="h-6 gap-1 text-xs text-[#6B7280] hover:text-[#E5A83D]"
+                                >
+                                  <Bookmark className="size-3" />
+                                  保存为可复用
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                          {bound ? (
+                            <>
+                              <p className="mt-0.5 text-[11px] text-[#E5A83D]">
+                                复用于可复用文本库 · 在博客设置中统一编辑
+                              </p>
+                              <p className="mt-1.5 break-words text-sm text-[#1C1C1E]">
+                                {effValue}
+                              </p>
+                              <Link
+                                href="/admin/settings"
+                                className="mt-1 inline-flex items-center gap-0.5 text-[11px] text-[#6B7280] hover:text-[#E5A83D] transition-colors"
+                              >
+                                前往修改
+                                <ExternalLink className="size-2.5" />
+                              </Link>
+                            </>
+                          ) : (
+                            <Input
+                              value={effValue}
+                              onChange={(e) => updateTextField(key, e.target.value)}
+                              className="mt-1.5 w-full"
+                            />
+                          )}
+                          {!bound && Object.keys(texts).length > 0 && (
+                            <div className="mt-1.5">
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  if (v) bindTextField(key, v)
+                                  e.target.value = ""
+                                }}
+                                className="w-full rounded-md border border-black/[0.06] bg-white px-3 py-1.5 text-xs text-[#1C1C1E] outline-none focus:border-[#E5A83D]/40"
+                              >
+                                <option value="">引用可复用文本…</option>
+                                {Object.entries(texts).map(([k, v]) => (
+                                  <option key={k} value={k}>
+                                    {k}
+                                    {v ? `：${v.length > 8 ? `${v.slice(0, 8)}…` : v}` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}
@@ -468,6 +665,87 @@ export function ContentEditorDialog({
               className="bg-[#E5A83D] text-[#181A1E] hover:bg-[#D4A035]"
             >
               保存配置
+            </Button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+      <TextReuseFormDialog
+        open={textFormOpen}
+        onOpenChange={setTextFormOpen}
+        onSaved={() => loadTexts()}
+      />
+    </Dialog>
+  )
+}
+
+/** 新建可复用文本的小表单。 */
+function TextReuseFormDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved: () => void
+}) {
+  const [name, setName] = useState("")
+  const [content, setContent] = useState("")
+  const [saving, setSaving] = useState(false)
+
+  async function submit() {
+    const key = name.trim()
+    if (!key) return
+    setSaving(true)
+    const res = await fetch("/api/reusable-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, text: content }),
+    })
+    if (res.ok) onSaved()
+    setSaving(false)
+    setName("")
+    setContent("")
+    onOpenChange(false)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle className="pb-3 text-[#1C1C1E]">新增可复用文本</DialogTitle>
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-[#6B7280]">名称 *</label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例如：站点标语"
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-[#6B7280]">内容</label>
+              <textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                rows={4}
+                placeholder="可复用的文本内容"
+                className="w-full resize-none rounded-md border border-black/[0.06] bg-white px-3 py-1.5 text-sm text-[#1C1C1E] outline-none focus:border-[#E5A83D]/40"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 border-t border-black/[0.06] pt-4">
+            <Button variant="outline" onClick={() => { onOpenChange(false); setName(""); setContent("") }}>
+              取消
+            </Button>
+            <Button
+              onClick={submit}
+              disabled={!name.trim() || saving}
+              className="bg-[#E5A83D] text-[#181A1E] hover:bg-[#D4A035]"
+            >
+              {saving ? <Loader2 className="size-3 animate-spin" /> : null}
+              保存到库
             </Button>
           </div>
         </DialogContent>

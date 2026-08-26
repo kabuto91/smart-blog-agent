@@ -244,30 +244,24 @@ export async function upsertThemePage(
   themeId: string,
   input: ThemePageInput
 ): Promise<ThemePageData> {
-  const page = await prisma.themePage.upsert({
-    where: {
-      themeId_type_route: {
-        themeId,
-        type: input.type,
-        route: (input.route ?? null) as string,
-      },
-    },
-    update: {
-      name: input.name,
-      html: input.html,
-      contentConfig: input.contentConfig ?? null,
-      sortOrder: input.sortOrder ?? 0,
-    },
-    create: {
-      themeId,
-      type: input.type,
-      route: (input.route ?? null) as string,
-      name: input.name,
-      html: input.html,
-      contentConfig: input.contentConfig ?? null,
-      sortOrder: input.sortOrder ?? 0,
-    },
+  const route = input.route ?? null
+  // route 为 null 时，Prisma 的联合唯一（themeId_type_route）无法用 upsert 匹配，
+  // 否则会因 null 参与唯一判断而抛错。改为 findFirst + update/create。
+  const existing = await prisma.themePage.findFirst({
+    where: { themeId, type: input.type, route },
   })
+  const data: Parameters<typeof prisma.themePage.create>[0]["data"] = {
+    themeId,
+    type: input.type,
+    route,
+    name: input.name,
+    html: input.html,
+    contentConfig: input.contentConfig ?? null,
+    sortOrder: input.sortOrder ?? existing?.sortOrder ?? 0,
+  }
+  const page = existing
+    ? await prisma.themePage.update({ where: { id: existing.id }, data })
+    : await prisma.themePage.create({ data })
   return parsePage(page)
 }
 
