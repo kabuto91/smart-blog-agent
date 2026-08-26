@@ -285,6 +285,33 @@ describe("extractContentConfig 兜底补标", () => {
       value: "无类标题",
     })
   })
+
+  it("全局字段 key 被不同文本手标重复占用时不生成 blog-title-2，退回标签名派生 key", () => {
+    const html = `<h1 data-content="blog-title" data-content-type="text">我的博客</h1><h2 data-content="blog-title" data-content-type="text">开始探索</h2>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    expect(contentConfig["blog-title"]).toMatchObject({ value: "我的博客" })
+    expect(contentConfig["blog-title-2"]).toBeUndefined()
+    // 第二处退回标签名派生 key，仍可独立编辑
+    expect(contentConfig["h2"]).toMatchObject({ value: "开始探索" })
+    expect(htmlTemplate).toContain('data-content="h2"')
+  })
+
+  it("未标元素复用全局名类但文本不同时不生成 blog-title-2", () => {
+    const html = `<h1 class="blog-title">我的博客</h1><p class="blog-title">开始探索</p>`
+    const { contentConfig } = extractContentConfig(html, {
+      "blog-title": "我的博客",
+    })
+    expect(contentConfig["blog-title"]).toMatchObject({ value: "我的博客" })
+    expect(contentConfig["blog-title-2"]).toBeUndefined()
+    expect(contentConfig["p"]).toMatchObject({ value: "开始探索" })
+  })
+
+  it("非全局 key 不同文本仍追加 -N（post-title-2 行为保留）", () => {
+    const html = `<h3 class="post-title">A</h3><h3 class="post-title">B</h3>`
+    const { contentConfig } = extractContentConfig(html)
+    expect(contentConfig["post-title"]).toMatchObject({ value: "A" })
+    expect(contentConfig["post-title-2"]).toMatchObject({ value: "B" })
+  })
 })
 
 describe("extractContentConfig 正文占位区卫生", () => {

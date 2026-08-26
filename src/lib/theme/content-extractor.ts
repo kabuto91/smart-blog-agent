@@ -131,13 +131,25 @@ export function extractContentConfig(
     if (!key || !type) continue
 
     const primary = primaryByKey.get(key)
-    // 同 key 的 text 元素且文本完全相同时复用原 key（整体同步），避免二次拆成 -N
-    const reuseKey =
+    const elText = (el.textContent ?? "").trim()
+    const sameText =
       type === "text" &&
       !!primary &&
-      (primary.textContent ?? "").trim() === (el.textContent ?? "").trim()
+      (primary.textContent ?? "").trim() === elText
 
-    const unique = reuseKey ? key : uniqueKey(key, usedKeys)
+    // key 分配规则：
+    // 1) text 元素同文本复用 primary key（整体同步，避免二次拆成 -N）；
+    // 2) text 元素重复占用某全局字段 key 但文本不同 → 退回类名/标签名派生 key，
+    //    绝不生成 blog-title-2 / author-name-2 这类全局字段后缀参数；
+    // 3) 其余（非 text / 非全局 key）维持原有 -N 拆键。
+    let unique: string
+    if (sameText) {
+      unique = key
+    } else if (type === "text" && isGlobalKey(key) && usedKeys.has(key)) {
+      unique = uniqueKey(classOrTagKey(el), usedKeys)
+    } else {
+      unique = uniqueKey(key, usedKeys)
+    }
     if (unique !== key) {
       el.setAttribute("data-content", unique)
     }
@@ -173,6 +185,26 @@ function uniqueKey(base: string, used: Set<string>): string {
   let i = 2
   while (used.has(`${base}-${i}`)) i++
   return `${base}-${i}`
+}
+
+/** 是否为系统全局字段 key（blog-title / author-name / site-description 等）。 */
+function isGlobalKey(key: string): boolean {
+  return key in GLOBAL_FIELDS
+}
+
+/**
+ * 派生一个"非全局"的兜底 key：优先取第一个非全局类名的 kebab 化，
+ * 无则用标签名。用于全局字段 key 被不同文本重复占用时退回，绝不派生
+ * blog-title-2 / author-name-2 这类全局字段后缀参数。
+ */
+function classOrTagKey(el: Element): string {
+  const classes = (el.getAttribute("class") ?? "").split(/\s+/)
+  for (const raw of classes) {
+    const k = raw.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    if (!k || isGlobalKey(k)) continue
+    return k
+  }
+  return el.tagName.toLowerCase()
 }
 
 /**
@@ -234,9 +266,17 @@ function markUnmarkedTextUnits(doc: Document, siteConfig?: Record<string, string
       (rawClass.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
         el.tagName.toLowerCase())
     const existing = marked.get(base)
-    // 文本完全相同的 text 元素复用同一 key（渲染时整体同步），仅文本不同才追加 -N
-    const reuseKey = existing && existing.isText && existing.text === text
-    const key = reuseKey ? base : uniqueKey(base, used)
+    let key: string
+    if (existing && existing.isText && existing.text === text) {
+      // 文本完全相同的 text 元素复用同一 key（渲染时整体同步）
+      key = base
+    } else if (isGlobalKey(base) && used.has(base)) {
+      // 重复占用某全局字段 key 但文本不同 → 退回类名/标签名派生 key，
+      // 避免把第二处不同内容拆成 blog-title-2 之类全局后缀参数
+      key = uniqueKey(classOrTagKey(el), used)
+    } else {
+      key = uniqueKey(base, used)
+    }
     used.add(key)
     marked.set(key, { text, isText: true })
     el.setAttribute("data-content", key)
