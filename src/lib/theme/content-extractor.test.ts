@@ -194,3 +194,28 @@ describe("extractContentConfig 兜底补标", () => {
     })
   })
 })
+
+describe("extractContentConfig 正文占位区卫生", () => {
+  it("data-map=body 内的段落不补标、已手写的 data-content 被剥离", () => {
+    const html = `<div class="container">
+      <article data-content="article-body" data-content-type="article-body">
+        <h2 data-map="title">样本标题</h2>
+        <div data-map="body">
+          <p>未标记的占位段落</p>
+          <p data-content="p-1" data-content-type="text">LLM 手写标记的占位段落</p>
+        </div>
+      </article>
+      <p>容器外的正常文本</p>
+    </div>`
+    const { contentConfig, htmlTemplate } = extractContentConfig(html)
+    // body 占位区内的文本不进 contentConfig（无论是否被标记）
+    expect(contentConfig["p-1"]).toBeUndefined()
+    expect(Object.values(contentConfig).some((f) => f.type === "text" && f.value?.includes("占位段落"))).toBe(false)
+    // 手写标记被剥离
+    expect(htmlTemplate).not.toContain('data-content="p-1"')
+    // 容器外正常文本仍被兜底补标
+    expect(contentConfig["h2-1"]).toBeUndefined() // article-body 容器内的 data-map 标题不被补标（有 data-content 祖先）
+    const outer = Object.entries(contentConfig).find(([k, f]) => f.type === "text" && f.value === "容器外的正常文本")
+    expect(outer).toBeTruthy()
+  })
+})

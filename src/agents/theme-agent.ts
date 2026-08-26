@@ -217,6 +217,8 @@ ${DYNAMIC_ARTICLES_RULE}
   <span data-map="category">分类</span>
   <div data-map="body">这里会被渲染后的正文替换</div>
 </article>
+- <div data-map="body"> 必须放在 <article data-content="article-body"> 容器内部（正文占位不能拆到容器外）；
+- data-map="body" 内部是会被整块替换的占位正文，不要给其中的元素标记 data-content。
 - 详情页只会保留导航、页脚与该正文区域（侧边栏、列表会被隐藏），因此正文不要写侧边栏
 - 标题/排版/容器尽量用骨架已有的类
 

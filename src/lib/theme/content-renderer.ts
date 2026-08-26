@@ -515,6 +515,12 @@ function renderTextField(doc: Document, key: string, value: string): void {
       continue
     }
 
+    // data-map 元素由动态字段渲染填充真实值（如文章标题/分类/日期），
+    // 文本字段再用样本占位值覆盖会冲掉真实数据
+    if (!img && el.hasAttribute("data-map")) {
+      continue
+    }
+
     if (img) {
       if (value) img.setAttribute("src", value)
       continue
@@ -586,7 +592,9 @@ function renderDynamicField(
         if (value !== undefined) el.textContent = value
       }
       const bodyTarget =
-        container.querySelector('[data-map="body"]') ?? container
+        container.querySelector('[data-map="body"]') ??
+        doc.querySelector('[data-map="body"]') ?? // 容器外查找（LLM 可能把正文区放在容器外）
+        container
       bodyTarget.innerHTML = article.contentHtml
       return
     }

@@ -117,6 +117,13 @@ export function extractContentConfig(
 
   const elements = doc.querySelectorAll("[data-content]")
   for (const el of elements) {
+    // 正文占位区（data-map=body）整块运行时替换：其中的 data-content 标记
+    // 是 LLM 误加的噪音，剥离掉且不进 contentConfig
+    if (el.closest('[data-map="body"]')) {
+      el.removeAttribute("data-content")
+      el.removeAttribute("data-content-type")
+      continue
+    }
     const key = el.getAttribute("data-content")
     const type = el.getAttribute("data-content-type")
     if (!key || !type) continue
@@ -167,7 +174,9 @@ function markUnmarkedTextUnits(doc: Document): void {
   const units = Array.from(doc.querySelectorAll("h1,h2,h3,h4,h5,h6,p")).filter(
     (el) =>
       (el.textContent ?? "").trim().length > 0 &&
-      el.closest("[data-content]") === null
+      el.closest("[data-content]") === null &&
+      // 正文占位区整块运行时替换，标记其中的段落只会产生无意义字段
+      el.closest('[data-map="body"]') === null
   )
   const used = new Set(
     Array.from(doc.querySelectorAll("[data-content]"))

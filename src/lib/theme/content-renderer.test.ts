@@ -549,3 +549,84 @@ describe("ensureSingleAuthorAvatar", () => {
     expect(dom.window.document.querySelector('[data-content="author-avatar"]')).not.toBeNull()
   })
 })
+
+describe("renderContent 详情页正文占位", () => {
+  // 复现真实 bug 结构：data-map="body" 在 article-body 容器【外】（兄弟节点），
+  // 且容器内 data-map 元素被 LLM 双重标记（data-map + data-content）
+  const DETAIL_HTML = `<!DOCTYPE html>
+<html><head><style>.container{max-width:800px}</style></head>
+<body>
+<nav><a href="/blog">首页</a></nav>
+<div data-page-host="">
+  <div class="container">
+    <div class="article-header">
+      <article data-content="article-body" data-content-type="article-body">
+        <span class="tag" data-map="category" data-content="category" data-content-type="text">样本分类</span>
+        <h1 data-map="title" data-content="title" data-content-type="text">样本标题</h1>
+        <span data-map="date" data-content="date" data-content-type="text">2024-01-01</span>
+      </article>
+    </div>
+    <div class="article-body">
+      <div data-map="body">
+        <p>样本假文章段落一</p>
+        <h2>样本小标题</h2>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>`
+
+  const config: ContentConfig = {
+    "article-body": {
+      type: "article-body",
+      label: "article-body",
+      itemTemplate: "",
+      fieldMapping: {},
+    },
+    category: { type: "text", label: "category", value: "样本分类" },
+    title: { type: "text", label: "title", value: "样本标题" },
+    date: { type: "text", label: "date", value: "2024-01-01" },
+  }
+
+  const dynamicData = {
+    articles: [
+      {
+        id: 1,
+        title: "真实文章标题",
+        excerpt: "",
+        date: "2026-08-01",
+        category: "真实分类",
+        slug: "real-a",
+        contentHtml: "<p>真实文章正文</p>",
+      },
+    ],
+  }
+
+  it("body 在容器外时：正文写入 body 占位、样本内容被替换、标题头保留", () => {
+    const out = renderContent(DETAIL_HTML, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const dom = new JSDOM(out)
+    const doc = dom.window.document
+    // 样本假文章消失，真实正文在 body 占位内
+    expect(out).not.toContain("样本假文章段落一")
+    expect(out).not.toContain("样本小标题")
+    const bodyTarget = doc.querySelector('[data-map="body"]')
+    expect(bodyTarget?.innerHTML).toContain("真实文章正文")
+    // 容器未被整块替换：标题头仍在容器内
+    const container = doc.querySelector('[data-content="article-body"]')
+    expect(container?.querySelector('[data-map="title"]')).not.toBeNull()
+  })
+
+  it("双重标记的 data-map 元素不被文本字段样本值覆盖", () => {
+    const out = renderContent(DETAIL_HTML, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    // data-map 元素保持动态真实值，而非 text 字段的样本值
+    expect(out).toContain("真实文章标题")
+    expect(out).toContain("真实分类")
+    expect(out).toContain("2026-08-01")
+    expect(out).not.toContain("样本标题")
+    expect(out).not.toContain("样本分类")
+  })
+})
