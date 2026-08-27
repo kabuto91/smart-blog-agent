@@ -120,6 +120,7 @@ export function ThemeGenerateDialog({
   const [stageDetail, setStageDetail] = useState<Record<string, string>>({})
   const [activePageType, setActivePageType] = useState("home")
   const [targetPage, setTargetPage] = useState<"skeleton" | "home" | "list" | "detail">("skeleton")
+  const [fastMode, setFastMode] = useState(false)
   const [selectedImage, setSelectedImage] = useState<{ id: string; url: string } | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -162,6 +163,7 @@ export function ThemeGenerateDialog({
           message,
           targetPage,
           imageId: selectedImage?.id,
+          fastMode,
         }),
       })
 
@@ -704,6 +706,34 @@ export function ThemeGenerateDialog({
                   ))}
                 </div>
               )}
+
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-[#6B7280]">生成模式：</span>
+                <button
+                  onClick={() => setFastMode(false)}
+                  disabled={loading}
+                  className={`rounded-md px-2 py-0.5 text-xs transition-colors ${
+                    !fastMode
+                      ? "bg-[#E5A83D] text-[#181A1E]"
+                      : "text-[#6B7280] hover:bg-black/[0.04]"
+                  }`}
+                  title="运行 AI 质量评审、可修订最多 2 轮，质量更高"
+                >
+                  质量优先
+                </button>
+                <button
+                  onClick={() => setFastMode(true)}
+                  disabled={loading}
+                  className={`rounded-md px-2 py-0.5 text-xs transition-colors ${
+                    fastMode
+                      ? "bg-[#E5A83D] text-[#181A1E]"
+                      : "text-[#6B7280] hover:bg-black/[0.04]"
+                  }`}
+                  title="跳过 AI 质量评审、修订最多 1 轮，节省约 40% token，适合快速探索"
+                >
+                  快速生成
+                </button>
+              </div>
 
               <div className="flex gap-2">
                 <div className="flex-1">

@@ -34,6 +34,8 @@ import {
   buildPageSystemPrompt,
   buildPagePromptContext,
   extractHtmlFromContent,
+  minifyCss,
+  truncateCssRules,
   pageTypeLabel,
   rollDesignSeeds,
   RHYTHM_LABELS,
@@ -528,8 +530,13 @@ const JUDGE_SYSTEM_PROMPT = `你是资深前端设计师与博客产品评审。
 每个维度的 issues 用具体可执行的修改建议填充（没有问题则为空数组），它们会被直接用于指导修订。`
 
 function buildJudgeInput(state: GraphState): string {
-  const css = extractCssFromLayout(state.layoutHtml).slice(0, 12000)
-  const structure = stripStyleTags(state.layoutHtml).slice(0, 1500)
+  const css = truncateCssRules(
+    minifyCss(extractCssFromLayout(state.layoutHtml)),
+    12000
+  )
+  const structure = stripStyleTags(state.layoutHtml)
+    .replace(/\s+/g, " ")
+    .slice(0, 1500)
   const auditLines: string[] = []
   for (const s of state.styleAudit.skeletonIssues)
     auditLines.push(`- [骨架][必须修复] ${s}`)
@@ -544,7 +551,9 @@ function buildJudgeInput(state: GraphState): string {
     .map((pt) => {
       const html = state.pages[pt]
       const classes = Array.from(collectElementClasses(html))
-      return `【${pageTypeLabel(pt)}】类名: ${classes.join(", ") || "（无）"}\n正文节选：\n${html.slice(0, 2500)}`
+      return `【${pageTypeLabel(pt)}】类名: ${classes.join(", ") || "（无）"}\n正文节选：\n${html
+        .replace(/\s+/g, " ")
+        .slice(0, 2500)}`
     })
     .join("\n\n")
 

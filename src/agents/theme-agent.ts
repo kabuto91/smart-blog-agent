@@ -281,6 +281,56 @@ ${FIELD_REFERENCE}
 用中文填充占位内容，保持精致设计与骨架视觉语言完全一致。直接输出正文 HTML，不要额外解释性文字。`
 }
 
+// ---------------------------------------------------------------------------
+// CSS 无损压缩与安全截断：用于控制注入 prompt 的输入体积，不改变推导语义。
+// ---------------------------------------------------------------------------
+
+/** 压缩 CSS：去注释、压空白（保留字符串字面量内容不变）。 */
+export function minifyCss(css: string): string {
+  // 先保护字符串字面量，避免其内部空白/逗号等被压缩改变含义（如 content: "a, b"）。
+  const strings: string[] = []
+  const protectedCss = css.replace(/(["'])(?:\\.|(?!\1)[\s\S])*\1/g, (m) => {
+    strings.push(m)
+    return `__MINIFY_STRING_${strings.length - 1}__`
+  })
+
+  let out = protectedCss
+  // 去块注释
+  out = out.replace(/\/\*[\s\S]*?\*\//g, " ")
+  // 压缩连续空白为单个空格（缩进/换行归一）
+  out = out.replace(/\s+/g, " ")
+  // 压缩分隔符两侧空白（不含冒号，避免把后代选择器 a :hover 误变伪类 a:hover）
+  out = out.replace(/\s*([{};,<>])\s*/g, "$1")
+
+  // 还原字符串字面量
+  out = out.replace(/__MINIFY_STRING_\d+__/g, () => strings.shift() ?? "")
+  return out.trim()
+}
+
+/**
+ * 在不超过 maxChars 的前提下，截到最后一个完整的顶层规则。
+ * 天然支持 @media 等嵌套块；未超限时原样返回。
+ */
+export function truncateCssRules(css: string, maxChars: number): string {
+  if (css.length <= maxChars) return css
+  let depth = 0
+  let lastSafeCut = -1
+  for (let i = 0; i < css.length; i++) {
+    const ch = css[i]
+    if (ch === "{") depth++
+    else if (ch === "}") {
+      depth--
+      // 顶层规则结束处为安全切点
+      if (depth === 0) lastSafeCut = i + 1
+    }
+    // 累积已超预算，取最近一个完整规则切点
+    if (i + 1 >= maxChars) {
+      return lastSafeCut > 0 ? css.slice(0, lastSafeCut) : css
+    }
+  }
+  return css
+}
+
 /**
  * 从骨架 HTML 提炼出紧凑的"视觉契约"，供各页面生成器参考，
  * 避免把整份骨架 HTML 重复注入每个页面 prompt。
@@ -295,10 +345,10 @@ export function buildPagePromptContext(
   for (const style of Array.from(doc.querySelectorAll("style"))) {
     if (style.textContent) styles.push(style.textContent)
   }
-  // 尽量保留完整 CSS；仅在超出安全长度时截断，但类名清单始终完整下发。
+  // 先无损压缩、再按规则边界安全截断：同预算容纳更多规则，类名清单始终完整下发。
   const MAX_CSS_CHARS = 16000
-  const cssFull = styles.join("\n")
-  const css = cssFull.slice(0, MAX_CSS_CHARS)
+  const cssFull = minifyCss(styles.join("\n"))
+  const css = truncateCssRules(cssFull, MAX_CSS_CHARS)
   const cssTruncated = cssFull.length > MAX_CSS_CHARS
 
   const navLinks: string[] = []

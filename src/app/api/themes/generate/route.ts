@@ -17,6 +17,7 @@ interface GenerateRequest {
   message: string
   targetPage?: "skeleton" | "home" | "list" | "detail"
   imageId?: string
+  fastMode?: boolean
 }
 
 const PAGE_TYPES = ["home", "list", "detail"] as const
@@ -37,7 +38,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "请求体不是合法 JSON" }, { status: 400 })
   }
 
-  const { conversationId: providedId, message, targetPage, imageId } = body
+  const { conversationId: providedId, message, targetPage, imageId, fastMode } = body
   if (!message?.trim()) {
     return Response.json({ error: "请输入消息内容" }, { status: 400 })
   }
@@ -88,6 +89,9 @@ export async function POST(request: Request) {
           warn: (warnMessage) => send({ type: "warn", message: warnMessage }),
           metrics: (metrics) => send({ type: "metrics", metrics }),
         },
+        // 快速模式：跳过 AI 质量评审、修订上限 1 轮；质量优先走完整流程。
+        judgeEnabled: !fastMode,
+        maxAttempts: fastMode ? 1 : 2,
       })
 
       // 每次生成用独立 thread_id，避免 checkpointer 复用上次执行状态。
