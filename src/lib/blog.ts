@@ -39,6 +39,7 @@ export function toArticleData(a: ArticleListItem): ArticleData {
     category: a.category?.name,
     slug: a.slug,
     tags: a.tags.map((t) => t.name),
+    cover: a.coverImage ?? "",
   }
 }
 
@@ -52,6 +53,7 @@ export function toArticleDetailData(a: ArticleRow): ArticleData {
     slug: a.slug,
     contentHtml: renderMarkdown(a.content),
     tags: a.tags.map((at) => at.tag.name),
+    cover: a.coverImage ?? "",
   }
 }
 

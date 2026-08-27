@@ -766,6 +766,133 @@ describe("renderContent 详情页正文占位", () => {
   })
 })
 
+describe("renderContent 封面图渲染", () => {
+  const LIST_CARD_HTML = `<section data-content="article-list" data-content-type="dynamic-articles">
+    <article class="post-card">
+      <div class="card-cover"><img data-map="cover" src="" alt="封面"></div>
+      <h3 class="post-title"><a data-map="link" href="#"><span data-map="title">模板标题</span></a></h3>
+    </article>
+  </section>`
+
+  const LIST_CARD_CONFIG: ContentConfig = {
+    "article-list": {
+      type: "dynamic-articles",
+      label: "article-list",
+      itemTemplate: `<article class="post-card">
+        <div class="card-cover"><img data-map="cover" src="" alt="封面"></div>
+        <h3 class="post-title"><a data-map="link" href="#"><span data-map="title">模板标题</span></a></h3>
+      </article>`,
+      fieldMapping: { cover: "cover", link: "link", title: "title" },
+    },
+  }
+
+  it("列表卡片有封面时填充 img src，无封面时移除图片块", () => {
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实文章A", excerpt: "", date: "2026-01-01", category: "", slug: "real-a", cover: "/api/uploads/1" },
+        { id: 2, title: "真实文章B", excerpt: "", date: "2026-01-02", category: "", slug: "real-b", cover: "" },
+      ],
+    }
+    const out = renderContent(LIST_CARD_HTML, LIST_CARD_CONFIG, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const imgs = doc.querySelectorAll(".post-card img[data-map='cover']")
+    expect(imgs.length).toBe(1)
+    expect(imgs[0].getAttribute("src")).toBe("/api/uploads/1")
+    // 无封面文章仅剩文字卡片，封面块（含空包装）已移除
+    expect(doc.querySelectorAll(".card-cover").length).toBe(1)
+  })
+
+  it("列表卡片全部无封面时封面图片块（含空包装）被整体移除", () => {
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实文章A", excerpt: "", date: "2026-01-01", category: "", slug: "real-a", cover: "" },
+        { id: 2, title: "真实文章B", excerpt: "", date: "2026-01-02", category: "", slug: "real-b", cover: "" },
+      ],
+    }
+    const out = renderContent(LIST_CARD_HTML, LIST_CARD_CONFIG, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelectorAll(".post-card img[data-map='cover']").length).toBe(0)
+    expect(doc.querySelectorAll(".card-cover").length).toBe(0)
+    expect(out).toContain("真实文章A")
+    expect(out).toContain("真实文章B")
+  })
+
+  const detailHtml = (withCoverPlaceholder: boolean) => `<!DOCTYPE html>
+<html><head><style>.container{max-width:800px}</style></head>
+<body>
+<nav><a href="/blog">首页</a></nav>
+<div data-page-host="">
+  <div class="container">
+    <article data-content="article-body" data-content-type="article-body">
+      ${withCoverPlaceholder ? `<div class="article-cover"><img data-map="cover" src="" alt="封面"></div>` : ""}
+      <h1 data-map="title" data-content="title" data-content-type="text">样本标题</h1>
+    </article>
+    <div data-map="body"><p>样本正文</p></div>
+  </div>
+</div>
+</body></html>`
+
+  const detailConfig: ContentConfig = {
+    "article-body": { type: "article-body", label: "article-body", itemTemplate: "", fieldMapping: {} },
+    title: { type: "text", label: "title", value: "样本标题" },
+  }
+
+  it("详情页有封面且容器无占位时在正文顶部注入封面图", () => {
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实标题", excerpt: "", date: "2026-08-01", category: "", slug: "real-a", contentHtml: "<p>真实正文</p>", cover: "/api/uploads/cover.png" },
+      ],
+    }
+    const out = renderContent(detailHtml(false), detailConfig, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const body = doc.querySelector('[data-map="body"]')!
+    const firstChild = body.firstElementChild as HTMLElement
+    expect(firstChild.tagName.toLowerCase()).toBe("img")
+    expect(firstChild.getAttribute("src")).toBe("/api/uploads/cover.png")
+    expect(body.innerHTML).toContain("真实正文")
+  })
+
+  it("详情页有封面且容器含 data-map=cover 占位时填充 src 且不重复注入", () => {
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实标题", excerpt: "", date: "2026-08-01", category: "", slug: "real-a", contentHtml: "<p>真实正文</p>", cover: "/api/uploads/cover.png" },
+      ],
+    }
+    const out = renderContent(detailHtml(true), detailConfig, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const imgs = doc.querySelectorAll('img[data-map="cover"]')
+    expect(imgs.length).toBe(1)
+    expect(imgs[0].getAttribute("src")).toBe("/api/uploads/cover.png")
+    const body = doc.querySelector('[data-map="body"]')!
+    expect((body.firstElementChild as HTMLElement).tagName.toLowerCase()).not.toBe("img")
+  })
+
+  it("详情页无封面时封面占位块被移除且不注入", () => {
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实标题", excerpt: "", date: "2026-08-01", category: "", slug: "real-a", contentHtml: "<p>真实正文</p>", cover: "" },
+      ],
+    }
+    const out = renderContent(detailHtml(true), detailConfig, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelectorAll('img[data-map="cover"]').length).toBe(0)
+    expect(doc.querySelectorAll(".article-cover").length).toBe(0)
+    const body = doc.querySelector('[data-map="body"]')!
+    expect((body.firstElementChild as HTMLElement).tagName.toLowerCase()).not.toBe("img")
+    expect(body.innerHTML).toContain("真实正文")
+  })
+})
+
 describe("renderContent 静态标签云兜底", () => {
   const tags = [
     { id: "1", name: "Next.js", slug: "next-js" },

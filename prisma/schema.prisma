@@ -117,6 +117,7 @@ model Article {
   slug       String        @unique
   content    String
   excerpt    String?
+  coverImage String?       @map("cover_image")
   published  Boolean       @default(false)
   categoryId String?       @map("category_id")
   category   Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)

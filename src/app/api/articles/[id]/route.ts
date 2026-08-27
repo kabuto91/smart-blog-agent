@@ -24,6 +24,7 @@ interface PatchRequest {
   slug?: string
   content?: string
   excerpt?: string
+  coverImage?: string | null
   published?: boolean
   categoryId?: string | null
   tagIds?: string[]
@@ -41,6 +42,7 @@ export async function PATCH(
       slug: body.slug,
       content: body.content,
       excerpt: body.excerpt,
+      coverImage: body.coverImage,
       published: body.published,
       categoryId: body.categoryId,
       tagIds: body.tagIds,

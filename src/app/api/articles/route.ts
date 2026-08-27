@@ -27,6 +27,7 @@ interface CreateRequest {
   slug: string
   content: string
   excerpt?: string
+  coverImage?: string | null
   published?: boolean
   categoryId?: string | null
   tagIds?: string[]
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
       slug: body.slug.trim(),
       content: body.content ?? "",
       excerpt: body.excerpt,
+      coverImage: body.coverImage,
       published: body.published,
       categoryId: body.categoryId,
       tagIds: body.tagIds,

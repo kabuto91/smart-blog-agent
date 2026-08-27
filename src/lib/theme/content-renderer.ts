@@ -11,6 +11,8 @@ export interface ArticleData {
   slug: string
   contentHtml?: string
   tags?: string[]
+  /** 封面图 URL，无封面时为空字符串 */
+  cover?: string
 }
 
 export interface CategoryData {
@@ -225,6 +227,27 @@ function removeWithEmptyWrapper(el: Element): void {
     if (parent.hasAttribute("data-content")) break
     const tag = parent.tagName.toLowerCase()
     if (tag === "body" || tag === "html") break
+    if (parent.children.length > 0) break
+    if ((parent.textContent ?? "").trim() !== "") break
+    node = parent
+  }
+}
+
+/**
+ * 移除封面图块：删除 img，若其父容器已无其他元素与文字（纯包裹），
+ * 则连同空容器一并移除，避免留下高度占位；a/ul/ol 等结构容器不删除。
+ */
+function removeCoverBlock(el: Element): void {
+  let node: Element | null =
+    el.tagName.toLowerCase() === "img" ? el : el.querySelector("img")
+  while (node) {
+    const parent: Element | null = node.parentElement
+    node.remove()
+    if (!parent) break
+    const tag = parent.tagName.toLowerCase()
+    if (tag === "body" || tag === "html") break
+    if (tag === "a" || tag === "ul" || tag === "ol") break
+    if (parent.hasAttribute("data-content")) break
     if (parent.children.length > 0) break
     if ((parent.textContent ?? "").trim() !== "") break
     node = parent
@@ -675,6 +698,7 @@ function renderDynamicField(
         date: a.date,
         category: a.category ?? "",
         link: `/blog/${a.slug}`,
+        cover: a.cover ?? "",
       }))
       break
     }
@@ -707,6 +731,35 @@ function renderDynamicField(
         doc.querySelector('[data-map="body"]') ?? // 容器外查找（LLM 可能把正文区放在容器外）
         container
       bodyTarget.innerHTML = article.contentHtml
+
+      // 封面图：容器内有占位则填充 src；无封面时移除占位块；
+      // 有封面但容器无占位时，在正文顶部注入封面图作为兜底。
+      const coverValue = article.cover ?? ""
+      const coverPlaceholders = Array.from(
+        container.querySelectorAll('[data-map="cover"]')
+      )
+      if (coverPlaceholders.length > 0) {
+        for (const coverEl of coverPlaceholders) {
+          if (coverValue) {
+            const img =
+              coverEl.tagName.toLowerCase() === "img"
+                ? coverEl
+                : coverEl.querySelector("img")
+            if (img) img.setAttribute("src", coverValue)
+          } else {
+            removeCoverBlock(coverEl)
+          }
+        }
+      } else if (coverValue) {
+        const coverImg = doc.createElement("img")
+        coverImg.setAttribute("src", coverValue)
+        coverImg.setAttribute("alt", article.title)
+        coverImg.setAttribute(
+          "style",
+          "width:100%;max-width:800px;height:auto;object-fit:cover;border-radius:12px;margin:0 0 24px;"
+        )
+        bodyTarget.insertBefore(coverImg, bodyTarget.firstChild)
+      }
       return
     }
     case "dynamic-categories":
@@ -796,6 +849,19 @@ function renderListField(
         linkApplied = true
         for (const target of targets) {
           target.setAttribute("href", value)
+        }
+      } else if (mapKey === "cover") {
+        // 封面图：目标是 img（或含 img）时填充 src；无封面时移除图片块
+        for (const target of targets) {
+          if (value) {
+            const img =
+              target.tagName.toLowerCase() === "img"
+                ? target
+                : target.querySelector("img")
+            if (img) img.setAttribute("src", value)
+          } else {
+            removeCoverBlock(target)
+          }
         }
       } else {
         for (const target of targets) {

@@ -19,6 +19,7 @@ export interface ArticleListItem {
   title: string
   slug: string
   excerpt: string | null
+  coverImage: string | null
   content: string
   published: boolean
   category: CategoryMeta | null
@@ -46,6 +47,7 @@ export interface ArticleInput {
   slug: string
   content: string
   excerpt?: string
+  coverImage?: string | null
   published?: boolean
   categoryId?: string | null
   tagIds?: string[]
@@ -102,6 +104,7 @@ function mapArticle(row: ArticleRow): ArticleListItem {
     title: row.title,
     slug: row.slug,
     excerpt: row.excerpt,
+    coverImage: row.coverImage,
     content: row.content,
     published: row.published,
     category: mapCategory(row.category),
@@ -226,6 +229,7 @@ export async function createArticle(input: ArticleInput): Promise<ArticleListIte
       slug: input.slug,
       content: input.content,
       excerpt: deriveExcerpt(input.excerpt, input.content),
+      coverImage: input.coverImage ?? null,
       published: input.published ?? false,
       categoryId: input.categoryId ?? null,
       tags: input.tagIds?.length
@@ -256,6 +260,7 @@ export async function updateArticle(
       ...(input.excerpt !== undefined && {
         excerpt: deriveExcerpt(input.excerpt, content),
       }),
+      ...(input.coverImage !== undefined && { coverImage: input.coverImage }),
       ...(input.published !== undefined && { published: input.published }),
       ...(input.categoryId !== undefined && {
         category: input.categoryId

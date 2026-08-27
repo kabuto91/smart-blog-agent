@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, ImagePlus, Info, Plus, X } from "lucide-react"
+import { Loader2, ImagePlus, Info, Plus, Upload, X } from "lucide-react"
 import type { ArticleListItem, CategoryListItem, TagListItem } from "@/lib/articles"
 
 interface ArticleEditorDialogProps {
@@ -92,17 +92,20 @@ export function ArticleEditorDialog({
   const [title, setTitle] = useState(article?.title ?? "")
   const [slug, setSlug] = useState(article?.slug ?? "")
   const [excerpt, setExcerpt] = useState(article?.excerpt ?? "")
+  const [coverImage, setCoverImage] = useState(article?.coverImage ?? "")
   const [content, setContent] = useState(article?.content ?? "")
   const [published, setPublished] = useState(article?.published ?? false)
   const [categoryId, setCategoryId] = useState<string>(article?.category?.id ?? "")
   const [tagIds, setTagIds] = useState<string[]>(article?.tags.map((t) => t.id) ?? [])
   const [uploading, setUploading] = useState(false)
+  const [coverUploading, setCoverUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [newTagName, setNewTagName] = useState("")
   const [addingTag, setAddingTag] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const coverInputRef = useRef<HTMLInputElement>(null)
   const editorTouchedRef = useRef(false)
 
   const previewHtml = useMemo(
@@ -193,6 +196,29 @@ export function ArticleEditorDialog({
     if (file) handleUpload(file)
   }
 
+  async function handleCoverUpload(file: File) {
+    setCoverUploading(true)
+    setError("")
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch("/api/uploads", { method: "POST", body: formData })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "上传失败")
+      setCoverImage(data.url)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "上传失败")
+    } finally {
+      setCoverUploading(false)
+      if (coverInputRef.current) coverInputRef.current.value = ""
+    }
+  }
+
+  function handleCoverFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) handleCoverUpload(file)
+  }
+
   async function handleSave() {
     if (!title.trim()) {
       setError("请填写文章标题")
@@ -210,6 +236,7 @@ export function ArticleEditorDialog({
         slug: slug.trim(),
         content,
         excerpt: excerpt.trim() || undefined,
+        coverImage: coverImage.trim() || null,
         published,
         categoryId: categoryId || null,
         tagIds,
@@ -292,6 +319,69 @@ export function ArticleEditorDialog({
                   onChange={(e) => setExcerpt(e.target.value)}
                   placeholder="文章摘要"
                 />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-[#6B7280]">
+                  封面图（有封面时列表卡片与详情页顶部展示，无封面时隐藏图片块）
+                </label>
+                <div className="flex items-start gap-3">
+                  <div className="flex aspect-video w-40 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-black/[0.06] bg-[#F9F9F8]">
+                    {coverImage ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={coverImage}
+                        alt="文章封面"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-xs text-[#9CA3AF]">暂无封面</span>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <Input
+                      value={coverImage}
+                      onChange={(e) => setCoverImage(e.target.value)}
+                      className="w-full"
+                      placeholder="输入封面图片链接或点击上传"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => coverInputRef.current?.click()}
+                        disabled={coverUploading}
+                        className="h-7"
+                      >
+                        {coverUploading ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="size-3.5" />
+                        )}
+                        上传封面
+                      </Button>
+                      {coverImage && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setCoverImage("")}
+                          className="h-7 text-red-400 hover:text-red-500"
+                        >
+                          <X className="size-3.5" />
+                          移除封面
+                        </Button>
+                      )}
+                      <input
+                        ref={coverInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                        onChange={handleCoverFileChange}
+                        className="hidden"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
               <div className="sm:col-span-2">
                 <div className="mb-1 flex items-center justify-between">

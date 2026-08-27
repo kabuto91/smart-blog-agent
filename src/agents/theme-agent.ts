@@ -386,7 +386,7 @@ export function buildPagePromptContext(
 - 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；
 - 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已通过 --nav-h 统一处理该间距；
 - 正文以 data-page-host 下的单层结构组织，不要自建整份 fixed 宽度的全屏容器；不得使用固定 px/vw 的 width、min-width、max-width、height，也不得用固定 px 字号覆盖骨架（layout 与字号交给骨架设计变量），以免造成溢出或错乱；
-- 封面/头图占位类（如 post-cover 等）只能用于网格/多列卡片容器内，全宽列表卡片内不要放 16:9 大幅封面块；
+- 封面/头图占位类（如 post-cover 等）只能用于网格/多列卡片容器内，全宽列表卡片内不要放 16:9 大幅封面块；网格/多列卡片容器内的文章封面占位必须使用 <img data-map="cover">（有封面时自动填充 src、无封面时整块隐藏），且必须放在列表宿主容器内；
 - 不要把 section 间距类与 container 容器类叠加在同一元素上（两者的 padding 会互相覆盖，导致容器失去左右内边距）。`)
   return parts.join("\n\n")
 }

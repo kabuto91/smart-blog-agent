@@ -269,6 +269,21 @@ export default function ArticlesPage() {
                   index > 0 ? "border-t border-black/[0.04]" : ""
                 }`}
               >
+                {/* Cover thumbnail */}
+                <div className="h-10 w-16 shrink-0 overflow-hidden rounded-md border border-black/[0.06] bg-[#F5F4F1]">
+                  {article.coverImage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={article.coverImage}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center text-[10px] text-[#9CA3AF]">
+                      无封面
+                    </span>
+                  )}
+                </div>
                 {/* Title + meta */}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
