@@ -145,7 +145,7 @@ export function ensureLayoutContract(layoutHtml: string): string {
 export function mergeThemePage(
   layoutHtml: string,
   pageHtml: string,
-  options?: { navClearance?: boolean }
+  _options?: { navClearance?: boolean }
 ): string {
   const dom = new JSDOM(ensureLayoutContract(layoutHtml))
   const doc = dom.window.document
@@ -160,8 +160,10 @@ export function mergeThemePage(
   }
 
   host.innerHTML = pageHtml
-  // 布局自身已在 body 上提供 var(--nav-h) 级留白时不再叠加 host 留白（避免双重间距）
-  if (options?.navClearance && !hasBodyNavClearance(doc)) {
+  // 布局自身已在 body 上提供 var(--nav-h) 级留白时不再叠加 host 留白（避免双重间距）；
+  // 否则对所有页面（含 home）统一补 padding-top:var(--nav-h,0px)。
+  // 非固定导航时运行时脚本会把 --nav-h 置 0，此留白无副作用，符合"仅固定导航需要留白"契约。
+  if (!hasBodyNavClearance(doc)) {
     host.style.paddingTop = "var(--nav-h, 0px)"
   }
 

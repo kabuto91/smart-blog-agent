@@ -190,6 +190,42 @@ function checkRootVars(css: string, warnings: string[]): void {
   }
 }
 
+/** 选择器是否命中导航类元素（nav / header 标签或含 nav 的类，如 .main-nav/.navbar）。 */
+function selectorIsNavOrHeader(s: string): boolean {
+  return /navbar|\bnav\b|header/i.test(s)
+}
+
+/** 骨架是否存在固定导航：某条 nav/header 规则将 position 声明为 fixed。 */
+function hasFixedNav(css: string): boolean {
+  return parseRuleBlocks(css).some(
+    (block) =>
+      block.selectors.some(selectorIsNavOrHeader) &&
+      /(?:^|;)\s*position\s*:\s*fixed/i.test(block.body)
+  )
+}
+
+/** body / html,body 规则是否已通过 padding/margin 引用 var(--nav-h) 提供顶部留白。 */
+function hasBodyTopClearance(css: string): boolean {
+  return parseRuleBlocks(css).some((block) => {
+    const hitsBody = block.selectors.some((s) =>
+      /(?:^|[\s,>+~(])(?:html\s*,\s*body|body)(?:$|[\s,.:#\[{>~+])/i.test(s)
+    )
+    return (
+      hitsBody &&
+      /(?:padding|margin)(?:-top)?\s*:\s*[^;}]*var\(--nav-h/.test(block.body)
+    )
+  })
+}
+
+/** 检查固定导航是否预留 body 级留白（否则首页首屏会被导航遮挡）。 */
+function checkNavClearance(css: string, issues: string[]): void {
+  if (hasFixedNav(css) && !hasBodyTopClearance(css)) {
+    issues.push(
+      "固定导航（position:fixed）未在 body 上声明 padding-top:var(--nav-h)，首页首屏会被导航遮挡；请在 :root 定义 --nav-h 后增加 body{padding-top:var(--nav-h)}"
+    )
+  }
+}
+
 /** 收集片段中元素实际使用的类名（不含 CSS 声明）。 */
 export function collectElementClasses(html: string): Set<string> {
   const dom = new JSDOM(html)
@@ -260,6 +296,7 @@ export function analyzeSkeletonStyles(
   } else {
     checkBackground(css, skeletonIssues)
     checkMotion(css, skeletonIssues)
+    checkNavClearance(css, skeletonIssues)
     checkHover(css, warnings)
     checkMediaQueries(css, warnings)
     checkTypography(css, warnings)

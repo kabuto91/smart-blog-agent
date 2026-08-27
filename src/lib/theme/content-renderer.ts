@@ -421,9 +421,9 @@ function renderStaticTaxonomyLists(doc: Document, data?: DynamicData): void {
     if (inManagedContainer(anchor)) continue
     // 从链接向祖先找分类/标签列表容器，要求容器内分类/标签链接总数 ≥2
     let anc: Element | null = anchor.parentElement
-    while (anc && anc.tagName.toLowerCase() !== "body" && anc.tagName.toLowerCase() !== "html") {
+    while (anc && !isStructuralTaxonomyStop(anc)) {
       const children = Array.from(anc.children).filter((c) =>
-        c.querySelector?.(taxonomySelector)
+        isTaxonomyLink(c, taxonomySelector)
       )
       if (children.length >= 2 && !processed.has(anc)) {
         processed.add(anc)
@@ -433,6 +433,33 @@ function renderStaticTaxonomyLists(doc: Document, data?: DynamicData): void {
       anc = anc.parentElement
     }
   }
+}
+
+/**
+ * 判定元素自身是否为（或包含）分类/标签链接。
+ * 列表项可能是容器（li/div 内嵌 <a>），也可能是链接自身（<a class="tag"> 直接平铺），
+ * 二者都算一个分类/标签坑位。
+ */
+function isTaxonomyLink(el: Element, selector: string): boolean {
+  return el.matches?.(selector) || !!el.querySelector?.(selector)
+}
+
+/**
+ * 分类/标签列表探测的「结构性容器」边界：到达这些容器就停止向上冒泡，
+ * 绝不把它们整体当成分类/标签列表重建（如页面宿主 data-page-host、main 等
+ * 承载整页区块的容器——其子区块各自含分类链接时会被误判并整块重写/删除）。
+ */
+function isStructuralTaxonomyStop(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  return (
+    tag === "body" ||
+    tag === "html" ||
+    tag === "main" ||
+    tag === "header" ||
+    tag === "footer" ||
+    tag === "nav" ||
+    el.hasAttribute("data-page-host")
+  )
 }
 
 /** 用数据库分类/标签按序重建容器内的列表项；保留非分类/标签项（如 ALL）。
@@ -446,11 +473,12 @@ function rebuildTaxonomyList(
   const catSelector = 'a[href*="/blog/category/"]'
   const tagSelector = 'a[href*="/blog/tag/"]'
   const taxonomySelector = `${catSelector}, ${tagSelector}`
+  // 列表项可能是容器（li/div 内嵌 <a>），也可能是链接自身（<a class="tag"> 直接平铺）
+  const isCat = (el: Element): boolean => isTaxonomyLink(el, catSelector)
+  const isTax = (el: Element): boolean => isTaxonomyLink(el, taxonomySelector)
 
-  const hasCategory = items.some((i) => i.querySelector?.(catSelector))
-  const template =
-    items.find((i) => i.querySelector?.(hasCategory ? catSelector : tagSelector)) ??
-    null
+  const hasCategory = items.some(isCat)
+  const template = items.find(isCat) ?? items.find((i) => isTaxonomyLink(i, tagSelector)) ?? null
   const data = (hasCategory ? categories : tags) as (TagData | CategoryData)[]
   const hrefPrefix = hasCategory ? "/blog/category/" : "/blog/tag/"
 
@@ -462,7 +490,10 @@ function rebuildTaxonomyList(
       node.removeAttribute("data-content-type")
       node.removeAttribute("data-map")
     }
-    const a = li.querySelector<HTMLAnchorElement>("a[href]")
+    // 模板自身就是链接项时直接改写自身（querySelector 不匹配自身）
+    const a = li.matches("a[href]")
+      ? (li as HTMLAnchorElement)
+      : li.querySelector<HTMLAnchorElement>("a[href]")
     if (a) {
       a.setAttribute("href", href)
       a.textContent = name
@@ -472,7 +503,7 @@ function rebuildTaxonomyList(
 
   let index = 0
   for (const li of items) {
-    if (!li.querySelector(taxonomySelector)) continue
+    if (!isTax(li)) continue
     if (index < data.length) {
       li.replaceWith(
         makeItem(

@@ -10,9 +10,17 @@ export const PAGE_HOST_PLACEHOLDER = '<div data-page-host=""></div>'
 export function injectPageIntoLayout(
   layoutHtml: string,
   pageHtml: string,
-  options?: { navClearance?: boolean }
+  _options?: { navClearance?: boolean }
 ): string {
-  const style = options?.navClearance ? ' style="padding-top:var(--nav-h,0px)"' : ""
+  // 布局自身已在 body 上提供 var(--nav-h) 级留白时不再叠加 host 留白（避免双重间距）；
+  // 否则对所有页面（含 home）统一补 wrapper padding-top:var(--nav-h,0px)，
+  // 与 mergeThemePage 保持一致，保证后台各页类型预览与线上渲染一致。
+  const hasBodyClearance = /(?:html\s*,\s*body|body)\s*\{[^}]*padding[^}]*var\(--nav-h/i.test(
+    layoutHtml
+  )
+  const style = !hasBodyClearance
+    ? ' style="padding-top:var(--nav-h,0px)"'
+    : ""
   const wrapper = `<div data-page-host=""${style}>${pageHtml}</div>`
 
   if (layoutHtml.includes(PAGE_HOST_PLACEHOLDER)) {

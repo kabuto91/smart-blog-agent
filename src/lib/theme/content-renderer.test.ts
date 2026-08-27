@@ -1057,6 +1057,74 @@ describe("renderContent 静态标签云兜底", () => {
     expect(out).toContain("RETRO")
     expect(out).toContain("TECH")
   })
+
+  it("页面宿主 data-page-host 不被误判为分类列表重建（回归：整页内容被误删）", () => {
+    const html = `<body>
+      <div data-page-host>
+        <section class="hero">
+          <div class="hero__tags tag-list">
+            <a href="/blog/category/tech" class="tag">前端开发</a>
+            <a href="/blog/tag/%E4%BA%8C%E6%AC%A1%E5%85%83" class="tag tag--accent">二次元</a>
+            <a href="/blog/category/life" class="tag">日常随笔</a>
+            <a href="#" class="tag tag--accent">赛博美学</a>
+          </div>
+        </section>
+        <div class="container">
+          <h2 data-content="latest-title">最新发布</h2>
+          <section data-content="article-list" data-content-type="dynamic-articles">
+            <article><h3 data-map="title">样例</h3></article>
+          </section>
+        </div>
+      </div>
+    </body>`
+    const categories = [
+      { id: "c1", name: "技术", slug: "tech" },
+      { id: "c2", name: "生活", slug: "life" },
+      { id: "c3", name: "教程", slug: "tutorial" },
+    ]
+    const tags = [{ id: "t1", name: "二次元", slug: "anime" }]
+    const out = renderContent(html, {}, { tags, categories }, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    // 页面宿主容器与其下区块必须完整保留，不被当作分类列表重写
+    expect(doc.querySelectorAll("[data-page-host] > *")).toHaveLength(2)
+    expect(out).toContain("最新发布")
+    expect(out).toContain('data-content="article-list"')
+    // 直接平铺的 <a> 标签槽位按数据库分类重建（三类槽位 → 技术/生活/教程）
+    const links = Array.from(
+      doc.querySelectorAll<HTMLAnchorElement>("[data-page-host] a[href]")
+    )
+    const hrefs = links.map((a) => a.getAttribute("href"))
+    expect(hrefs).toContain("/blog/category/tech")
+    expect(hrefs).toContain("/blog/category/life")
+    expect(hrefs).toContain("/blog/category/tutorial")
+    // 非分类项（赛博美学 #）保留
+    expect(hrefs).toContain("#")
+  })
+
+  it("直接平铺的纯标签 <a> 列表按标签数据重建", () => {
+    const html = `<body>
+      <div class="tag-list">
+        <a href="/blog/tag/retro" class="tag">RETRO</a>
+        <a href="/blog/tag/synthwave" class="tag">SYNTHWAVE</a>
+      </div>
+    </body>`
+    const tags = [
+      { id: "1", name: "Next.js", slug: "next-js" },
+      { id: "2", name: "CSS", slug: "css" },
+    ]
+    const out = renderContent(html, {}, { tags }, undefined, { pageSpecific: true })
+    const doc = new JSDOM(out).window.document
+    const links = Array.from(
+      doc.querySelectorAll<HTMLAnchorElement>('a[href*="/blog/tag/"]')
+    )
+    expect(links).toHaveLength(2)
+    expect(links[0].getAttribute("href")).toBe("/blog/tag/next-js")
+    expect(links[0].textContent).toBe("Next.js")
+    expect(links[1].getAttribute("href")).toBe("/blog/tag/css")
+    expect(links[1].textContent).toBe("CSS")
+  })
 })
 
 describe("renderContent 可复用文本库绑定", () => {

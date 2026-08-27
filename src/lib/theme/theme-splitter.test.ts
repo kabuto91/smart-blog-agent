@@ -145,6 +145,11 @@ describe("mergeThemePage / injectPageIntoLayout", () => {
     expect(merged).toContain('style="padding-top: var(--nav-h, 0px);"')
   })
 
+  it("首页场景（无 navClearance）也统一补 host 留白，避免被固定导航遮挡", () => {
+    const merged = mergeThemePage(LAYOUT, "<p>x</p>")
+    expect(merged).toContain('style="padding-top: var(--nav-h, 0px);"')
+  })
+
   it("布局已有 body 级 var(--nav-h) 留白时不再叠加 host 留白", () => {
     const withBodyClearance = LAYOUT.replace(
       ".container { max-width: 800px; margin: 0 auto; }",

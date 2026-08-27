@@ -527,6 +527,7 @@ const JUDGE_SYSTEM_PROMPT = `你是资深前端设计师与博客产品评审。
 重点排查（常见低分点，命中请在对应维度 issues 给出可执行的修改建议）：
 - 同一页面重复展示同一视觉元素，尤其是作者头像（author-avatar）在导航、hero、作者介绍、文章标题区、页脚等多处出现。作者头像全站只允许 1 个，应集中在作者/简介区块；重复出现直接拉低 visualPolish 与 layout 评分。
 - 其它无意义重复的 UI 模块（如两个相同的作者卡、重复的统计区）。
+- 固定/吸顶导航必须为页面预留空间：导航 position:fixed 时 body 需有 padding-top 引用 var(--nav-h)，否则首页首屏会被导航遮挡。命中请在 layout/issues 给出可执行建议并拉低 layout 分。
 每个维度的 issues 用具体可执行的修改建议填充（没有问题则为空数组），它们会被直接用于指导修订。`
 
 function buildJudgeInput(state: GraphState): string {
