@@ -288,6 +288,41 @@ export interface PageFragmentIssue {
   issues: string[]
 }
 
+/**
+ * 探测未标记 dynamic-articles 的文章卡片簇。
+ * 判定条件：同一父级下 >=2 个同标签、含 /blog/ 文章链接、且不在动态容器/正文占位/导航内的重复结构。
+ * 保守启发式，只报高置信度的文章卡片簇，避免误伤装饰性卡片或导航。
+ */
+function detectUnmarkedArticleList(doc: Document): boolean {
+  const isInsideDynamic = (el: Element): boolean =>
+    el.closest(
+      '[data-content-type^="dynamic-"], [data-content-type="article-body"], [data-map="body"], nav, footer'
+    ) !== null
+  const hosts = Array.from(
+    doc.querySelectorAll('article, li, [class*="post"], [class*="card"], [class*="grid"] > *')
+  )
+  // 父级 -> 重复子项
+  const groups = new Map<Element, Element[]>()
+  for (const el of hosts) {
+    if (isInsideDynamic(el)) continue
+    if (!el.querySelector('a[href*="/blog/"]')) continue
+    const parent = el.parentElement
+    if (!parent) continue
+    const list = groups.get(parent) ?? []
+    list.push(el)
+    groups.set(parent, list)
+  }
+  for (const [, items] of groups) {
+    if (
+      items.length >= 2 &&
+      items.every((it) => it.tagName === items[0].tagName)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 /** 校验生成出的页面片段与骨架视觉契约是否一致。 */
 export function validatePageFragment(
   fragmentHtml: string,
@@ -338,6 +373,13 @@ export function validatePageFragment(
       .join("、")
     issues.push(
       `有 ${uncoveredTextUnits.length} 处标题/段落文本未标记 data-content（如 ${sample}），这些内容将无法在后台自定义；请为其补充 data-content + data-content-type="text"`
+    )
+  }
+
+  // 漏标的重复文章卡片簇：应作为整体动态文章列表，而非多条 text
+  if (detectUnmarkedArticleList(doc)) {
+    issues.push(
+      '页面存在未标记为动态文章列表的重复文章卡片/网格：这类区块应整体标记为 <section data-content="article-list" data-content-type="dynamic-articles">，并把卡片作为模板项用 data-map 标字段（title/excerpt/date/category/link），而非把标题摘要当 text。'
     )
   }
 

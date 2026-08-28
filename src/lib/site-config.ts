@@ -53,4 +53,33 @@ export async function updateSiteConfig(
   })
 }
 
+/** site_config.config 中精选文章 ID 列表（string[]）的键。刻意不进 EDITABLE_KEYS，避免污染站点设置文本表单。 */
+export const FEATURED_ARTICLES_KEY = "featuredArticleIds"
+
+/** 读取后台配置的精选文章 ID 列表（按保存顺序）。 */
+export async function getFeaturedArticleIds(): Promise<string[]> {
+  try {
+    const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
+    const raw = row?.config
+      ? (JSON.parse(row.config)[FEATURED_ARTICLES_KEY] as unknown)
+      : undefined
+    if (Array.isArray(raw)) return [...new Set(raw)].filter((x) => typeof x === "string")
+  } catch {
+    // table may not exist yet
+  }
+  return []
+}
+
+/** 保存精选文章 ID 列表（合并写入 site_config.config，不影响其它字段）。 */
+export async function saveFeaturedArticleIds(ids: string[]): Promise<void> {
+  const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
+  const current = row?.config ? (JSON.parse(row.config) as Record<string, unknown>) : {}
+  current[FEATURED_ARTICLES_KEY] = [...new Set(ids)]
+  await prisma.siteConfig.upsert({
+    where: { id: 1 },
+    create: { id: 1, config: JSON.stringify(current) },
+    update: { config: JSON.stringify(current) },
+  })
+}
+
 export { EDITABLE_KEYS }

@@ -36,10 +36,15 @@ export interface PaginationData {
 
 export interface DynamicData {
   articles?: ArticleData[]
+  /** 后台精选文章（data-content="featured-articles" 区块专用），按配置顺序。 */
+  featuredArticles?: ArticleData[]
   categories?: CategoryData[]
   tags?: TagData[]
   pagination?: PaginationData
 }
+
+/** 「精选文章」区块对应的 data-content key。 */
+export const FEATURED_LIST_KEY = "featured-articles"
 
 export interface RenderOptions {
   /**
@@ -723,7 +728,12 @@ function renderDynamicField(
         return
       }
       isArticlesList = true
-      data = (dynamicData.articles ?? []).map((a) => ({
+      // 精选区块（data-content="featured-articles"）用后台精选配置填充，否则用文章列表
+      const source =
+        key === FEATURED_LIST_KEY
+          ? (dynamicData.featuredArticles ?? dynamicData.articles ?? [])
+          : (dynamicData.articles ?? [])
+      data = source.map((a) => ({
         title: a.title,
         excerpt: a.excerpt,
         date: a.date,

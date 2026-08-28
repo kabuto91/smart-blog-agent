@@ -1158,3 +1158,49 @@ describe("renderContent 可复用文本库绑定", () => {
     expect(out).not.toContain("共享标语")
   })
 })
+
+describe("renderContent featured-articles 精选区块", () => {
+  const CONFIG: ContentConfig = {
+    "featured-articles": {
+      type: "dynamic-articles",
+      label: "精选文章",
+      itemTemplate: `<article class="post-card">
+        <a data-map="link" href="#"><span data-map="title">样本标题</span></a>
+        <p data-map="excerpt">样本摘要</p>
+        <span class="date" data-map="date">2026-01-01</span>
+      </article>`,
+      fieldMapping: { title: "title", link: "link", excerpt: "excerpt", date: "date" },
+    },
+  }
+  const HTML = `<section data-content="featured-articles" data-content-type="dynamic-articles">
+    <article class="post-card"><a data-map="link" href="#"><span data-map="title">样本标题</span></a></article>
+  </section>`
+
+  it("存在精选数据时用 featuredArticles 填充且不用 articles", () => {
+    const dynamicData = {
+      articles: [{ id: 9, title: "最新A", excerpt: "", date: "2026-01-01", category: "", slug: "latest-a" }],
+      featuredArticles: [
+        { id: 1, title: "精选甲", excerpt: "甲摘要", date: "2026-02-01", category: "设计", slug: "feat-a" },
+        { id: 2, title: "精选乙", excerpt: "", date: "2026-02-02", category: "", slug: "feat-b" },
+      ],
+    }
+    const out = renderContent(HTML, CONFIG, dynamicData, undefined, { pageSpecific: true })
+    expect(out).toContain("精选甲")
+    expect(out).toContain("精选乙")
+    expect(out).toContain('href="/blog/feat-a"')
+    expect(out).not.toContain("最新A")
+    expect(out).not.toContain("样本标题")
+    const doc = new JSDOM(out).window.document
+    const item = doc.querySelector('[data-content="featured-articles"] > article')
+    expect(item!.textContent).toContain("甲摘要")
+  })
+
+  it("未配置精选时回退到文章列表", () => {
+    const dynamicData = {
+      articles: [{ id: 9, title: "最新A", excerpt: "", date: "2026-01-01", category: "", slug: "latest-a" }],
+    }
+    const out = renderContent(HTML, CONFIG, dynamicData, undefined, { pageSpecific: true })
+    expect(out).toContain("最新A")
+    expect(out).toContain('href="/blog/latest-a"')
+  })
+})

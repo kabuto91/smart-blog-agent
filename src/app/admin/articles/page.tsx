@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ArticleEditorDialog } from "@/components/admin/article-editor-dialog"
 import { MetaManagerDialog } from "@/components/admin/meta-manager-dialog"
+import { FeaturedArticlesDialog } from "@/components/admin/featured-articles-dialog"
 import {
   FileText,
   Plus,
@@ -14,6 +15,7 @@ import {
   Tags,
   Search,
   ExternalLink,
+  Star,
 } from "lucide-react"
 import type {
   ArticleListItem,
@@ -30,6 +32,7 @@ export default function ArticlesPage() {
   const [editingArticle, setEditingArticle] = useState<ArticleListItem | null>(null)
   const [editorKey, setEditorKey] = useState(0)
   const [metaOpen, setMetaOpen] = useState(false)
+  const [featuredOpen, setFeaturedOpen] = useState(false)
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("")
   const [tagFilter, setTagFilter] = useState("")
@@ -218,6 +221,16 @@ export default function ArticlesPage() {
             <option value="published">已发布</option>
             <option value="draft">草稿</option>
           </select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setFeaturedOpen(true)}
+            className="gap-1.5"
+            title="配置精选文章等内置区块"
+          >
+            <Star className="size-3.5 text-[#B08900]" />
+            精选区块
+          </Button>
           <span className="ml-auto text-xs text-[#6B7280]">
             共 {filtered.length} 篇
           </span>
@@ -426,6 +439,14 @@ export default function ArticlesPage() {
         tags={tags}
         onCategoriesChanged={setCategories}
         onTagsChanged={setTags}
+      />
+
+      {/* 精选区块弹窗 */}
+      <FeaturedArticlesDialog
+        key={featuredOpen ? "open" : "closed"}
+        open={featuredOpen}
+        onOpenChange={setFeaturedOpen}
+        articles={articles}
       />
     </>
   )

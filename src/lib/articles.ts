@@ -176,6 +176,18 @@ export async function getArticles(
   return rows.map(mapArticle)
 }
 
+/** 按传入顺序返回指定 ID 的已发布文章；未发布/不存在的自动跳过。 */
+export async function getArticlesByIds(ids: string[]): Promise<ArticleListItem[]> {
+  const uniq = [...new Set(ids)]
+  if (uniq.length === 0) return []
+  const rows = await prisma.article.findMany({
+    where: { id: { in: uniq }, published: true },
+    include: ARTICLE_INCLUDE,
+  })
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  return uniq.flatMap((id) => (byId.has(id) ? [mapArticle(byId.get(id)!)] : []))
+}
+
 export async function countArticles(
   filters: ArticleFilters = {}
 ): Promise<number> {

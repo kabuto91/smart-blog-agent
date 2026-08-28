@@ -248,6 +248,46 @@ describe("validatePageFragment", () => {
   })
 })
 
+describe("detectUnmarkedArticleList（经 validatePageFragment）", () => {
+  const layoutClasses = collectThemeClasses(SPLIT_LAYOUT)
+
+  it("重复文章卡片未标记动态列表时校验失败", () => {
+    const html = `<section class="container">
+      <article class="post-card"><h2 data-content="t1" data-content-type="text">标题一</h2><a href="/blog/a"></a></article>
+      <article class="post-card"><h2 data-content="t2" data-content-type="text">标题二</h2><a href="/blog/b"></a></article>
+    </section>`
+    const res = validatePageFragment(html, layoutClasses)
+    expect(res.ok).toBe(false)
+    expect(res.issues.join("\n")).toContain("未标记为动态文章列表")
+  })
+
+  it("已标记 dynamic-articles 的列表不误报", () => {
+    const html = `<section class="container" data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card" data-map="title">模板标题<a href="/blog/a"></a></article>
+    </section>`
+    const res = validatePageFragment(html, layoutClasses)
+    expect(res.ok).toBe(true)
+    expect(res.issues.join("\n")).not.toContain("未标记为动态文章列表")
+  })
+
+  it("仅单个含链接卡片不误报", () => {
+    const html = `<section class="container">
+      <article class="post-card" data-content="t" data-content-type="text">标题<a href="/blog/a"></a></article>
+    </section>`
+    const res = validatePageFragment(html, layoutClasses)
+    expect(res.issues.join("\n")).not.toContain("未标记为动态文章列表")
+  })
+
+  it("导航内的链接项不误报", () => {
+    const html = `<div class="container"><nav>
+      <a href="/blog/a">文章甲</a><a href="/blog/b">文章乙</a>
+    </nav></div>`
+    const res = validatePageFragment(html, layoutClasses)
+    // 避免被当作未标记文本/文章卡片簇误报
+    expect(res.issues.join("\n")).not.toContain("未标记为动态文章列表")
+  })
+})
+
 describe("normalizeThemeSpacing", () => {
   const layoutWithBigSpacing = `<!DOCTYPE html>
 <html>
