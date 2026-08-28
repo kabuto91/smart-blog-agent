@@ -4,6 +4,7 @@ import { addMessage, getLatestSnapshot } from "@/lib/theme/theme-session"
 import { getSiteConfig } from "@/lib/site-config"
 import { getUpload } from "@/lib/uploads"
 import { analyzeImage } from "@/lib/llm/vision-analyze"
+import { isVisionConfigured } from "@/lib/llm/vision-client"
 import {
   createThemeGraph,
   type ThemeGraphInput,
@@ -45,15 +46,23 @@ export async function POST(request: Request) {
 
   try {
     let finalMessage = message
+    let visionSkipped = false
 
     if (imageId) {
       const upload = await getUpload(imageId)
       if (upload) {
-        try {
-          const analysis = await analyzeImage(upload.data, upload.mimeType)
-          finalMessage = `[图片分析结果]\n${analysis}\n\n[用户需求]\n${message}`
-        } catch {
-          // 如果视觉模型配置有问题，忽略图片分析，仅使用用户消息
+        if (!(await isVisionConfigured())) {
+          visionSkipped = true
+          finalMessage =
+            "[未配置视觉模型，已忽略所选参考图片的视觉分析]\n[用户需求]\n" +
+            message
+        } else {
+          try {
+            const analysis = await analyzeImage(upload.data, upload.mimeType)
+            finalMessage = `[图片分析结果]\n${analysis}\n\n[用户需求]\n${message}`
+          } catch {
+            // 如果视觉模型配置有问题，忽略图片分析，仅使用用户消息
+          }
         }
       }
     }
@@ -80,6 +89,12 @@ export async function POST(request: Request) {
     }
 
     const stream = createSSEStream(async ({ send, close }) => {
+      if (visionSkipped) {
+        send({
+          type: "warn",
+          message: "未配置视觉模型，已忽略所选参考图片的视觉分析",
+        })
+      }
       const graph = await createThemeGraph({
         emitter: {
           stage: (stage, label, status, detail) =>

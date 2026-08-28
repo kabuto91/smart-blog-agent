@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Loader2, Sparkles, Send, Trash2, ImagePlus, X } from "lucide-react"
 import { injectPageIntoLayout } from "@/lib/theme/layout-inject"
+import { useAppStore } from "@/lib/store/app-store"
 
 interface GeneratedPage {
   type: string
@@ -126,6 +127,14 @@ export function ThemeGenerateDialog({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const visionConfigured = useAppStore((s) => s.visionConfigured)
+  const loadCapabilities = useAppStore((s) => s.loadCapabilities)
+
+  useEffect(() => {
+    loadCapabilities()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -752,8 +761,17 @@ export function ThemeGenerateDialog({
                           <X className="size-3" />
                         </button>
                       </div>
-                      <span className="text-xs text-[#6B7280]">图片已选择，发送时将分析</span>
+                      <span className="text-xs text-[#6B7280]">
+                        {visionConfigured === false
+                          ? "图片已选择，但未配置视觉模型，将不进行视觉分析"
+                          : "图片已选择，发送时将分析"}
+                      </span>
                     </div>
+                  )}
+                  {visionConfigured === false && !selectedImage && (
+                    <p className="mb-2 text-xs text-[#6B7280]">
+                      未配置视觉模型，上传的参考图片将被忽略
+                    </p>
                   )}
                   <Textarea
                     ref={textareaRef}

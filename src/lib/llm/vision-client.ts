@@ -30,6 +30,12 @@ export function invalidateVisionConfigCache() {
   cachedConfig = null
 }
 
+/** 是否已配置视觉模型（凭证 apiKey 来自数据库或环境变量兜底）。 */
+export async function isVisionConfigured(): Promise<boolean> {
+  const dbConfig = await getVisionConfig()
+  return Boolean(dbConfig?.apiKey || process.env.QWEN_API_KEY)
+}
+
 export async function createVisionLLM(streaming = false) {
   const dbConfig = await getVisionConfig()
 

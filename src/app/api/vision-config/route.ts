@@ -1,17 +1,24 @@
 import { prisma } from "@/lib/db/client"
 import { encrypt, decrypt } from "@/lib/crypto"
-import { invalidateVisionConfigCache } from "@/lib/llm/vision-client"
+import {
+  invalidateVisionConfigCache,
+  isVisionConfigured,
+} from "@/lib/llm/vision-client"
 
 export const runtime = "nodejs"
 
 export async function GET() {
   try {
-    const config = await prisma.visionConfig.findUnique({ where: { id: 1 } })
+    const [config, configured] = await Promise.all([
+      prisma.visionConfig.findUnique({ where: { id: 1 } }),
+      isVisionConfigured(),
+    ])
     if (!config) {
       return Response.json({
         baseUrl: "",
         model: "",
         apiKey: "",
+        configured,
       })
     }
 
@@ -19,12 +26,15 @@ export async function GET() {
       baseUrl: config.baseUrl,
       model: config.model,
       apiKey: config.apiKey ? decrypt(config.apiKey) : "",
+      configured,
     })
   } catch {
+    const configured = await isVisionConfigured().catch(() => false)
     return Response.json({
       baseUrl: "",
       model: "",
       apiKey: "",
+      configured,
     })
   }
 }
