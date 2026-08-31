@@ -107,6 +107,7 @@ export function renderContent(
   ensureSingleAuthorAvatar(doc)
 
   renderStaticTaxonomyLists(doc, dynamicData)
+  renderStaticArchiveList(doc, dynamicData)
 
   return dom.serialize()
 }
@@ -525,6 +526,104 @@ function rebuildTaxonomyList(
   }
 }
 
+/**
+ * 静态日期归档列表的兜底替换。
+ *
+ * 背景：LLM 生成主题时可能把侧边栏「时间锚点 / 归档」这类
+ * 「日期 + 标题」的紧凑列表错误建模成静态文本（data-content="archive-date-N" /
+ * archive-title-N，data-content-type="text"），导致一直展示主题的样例日期。
+ * 与 renderStaticTaxonomyLists 类似，这里对静态归档列表做兜底：
+ * 一旦检测到，就用最新文章（dynamicData.articles）的日期、标题、链接重建，
+ * 使这类区块自动跟随真实文章数据，无需重新生成主题。
+ */
+function renderStaticArchiveList(doc: Document, data?: DynamicData): void {
+  const articles = data?.articles ?? []
+  if (articles.length === 0) return
+
+  const isArchiveItem = (el: Element): boolean => {
+    const cls = (el.className ?? "").toString()
+    if (/\barchive-(item|date|title)\b/.test(cls)) return true
+    return !!el.querySelector(
+      '[data-content^="archive-date-"], [data-content^="archive-title-"]'
+    )
+  }
+
+  // 归档列表容器探测的上浮边界：到达结构性容器或已由动态渲染管理的区域即停止
+  const boundary = (el: Element): boolean => {
+    const tag = el.tagName.toLowerCase()
+    return (
+      tag === "body" ||
+      tag === "html" ||
+      tag === "main" ||
+      tag === "header" ||
+      tag === "footer" ||
+      tag === "nav" ||
+      el.hasAttribute("data-page-host") ||
+      !!el.closest('[data-content-type="dynamic-articles"]')
+    )
+  }
+
+  const candidates = Array.from(doc.querySelectorAll("li, div, span")).filter(
+    isArchiveItem
+  )
+  const processed = new Set<Element>()
+  for (const item of candidates) {
+    let anc: Element | null = item.parentElement
+    while (anc && !boundary(anc)) {
+      const children = Array.from(anc.children).filter(isArchiveItem)
+      if (children.length >= 2 && !processed.has(anc)) {
+        processed.add(anc)
+        rebuildArchiveList(anc, articles)
+        break
+      }
+      anc = anc.parentElement
+    }
+  }
+}
+
+/** 用最新文章按序重建静态归档列表；项数不超过原模板的坑位数。 */
+function rebuildArchiveList(
+  container: Element,
+  articles: ArticleData[]
+): void {
+  const isArchiveItem = (el: Element): boolean => {
+    const cls = (el.className ?? "").toString()
+    if (/\barchive-(item|date|title)\b/.test(cls)) return true
+    return !!el.querySelector(
+      '[data-content^="archive-date-"], [data-content^="archive-title-"]'
+    )
+  }
+  const items = Array.from(container.children).filter(isArchiveItem)
+  const template = items[0]
+  if (!template) return
+
+  const limit = Math.min(articles.length, items.length)
+  const newItems: Element[] = []
+  for (let i = 0; i < limit; i++) {
+    const a = articles[i]
+    const li = template.cloneNode(true) as Element
+    // 去掉模板的静态文本标记，避免渲染时被当作文本字段再次处理
+    for (const node of li.querySelectorAll("[data-content]")) {
+      node.removeAttribute("data-content")
+      node.removeAttribute("data-content-type")
+    }
+    const dateEl =
+      li.querySelector(".archive-date, [data-content^='archive-date-']") ??
+      li.querySelector("span")
+    const titleLink = li.matches("a[href]")
+      ? (li as HTMLAnchorElement)
+      : li.querySelector<HTMLAnchorElement>("a[href], .archive-title")
+    if (dateEl) dateEl.textContent = a.date
+    if (titleLink) {
+      titleLink.setAttribute("href", `/blog/${a.slug}`)
+      titleLink.textContent = a.title
+    }
+    newItems.push(li)
+  }
+  for (const it of items) it.remove()
+  for (const it of newItems) container.appendChild(it)
+}
+
 /** 判断元素是否为「纯 CSS 圆形渐变头像占位」（无 data-content、无 img、无文字）。 */
 function isGradientAvatarEl(el: Element): boolean {
   const tag = el.tagName.toLowerCase()
@@ -740,6 +839,7 @@ function renderDynamicField(
         category: a.category ?? "",
         link: `/blog/${a.slug}`,
         cover: a.cover ?? "",
+        tags: a.tags ? a.tags.join(" · ") : "",
       }))
       break
     }
@@ -902,6 +1002,34 @@ function renderListField(
             if (img) img.setAttribute("src", value)
           } else {
             removeCoverBlock(target)
+          }
+        }
+      } else if (mapKey === "tags") {
+        // 文章标签：目标容器内已有的 tag 芯片逐个填充真实标签，
+        // 标签数多于芯片时克隆补齐，少于时移除多余芯片；
+        // 无芯片结构（纯文本容器）时退化为「·」分隔的文本。
+        const tagNames = String(value)
+          .split(" · ")
+          .map((s) => s.trim())
+          .filter(Boolean)
+        for (const target of targets) {
+          const chips = Array.from(target.children).filter(
+            (c) => c.tagName.toLowerCase() === "span"
+          )
+          if (chips.length > 0) {
+            for (let i = 0; i < chips.length; i++) {
+              if (i < tagNames.length) chips[i].textContent = tagNames[i]
+              else chips[i].remove()
+            }
+            while (chips.length < tagNames.length) {
+              const last = chips[chips.length - 1]
+              const chip = last.cloneNode(true) as Element
+              chip.textContent = tagNames[chips.length]
+              last.after(chip)
+              chips.push(chip)
+            }
+          } else {
+            target.textContent = tagNames.join(" · ")
           }
         }
       } else {

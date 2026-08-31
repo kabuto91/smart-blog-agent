@@ -1204,3 +1204,44 @@ describe("renderContent featured-articles 精选区块", () => {
     expect(out).toContain('href="/blog/latest-a"')
   })
 })
+
+describe("renderContent 静态时间锚点归档列表兜底", () => {
+  const ARCHIVE_HTML = `<aside class="sidebar">
+    <h3 class="sidebar-title" data-content="sidebar-archive-title" data-content-type="text">时间锚点</h3>
+    <ul class="archive-list">
+      <li class="archive-item"><span class="archive-date" data-content="archive-date-1" data-content-type="text">2024.05</span><a class="archive-title" data-content="archive-title-1" data-content-type="text" href="#">五月跃迁记录</a></li>
+      <li class="archive-item"><span class="archive-date" data-content="archive-date-2" data-content-type="text">2024.04</span><a class="archive-title" data-content="archive-title-2" data-content-type="text" href="#">四月星图更新</a></li>
+      <li class="archive-item"><span class="archive-date" data-content="archive-date-3" data-content-type="text">2024.03</span><a class="archive-title" data-content="archive-title-3" data-content-type="text" href="#">三月深空探测</a></li>
+    </ul>
+  </aside>`
+
+  it("用最新文章重建静态归档列表（日期+标题+链接）", () => {
+    const out = renderContent(
+      ARCHIVE_HTML,
+      {},
+      {
+        articles: [
+          { id: 1, title: "文章甲", excerpt: "", date: "2026-08-01", slug: "a" },
+          { id: 2, title: "文章乙", excerpt: "", date: "2026-07-15", slug: "b" },
+        ],
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    expect(out).toContain(">2026-08-01<")
+    expect(out).toContain(">文章甲<")
+    expect(out).toContain('href="/blog/a"')
+    expect(out).toContain(">2026-07-15<")
+    expect(out).toContain(">文章乙<")
+    expect(out).not.toContain("五月跃迁记录")
+    expect(out).not.toContain("2024.05")
+  })
+
+  it("无文章数据时保留样例静态归档", () => {
+    const out = renderContent(ARCHIVE_HTML, {}, undefined, undefined, {
+      pageSpecific: true,
+    })
+    expect(out).toContain("五月跃迁记录")
+    expect(out).toContain("2024.05")
+  })
+})

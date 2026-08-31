@@ -155,18 +155,18 @@ const DYNAMIC_TAG_RULE = `- 标签云区域用 <div data-content="tag-cloud" dat
 const DYNAMIC_CONTENT_RULE = `【动态内容识别规则】生成页面时，先判断每个区块属于「动态列表」还是「静态文本」：
 
 一、动态列表（运行时会自动填充真实数据，禁止手写占位条目、禁止硬编码链接）：
-1. 文章类列表：任何「展示多篇文章 / 多个卡片 / 网格」的区块（如 热门文章、近期/最新文章、推荐阅读、文章卡片、文章网格）都归为此类，整块只用一个外层容器标记：
+1. 文章类列表：任何「展示多篇文章 / 多个卡片 / 网格 / 日期+标题条目」的区块（如 热门文章、近期/最新文章、推荐阅读、文章卡片、文章网格、侧边栏「时间锚点/归档」日期列表）都归为此类，整块只用一个外层容器标记：
    <section data-content="article-list" data-content-type="dynamic-articles">
-     首个子元素是单个文章项模板（<article> 或 <li>），模板内用 data-map 标记 title、excerpt、date、category、link；封面用 <img data-map="cover">（仅限网格/多列卡片容器内）。
+     首个子元素是单个文章项模板（<article> 或 <li>），模板内用 data-map 标记 title、excerpt、date、category、link；封面用 <img data-map="cover">（仅限网格/多列卡片容器内）；若卡片展示标签，用 <div data-map="tags"> 包裹标签芯片（内嵌的 <span class="tag"> 作为单个标签样式模板，渲染时会逐个填入真实标签）。
    </section>
    切勿给每个文章项的标题/摘要/日期单独打 data-content="text"——整块就是一个动态列表。
    其中，「精选文章/编辑推荐」这类由后台手动挑选的区块，请改用 data-content="featured-articles"（同样 data-content-type="dynamic-articles"），其余文章列表/网格都用 data-content="article-list"。
 2. 标签/分类列表：标签云、标签/分类导航、筛选行 → 分别用 data-content-type="dynamic-tags" / "dynamic-categories"（模板项内 data-map="name" 标记名称、data-map="link" 标记链接）。
 3. 导航/页脚链接列表 → data-content-type="nav-list"。
 
-二、静态文本（单条内容，运行时按后台配置替换）：区块标题、段落、统计数字、时间线条目、作者介绍等 → data-content + data-content-type="text"。
+二、静态文本（单条内容，运行时按后台配置替换）：区块标题、段落、统计数字、作者介绍等 → data-content + data-content-type="text"。
 
-【识别要点】同标签、同 class、含文章链接、>1 个的重复结构即为文章列表；不要把重复文章卡片拆成多条 text，不要硬编码文章标题或链接。`
+【识别要点】同标签、同 class、含文章链接、>1 个的重复结构即为文章列表；不要把重复文章卡片拆成多条 text，不要硬编码文章标题或链接；侧边栏「时间锚点/归档」这类「日期+标题」列表也按文章列表处理（模板项内 data-map 标记 date、title、link，日期不要写死成 2024.05 之类的样例）。`
 
 export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计师，任务分为两阶段：
 1. 本阶段只负责产出【主题骨架】——即共享布局 HTML（包含 <!DOCTYPE html>、<html>、<head>、<body>）。

@@ -255,6 +255,21 @@ describe("sanitizePageFragment", () => {
     expect(out).toContain("unique-abc")
     expect(out).toContain("card")
   })
+
+  it("侧边栏时间锚点归档条目标题不被桥接成 page-title", () => {
+    const raw = `<ul class="archive-list">
+  <li class="archive-item">
+    <span class="archive-date">2024.05</span>
+    <a href="#" class="archive-title">五月跃迁记录</a>
+  </li>
+</ul>
+<h1 class="archive-title">全部文章</h1>`
+    const out = sanitizePageFragment(raw)
+    // 列表项内的 archive-title 保留原类
+    expect(out).toContain('class="archive-title">五月跃迁记录')
+    // 页面级归档标题仍桥接为 page-title
+    expect(out).toContain('class="page-title">全部文章')
+  })
 })
 
 describe("validatePageFragment", () => {

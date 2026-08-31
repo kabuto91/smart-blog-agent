@@ -289,6 +289,11 @@ export function sanitizePageFragment(
       // 否则保留原类名，避免改写成不存在的类而无声丢样。
       if (target === undefined) return cls
       if (layoutClasses && !layoutClasses.has(target)) return cls
+      // 「时间锚点」侧边栏的归档条目复用 archive-title 作小字号列表项标题，
+      // 不应被桥接成页面大标题 page-title（仅页面级归档标题才需要桥接）。
+      if (cls === "archive-title" && el.closest(".archive-item, .archive-list")) {
+        return cls
+      }
       return target
     })
     const final = Array.from(new Set(next))

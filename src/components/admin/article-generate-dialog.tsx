@@ -226,6 +226,8 @@ export function ArticleGenerateDialog({
             AI 生成正文
           </DialogTitle>
 
+          {/* Scrollable middle content */}
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
           <div>
             <label className="mb-1 block text-xs font-medium text-[#6B7280]">
               写作要求 / 文章要点
@@ -368,6 +370,7 @@ export function ArticleGenerateDialog({
           </div>
 
           {error && <p className="text-sm text-red-500">{error}</p>}
+          </div>
 
           {/* Footer */}
           <div className="flex justify-end gap-2 border-t border-black/[0.06] pt-4">
