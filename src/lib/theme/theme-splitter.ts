@@ -134,7 +134,7 @@ export function ensureLayoutContract(layoutHtml: string): string {
   }
   const script = doc.createElement("script")
   script.setAttribute("data-theme-nav-measure", "")
-  script.textContent = `(function(){var sync=function(){var els=document.querySelectorAll('nav[data-content="main-nav"], nav, header');var h=0;for(var i=0;i<els.length;i++){var el=els[i];if(window.getComputedStyle(el).position==='fixed'){h=el.getBoundingClientRect().height;break;}}document.documentElement.style.setProperty('--nav-h',h+'px');};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();`
+  script.textContent = `(function(){var sync=function(){var els=document.querySelectorAll('nav[data-content="main-nav"], nav, header');var h=0;for(var i=0;i<els.length;i++){var el=els[i];if(window.getComputedStyle(el).position!=='fixed'){continue;}var r=el.getBoundingClientRect();if(r.height>0&&r.width>0&&r.height>=(window.innerHeight||r.height)*0.5){continue;}h=r.height;break;}document.documentElement.style.setProperty('--nav-h',h+'px');};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();`
   body.appendChild(script)
 
   // 5. 间距兜底：强制 clamp 过大的 padding/margin/gap
@@ -160,6 +160,21 @@ export function mergeThemePage(
   }
 
   host.innerHTML = pageHtml
+  // 去嵌套：页面片段若自带 data-page-host 宿主包裹（生成器把它也写进正文，常伴随
+  // 重复的 main.page-content 布局主干），会在布局 host 内再包一层 host，导致
+  // margin-left/padding 双重作用造成排版错乱。此处把该冗余包裹解包，让片段子内容
+  // 直接落到布局 host 下。
+  const injectedRoot = host.firstElementChild
+  if (
+    injectedRoot &&
+    host.children.length === 1 &&
+    injectedRoot.hasAttribute?.("data-page-host")
+  ) {
+    while (injectedRoot.firstChild) {
+      host.insertBefore(injectedRoot.firstChild, injectedRoot)
+    }
+    injectedRoot.remove()
+  }
   // 布局自身已在 body 上提供 var(--nav-h) 级留白时不再叠加 host 留白（避免双重间距）；
   // 否则对所有页面（含 home）统一补 padding-top:var(--nav-h,0px)。
   // 非固定导航时运行时脚本会把 --nav-h 置 0，此留白无副作用，符合"仅固定导航需要留白"契约。
