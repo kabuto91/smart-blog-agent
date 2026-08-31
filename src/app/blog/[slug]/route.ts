@@ -1,12 +1,16 @@
 import { getArticleBySlug, getCategories, getTags } from "@/lib/articles"
+import { getArticleCollectionNav } from "@/lib/collections"
 import {
   toArticleDetailData,
   toCategoryData,
   toTagData,
   renderBlogTheme,
+  renderThemePage,
   renderCustomThemePage,
   blogNotFoundHtml,
+  blogNotConfiguredHtml,
 } from "@/lib/blog"
+import { buildCollectionNavHtml } from "@/lib/collections-render"
 
 export const runtime = "nodejs"
 
@@ -32,14 +36,34 @@ export async function GET(
     })
   }
 
-  const [categories, tags] = await Promise.all([
+  const [categories, tags, nav] = await Promise.all([
     getCategories(true),
     getTags(),
+    getArticleCollectionNav(article.id),
   ])
 
-  return renderBlogTheme({
+  const dynamicData = {
     articles: [toArticleDetailData(article)],
     categories: categories.map(toCategoryData),
     tags: tags.map(toTagData),
-  })
+  }
+
+  // 文章属于合集时，在正文后注入合集进度导航
+  if (nav.length > 0) {
+    const html = await renderThemePage(
+      "detail",
+      dynamicData,
+      { afterBodyHtml: buildCollectionNavHtml(nav) }
+    )
+    if (html === null) {
+      return new Response(blogNotConfiguredHtml, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      })
+    }
+    return new Response(html, {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })
+  }
+
+  return renderBlogTheme(dynamicData)
 }

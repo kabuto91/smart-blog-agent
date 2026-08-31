@@ -1,8 +1,13 @@
+import { JSDOM } from "jsdom"
 import { renderMarkdown } from "./markdown"
 import { getActiveTheme, pageContentConfig } from "./theme/theme"
 import { getSiteConfig } from "./site-config"
 import { getReusableTexts } from "./reusable-text"
-import { renderContent, resolvePageType } from "./theme/content-renderer"
+import {
+  renderContent,
+  resolvePageType,
+  type PageType,
+} from "./theme/content-renderer"
 import { mergeThemePage } from "./theme/theme-splitter"
 import { normalizeRoute } from "./theme/custom-pages"
 import type {
@@ -150,45 +155,95 @@ export const blogNotFoundHtml = `<!DOCTYPE html>
 </body>
 </html>`
 
+export interface ThemePageOptions {
+  /** 渲染后插入到正文容器（data-content="article-body"）之后（详情页合集导航）。 */
+  afterBodyHtml?: string
+  /** 渲染后插入到第一个动态文章列表容器之前；无容器时追加到 <main>（合集头/合集网格）。 */
+  beforeListHtml?: string
+  /** 移除渲染后无子元素的动态文章容器（合集列表页避免空网格）。 */
+  stripEmptyLists?: boolean
+}
+
+/**
+ * 渲染某个页面类型的主题页，返回 HTML 字符串；主题未配置或无对应页面类型时返回 null。
+ * 兼容现有 renderBlogTheme 的合并+渲染流程，并支持合集页的注入选项。
+ */
+export async function renderThemePage(
+  pageType: PageType,
+  dynamicData: DynamicData,
+  opts: ThemePageOptions = {}
+): Promise<string | null> {
+  const activeTheme = await getActiveTheme()
+  if (!activeTheme) return null
+
+  const page = activeTheme.pages.find((p) => p.type === pageType)
+  if (!page) return null
+
+  const siteConfig = await getSiteConfig()
+  const reusableTexts = await getReusableTexts()
+  const contentConfig: ContentConfig =
+    pageContentConfig(activeTheme, pageType) ?? {}
+
+  const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
+    navClearance: pageType !== "home",
+  })
+
+  let renderedHtml = renderContent(
+    mergedHtml,
+    contentConfig,
+    dynamicData,
+    siteConfig,
+    { pageSpecific: true },
+    reusableTexts
+  )
+
+  if (opts.beforeListHtml || opts.stripEmptyLists || opts.afterBodyHtml) {
+    const dom = new JSDOM(renderedHtml)
+    const doc = dom.window.document
+
+    if (opts.beforeListHtml) {
+      const container = doc.querySelector(
+        '[data-content-type="dynamic-articles"]'
+      )
+      if (container) {
+        container.insertAdjacentHTML("beforebegin", opts.beforeListHtml)
+      } else {
+        const anchor = doc.querySelector("main") ?? doc.body
+        anchor.insertAdjacentHTML("beforeend", opts.beforeListHtml)
+      }
+    }
+
+    if (opts.stripEmptyLists) {
+      for (const el of Array.from(
+        doc.querySelectorAll('[data-content-type="dynamic-articles"]')
+      )) {
+        if (el.childElementCount === 0) el.remove()
+      }
+    }
+
+    if (opts.afterBodyHtml) {
+      const bodyEl = doc.querySelector('[data-content="article-body"]')
+      if (bodyEl) bodyEl.insertAdjacentHTML("afterend", opts.afterBodyHtml)
+    }
+
+    renderedHtml = dom.serialize()
+  }
+
+  return renderedHtml
+}
+
 export async function renderBlogTheme(
   dynamicData: DynamicData
 ): Promise<Response> {
   try {
-    const activeTheme = await getActiveTheme()
-
-    if (!activeTheme) {
-      return new Response(blogNotConfiguredHtml, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      })
-    }
-
     const pageType = resolvePageType(dynamicData)
-    const page = activeTheme.pages.find((p) => p.type === pageType)
-    if (!page) {
+    const html = await renderThemePage(pageType, dynamicData)
+    if (html === null) {
       return new Response(blogNotConfiguredHtml, {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       })
     }
-
-    const siteConfig = await getSiteConfig()
-    const reusableTexts = await getReusableTexts()
-    const contentConfig: ContentConfig =
-      pageContentConfig(activeTheme, pageType) ?? {}
-
-const mergedHtml = mergeThemePage(activeTheme.layoutHtml, page.html, {
-      navClearance: pageType !== "home",
-    })
-
-    const renderedHtml = renderContent(
-      mergedHtml,
-      contentConfig,
-      dynamicData,
-      siteConfig,
-      { pageSpecific: true },
-      reusableTexts
-    )
-
-    return new Response(renderedHtml, {
+    return new Response(html, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     })
   } catch (error) {

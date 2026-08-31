@@ -31,6 +31,7 @@ interface CreateRequest {
   published?: boolean
   categoryId?: string | null
   tagIds?: string[]
+  collectionIds?: string[]
 }
 
 export async function POST(request: Request) {
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
       published: body.published,
       categoryId: body.categoryId,
       tagIds: body.tagIds,
+      collectionIds: body.collectionIds,
     })
     return Response.json(article, { status: 201 })
   } catch (error) {

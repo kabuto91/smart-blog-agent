@@ -28,6 +28,7 @@ interface PatchRequest {
   published?: boolean
   categoryId?: string | null
   tagIds?: string[]
+  collectionIds?: string[]
 }
 
 export async function PATCH(
@@ -46,6 +47,7 @@ export async function PATCH(
       published: body.published,
       categoryId: body.categoryId,
       tagIds: body.tagIds,
+      collectionIds: body.collectionIds,
     })
     if (!article) {
       return Response.json({ error: "文章不存在" }, { status: 404 })

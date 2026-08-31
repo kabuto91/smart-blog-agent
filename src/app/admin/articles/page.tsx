@@ -22,11 +22,13 @@ import type {
   CategoryListItem,
   TagListItem,
 } from "@/lib/articles"
+import type { CollectionListItem } from "@/lib/collections"
 
 export default function ArticlesPage() {
   const [articles, setArticles] = useState<ArticleListItem[]>([])
   const [categories, setCategories] = useState<CategoryListItem[]>([])
   const [tags, setTags] = useState<TagListItem[]>([])
+  const [collections, setCollections] = useState<CollectionListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingArticle, setEditingArticle] = useState<ArticleListItem | null>(null)
@@ -46,15 +48,16 @@ export default function ArticlesPage() {
       fetch("/api/articles"),
       fetch("/api/categories"),
       fetch("/api/tags"),
+      fetch("/api/collections"),
     ])
       .then(async (res) => {
-        const [articlesData, categoriesData, tagsData] = await Promise.all(
-          res.map((r) => r.json())
-        )
+        const [articlesData, categoriesData, tagsData, collectionsData] =
+          await Promise.all(res.map((r) => r.json()))
         if (cancelled) return
         setArticles(articlesData)
         setCategories(categoriesData)
         setTags(tagsData)
+        setCollections(collectionsData)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -426,8 +429,10 @@ export default function ArticlesPage() {
         article={editingArticle}
         categories={categories}
         tags={tags}
+        collections={collections}
         onSaved={handleSaved}
         onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
+        onCollectionCreated={(c) => setCollections((prev) => [...prev, c])}
       />
 
       {/* Meta manager */}

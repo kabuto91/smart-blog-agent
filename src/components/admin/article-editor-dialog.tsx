@@ -26,7 +26,12 @@ import {
   Sparkles,
 } from "lucide-react"
 import { ArticleGenerateDialog } from "./article-generate-dialog"
-import type { ArticleListItem, CategoryListItem, TagListItem } from "@/lib/articles"
+import type {
+  ArticleListItem,
+  CategoryListItem,
+  TagListItem,
+} from "@/lib/articles"
+import type { CollectionListItem } from "@/lib/collections"
 
 interface ArticleEditorDialogProps {
   open: boolean
@@ -34,8 +39,10 @@ interface ArticleEditorDialogProps {
   article: ArticleListItem | null
   categories: CategoryListItem[]
   tags: TagListItem[]
+  collections: CollectionListItem[]
   onSaved: (article: ArticleListItem) => void
   onTagCreated?: (tag: TagListItem) => void
+  onCollectionCreated?: (collection: CollectionListItem) => void
 }
 
 function highlightMarkdown(code: string) {
@@ -97,8 +104,10 @@ export function ArticleEditorDialog({
   article,
   categories,
   tags,
+  collections,
   onSaved,
   onTagCreated,
+  onCollectionCreated,
 }: ArticleEditorDialogProps) {
   const [title, setTitle] = useState(article?.title ?? "")
   const [slug, setSlug] = useState(article?.slug ?? "")
@@ -108,12 +117,17 @@ export function ArticleEditorDialog({
   const [published, setPublished] = useState(article?.published ?? false)
   const [categoryId, setCategoryId] = useState<string>(article?.category?.id ?? "")
   const [tagIds, setTagIds] = useState<string[]>(article?.tags.map((t) => t.id) ?? [])
+  const [collectionIds, setCollectionIds] = useState<string[]>(
+    article?.collections.map((c) => c.id) ?? []
+  )
   const [uploading, setUploading] = useState(false)
   const [coverUploading, setCoverUploading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
   const [newTagName, setNewTagName] = useState("")
   const [addingTag, setAddingTag] = useState(false)
+  const [newCollectionName, setNewCollectionName] = useState("")
+  const [addingCollection, setAddingCollection] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
@@ -136,6 +150,35 @@ export function ArticleEditorDialog({
     setTagIds((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
     )
+  }
+
+  function toggleCollection(id: string) {
+    setCollectionIds((prev) =>
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]
+    )
+  }
+
+  async function handleAddCollection() {
+    const name = newCollectionName.trim()
+    if (!name) return
+    setAddingCollection(true)
+    setError("")
+    try {
+      const res = await fetch("/api/collections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "创建合集失败")
+      setNewCollectionName("")
+      setCollectionIds((prev) => [...prev, data.id])
+      onCollectionCreated?.(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建合集失败")
+    } finally {
+      setAddingCollection(false)
+    }
   }
 
   async function handleAddTag() {
@@ -254,6 +297,7 @@ export function ArticleEditorDialog({
         published,
         categoryId: categoryId || null,
         tagIds,
+        collectionIds,
       }
       const url = article ? `/api/articles/${article.id}` : "/api/articles"
       const res = await fetch(url, {
@@ -496,6 +540,88 @@ export function ArticleEditorDialog({
                   </div>
                 ) : (
                   <p className="text-xs text-[#6B7280]/60">暂无标签，可点击右上角新建</p>
+                )}
+              </div>
+              <div className="sm:col-span-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs font-medium text-[#6B7280]">
+                    合集（点击切换，可多选）
+                  </label>
+                  {!addingCollection ? (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setAddingCollection(true)}
+                      className="gap-0.5 text-[#E5A83D] hover:text-[#D4A035]"
+                    >
+                      <Plus className="size-3" />
+                      新建合集
+                    </Button>
+                  ) : (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={newCollectionName}
+                        onChange={(e) => setNewCollectionName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault()
+                            handleAddCollection()
+                          }
+                        }}
+                        placeholder="合集名称"
+                        className="h-6 w-32 px-2 text-xs"
+                        autoFocus
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={handleAddCollection}
+                        disabled={addingCollection}
+                        className="text-[#E5A83D] hover:text-[#D4A035]"
+                      >
+                        {addingCollection ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          <Plus className="size-3" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => {
+                          setAddingCollection(false)
+                          setNewCollectionName("")
+                        }}
+                      >
+                        <X className="size-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {collections.length > 0 || collectionIds.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {collections.map((c) => {
+                      const selected = collectionIds.includes(c.id)
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => toggleCollection(c.id)}
+                          className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+                            selected
+                              ? "border-[#E5A83D] bg-[#E5A83D] text-[#181A1E]"
+                              : "border-black/[0.08] bg-white text-[#6B7280] hover:border-[#E5A83D]/40"
+                          }`}
+                        >
+                          {c.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[#6B7280]/60">
+                    暂无合集，可点击右上角新建
+                  </p>
                 )}
               </div>
             </div>

@@ -14,6 +14,12 @@ export interface TagMeta {
   slug: string
 }
 
+export interface CollectionMeta {
+  id: string
+  name: string
+  slug: string
+}
+
 export interface ArticleListItem {
   id: string
   title: string
@@ -24,6 +30,7 @@ export interface ArticleListItem {
   published: boolean
   category: CategoryMeta | null
   tags: TagMeta[]
+  collections: CollectionMeta[]
   createdAt: Date
   updatedAt: Date
 }
@@ -51,6 +58,7 @@ export interface ArticleInput {
   published?: boolean
   categoryId?: string | null
   tagIds?: string[]
+  collectionIds?: string[]
 }
 
 export interface ArticleFilters {
@@ -87,9 +95,10 @@ function buildArticleWhere(filters: ArticleFilters): Prisma.ArticleWhereInput {
   return where
 }
 
-const ARTICLE_INCLUDE = {
+export const ARTICLE_INCLUDE = {
   category: true,
   tags: { include: { tag: true } },
+  collections: { include: { collection: true }, orderBy: { position: "asc" } },
 } satisfies Prisma.ArticleInclude
 
 export type ArticleRow = Prisma.ArticleGetPayload<{ include: typeof ARTICLE_INCLUDE }>
@@ -98,7 +107,7 @@ function mapCategory(c: CategoryMeta | null): CategoryMeta | null {
   return c ? { id: c.id, name: c.name, slug: c.slug } : null
 }
 
-function mapArticle(row: ArticleRow): ArticleListItem {
+export function mapArticle(row: ArticleRow): ArticleListItem {
   return {
     id: row.id,
     title: row.title,
@@ -112,6 +121,11 @@ function mapArticle(row: ArticleRow): ArticleListItem {
       id: at.tag.id,
       name: at.tag.name,
       slug: at.tag.slug,
+    })),
+    collections: row.collections.map((ac) => ({
+      id: ac.collection.id,
+      name: ac.collection.name,
+      slug: ac.collection.slug,
     })),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -250,6 +264,17 @@ export async function createArticle(input: ArticleInput): Promise<ArticleListIte
     },
     include: ARTICLE_INCLUDE,
   })
+
+  if (input.collectionIds?.length) {
+    await prisma.articleCollection.createMany({
+      data: input.collectionIds.map((collectionId, i) => ({
+        articleId: row.id,
+        collectionId,
+        position: i,
+      })),
+    })
+  }
+
   await refreshArticleCount()
   return mapArticle(row)
 }
@@ -287,6 +312,19 @@ export async function updateArticle(
     if (input.tagIds.length > 0) {
       await prisma.articleTag.createMany({
         data: input.tagIds.map((tagId) => ({ articleId: id, tagId })),
+      })
+    }
+  }
+
+  if (input.collectionIds !== undefined) {
+    await prisma.articleCollection.deleteMany({ where: { articleId: id } })
+    if (input.collectionIds.length > 0) {
+      await prisma.articleCollection.createMany({
+        data: input.collectionIds.map((collectionId, i) => ({
+          articleId: id,
+          collectionId,
+          position: i,
+        })),
       })
     }
   }
