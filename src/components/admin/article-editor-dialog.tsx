@@ -14,7 +14,18 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, ImagePlus, Info, Plus, Upload, X } from "lucide-react"
+import {
+  Loader2,
+  ImagePlus,
+  Info,
+  Plus,
+  Upload,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Sparkles,
+} from "lucide-react"
+import { ArticleGenerateDialog } from "./article-generate-dialog"
 import type { ArticleListItem, CategoryListItem, TagListItem } from "@/lib/articles"
 
 interface ArticleEditorDialogProps {
@@ -107,6 +118,9 @@ export function ArticleEditorDialog({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
   const editorTouchedRef = useRef(false)
+  // 新建文章默认展开元信息；编辑已有文章默认折叠，让正文编辑区获得最大空间
+  const [metaOpen, setMetaOpen] = useState(() => !article?.id)
+  const [generateOpen, setGenerateOpen] = useState(false)
 
   const previewHtml = useMemo(
     () => (open ? (marked.parse(content, { async: false }) as string) : ""),
@@ -259,8 +273,9 @@ export function ArticleEditorDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPortal>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogPortal>
         <DialogOverlay />
         <DialogContent
           className="sm:max-w-6xl lg:max-w-7xl"
@@ -271,8 +286,28 @@ export function ArticleEditorDialog({
           </DialogTitle>
 
           <div className="flex max-h-[78vh] flex-col gap-4">
-            {/* Metadata */}
-            <div className="grid grid-cols-1 gap-3 rounded-lg border border-black/[0.06] bg-white p-4 sm:grid-cols-2">
+            {/* Scrollable middle: metadata + editor + hints */}
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
+              {/* Collapsible metadata */}
+              <div className="rounded-lg border border-black/[0.06] bg-white">
+                <button
+                  type="button"
+                  onClick={() => setMetaOpen((v) => !v)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-left"
+                >
+                  <span className="text-sm font-medium text-[#1C1C1E]">文章信息</span>
+                  <span className="flex items-center gap-1 text-xs text-[#6B7280]">
+                    {metaOpen ? "点击折叠" : "点击展开"}
+                    {metaOpen ? (
+                      <ChevronDown className="size-3.5" />
+                    ) : (
+                      <ChevronRight className="size-3.5" />
+                    )}
+                  </span>
+                </button>
+                {metaOpen && (
+                  <div className="max-h-[40vh] overflow-y-auto border-t border-black/[0.06] p-4">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-medium text-[#6B7280]">
                   标题
@@ -464,27 +499,41 @@ export function ArticleEditorDialog({
                 )}
               </div>
             </div>
+            </div>
+            )}
+            </div>
 
             {/* Editor split */}
-            <div className="flex min-h-0 flex-1 gap-4">
+            <div className="flex min-h-[32vh] flex-1 gap-4">
               {/* Left: code editor */}
               <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-black/[0.06] bg-white">
                 <div className="flex items-center justify-between border-b border-black/[0.06] bg-[#F5F4F1] px-3 py-1.5">
                   <span className="text-xs text-[#6B7280]">Markdown 源码</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
-                    className="h-6 gap-1 text-xs text-[#E5A83D] hover:text-[#D4A035]"
-                  >
-                    {uploading ? (
-                      <Loader2 className="size-3 animate-spin" />
-                    ) : (
-                      <ImagePlus className="size-3" />
-                    )}
-                    上传图片
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setGenerateOpen(true)}
+                      className="h-6 gap-1 text-xs text-[#E5A83D] hover:text-[#D4A035]"
+                    >
+                      <Sparkles className="size-3" />
+                      AI 生成正文
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="h-6 gap-1 text-xs text-[#E5A83D] hover:text-[#D4A035]"
+                    >
+                      {uploading ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <ImagePlus className="size-3" />
+                      )}
+                      上传图片
+                    </Button>
+                  </div>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -539,6 +588,7 @@ export function ArticleEditorDialog({
               <Info className="mt-0.5 size-3 shrink-0" />
               支持 GitHub 风格 markdown；上传的图片会以 markdown 语法插入光标处（编辑器未聚焦时追加到末尾）
             </p>
+            </div>
 
             {error && <p className="text-sm text-red-500">{error}</p>}
 
@@ -575,5 +625,21 @@ export function ArticleEditorDialog({
         </DialogContent>
       </DialogPortal>
     </Dialog>
+
+    <ArticleGenerateDialog
+      open={generateOpen}
+      onOpenChange={setGenerateOpen}
+      title={title}
+      content={content}
+      onApply={({ content: nextContent, title: nextTitle, excerpt: nextExcerpt }) => {
+        setContent(nextContent)
+        if (nextTitle) {
+          setTitle(nextTitle)
+          if (!slug) setSlug(localSlugify(nextTitle))
+        }
+        if (nextExcerpt) setExcerpt(nextExcerpt)
+      }}
+    />
+    </>
   )
 }

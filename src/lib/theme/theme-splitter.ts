@@ -4,6 +4,7 @@ import {
   pruneHomeSections,
   pruneDetailPage,
 } from "./content-renderer"
+import { stripRedundantFragmentWrappers } from "./layout-inject"
 
 export type BuiltinPageType = "home" | "list" | "detail"
 
@@ -159,16 +160,12 @@ export function mergeThemePage(
     else doc.body.appendChild(host)
   }
 
-  host.innerHTML = pageHtml
-  // 去嵌套：页面片段若自带 data-page-host 宿主包裹（生成器把它也写进正文，常伴随
-  // 重复的 main.page-content 布局主干），会在布局 host 内再包一层 host，导致
-  // margin-left/padding 双重作用造成排版错乱。此处把该冗余包裹解包，让片段子内容
-  // 直接落到布局 host 下。
+  host.innerHTML = stripRedundantFragmentWrappers(pageHtml)
   const injectedRoot = host.firstElementChild
   if (
     injectedRoot &&
     host.children.length === 1 &&
-    injectedRoot.hasAttribute?.("data-page-host")
+    isRedundantPageWrapper(injectedRoot)
   ) {
     while (injectedRoot.firstChild) {
       host.insertBefore(injectedRoot.firstChild, injectedRoot)
@@ -183,6 +180,37 @@ export function mergeThemePage(
   }
 
   return dom.serialize()
+}
+
+/**
+ * 判定注入的正文片段单一根节点是否是"冗余页面容器"——即布局本身已提供、却再次出现在
+ * 片段根部的包裹（<main class="page-content"> / <div class="page-content"> / data-page-host 宿主）。
+ * 这类容器会与布局重复叠加 margin-left（侧边栏偏移）或 padding，造成排版错乱。
+ * 只有满足以下条件才视为冗余，避免误伤片段内合法使用的 page-content 子容器：
+ * 1. 根节点自身带 data-page-host，或
+ * 2. 根节点是 page-content 类容器，且布局中确实存在包裹 host 的 page-content/main 容器。
+ */
+function isRedundantPageWrapper(el: Element): boolean {
+  if (el.hasAttribute("data-page-host")) return true
+  const cls = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
+  const isPageContentLike = /(^|_|-)(page-content|page|main|content)(_|-|$)/i.test(
+    cls.join(" ")
+  )
+  if (!isPageContentLike) return false
+  // 布局中需确实存在与片段根同类的 page-content/main 容器，才能判定为重复包裹
+  const doc = el.ownerDocument
+  const host = doc.querySelector<HTMLElement>("[data-page-host]")
+  if (!host) return false
+  const container = host.parentElement
+  if (!container) return false
+  const containerCls = (container.getAttribute("class") ?? "").toLowerCase()
+  const containerTag = container.tagName.toLowerCase()
+  return (
+    containerTag === "main" ||
+    containerTag === "div" ||
+    containerCls.includes("page-content") ||
+    containerCls.includes("content")
+  )
 }
 
 /**
@@ -445,7 +473,9 @@ function buildPageBody(fullHtml: string, type: BuiltinPageType): string {
 
   const bodyEl = doc.body
   const html = bodyEl.innerHTML
-  return stripLayout(html)
+  // 剥离片段顶部的冗余包裹（data-page-host / .page-content），使新版片段不再携带
+  // 布局已提供的容器，从源头避免与布局 .page-content 叠加侧栏偏移。
+  return stripRedundantFragmentWrappers(stripLayout(html))
 }
 
 /** 移除导航/页脚等共享布局元素，仅保留正文。 */

@@ -1,0 +1,1348 @@
+<!DOCTYPE html><html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blog</title>
+<style>
+:root {
+  /* ── Palette: Soft Sci-Fi / Morandi ── */
+  --c-bg: #141720;
+  --c-bg-alt: #181c26;
+  --c-surface: #1d222e;
+  --c-surface-hover: #242a38;
+  --c-border: #282e3e;
+  --c-border-glow: #3a4259;
+
+  --c-primary: #7b8c9f;
+  --c-primary-light: #9baabf;
+  --c-primary-dark: #586778;
+
+  --c-accent: #9c8bb5;
+  --c-accent-light: #bbaed1;
+  --c-accent-glow: rgba(156, 139, 181, 0.22);
+  --c-accent-subtle: rgba(156, 139, 181, 0.07);
+
+  --c-silver: #cdd4df;
+  --c-text: #c4cbd8;
+  --c-text-muted: #8892a4;
+  --c-text-dim: #565f73;
+
+  /* ── Typography ── */
+  --f-display: "SF Pro Display", "Helvetica Neue", "Outfit", "Montserrat", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --f-body: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --f-mono: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+
+  --fs-hero: clamp(2.8rem, 5.5vw, 4.5rem);
+  --fs-h1: clamp(1.9rem, 3.5vw, 3rem);
+  --fs-h2: clamp(1.4rem, 2.4vw, 1.9rem);
+  --fs-h3: 1.2rem;
+  --fs-body: 0.92rem;
+  --fs-small: 0.82rem;
+  --fs-tiny: 0.72rem;
+
+  --lh-tight: 1.15;
+  --lh-body: 1.7;
+
+  /* ── Spacing (compact) ── */
+  --sp-xs: 6px;
+  --sp-sm: 12px;
+  --sp-md: 20px;
+  --sp-lg: 28px;
+  --sp-xl: 36px;
+
+  /* ── Layout ── */
+  --nav-h: 0px;
+  --nav-w: 256px;
+  --content-max: 1100px;
+
+  /* ── Effects ── */
+  --radius: 6px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.25);
+  --shadow: 0 8px 24px rgba(0,0,0,0.3);
+  --shadow-glow: 0 0 20px var(--c-accent-glow);
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Reset & Base ── */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--f-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--c-text);
+  background: var(--c-bg);
+  min-height: 100vh;
+  overflow-x: hidden;
+  padding-top: var(--nav-h);
+}
+
+/* ── Ambient Background Texture ── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 50% at 15% 20%, rgba(156,139,181,0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 60% at 85% 85%, rgba(123,140,159,0.04) 0%, transparent 50%),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 80px,
+      rgba(156,139,181,0.012) 80px,
+      rgba(156,139,181,0.012) 81px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 80px,
+      rgba(156,139,181,0.012) 80px,
+      rgba(156,139,181,0.012) 81px
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+
+a { color: var(--c-primary-light); text-decoration: none; transition: color var(--transition); }
+a:hover { color: var(--c-accent-light); }
+
+/* ══════════════════════════════════════
+   NAVIGATION — Left Vertical Sidebar
+   ══════════════════════════════════════ */
+.site-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--nav-w);
+  height: 100vh;
+  background: var(--c-bg-alt);
+  border-right: 1px solid var(--c-border);
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.site-nav::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--c-accent-glow) 40%,
+    var(--c-accent-glow) 60%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* ── Nav Brand ── */
+.nav-brand {
+  padding: var(--sp-lg) var(--sp-md);
+  border-bottom: 1px solid var(--c-border);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-shrink: 0;
+}
+
+.nav-brand .avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  border: 1.5px solid var(--c-border-glow);
+  background: var(--c-surface);
+}
+
+.nav-brand .avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nav-brand-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.nav-brand-title {
+  font-family: var(--f-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--c-silver);
+  letter-spacing: -0.02em;
+  line-height: var(--lh-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-brand-sub {
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 3px;
+  font-weight: 500;
+}
+
+/* ── Nav Links ── */
+.nav-links {
+  flex: 1;
+  padding: var(--sp-md) 0;
+}
+
+.nav-links .nav-list {
+  list-style: none;
+}
+
+.nav-links .nav-item {
+  margin: 0;
+}
+
+.nav-links .nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: 10px var(--sp-md);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  color: var(--c-text-muted);
+  letter-spacing: 0.02em;
+  transition: all var(--transition);
+  position: relative;
+  border-left: 2px solid transparent;
+}
+
+.nav-links .nav-link::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--c-text-dim);
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.nav-links .nav-link:hover {
+  color: var(--c-text);
+  background: var(--c-accent-subtle);
+  border-left-color: var(--c-accent);
+}
+
+.nav-links .nav-link:hover::before {
+  background: var(--c-accent);
+  box-shadow: 0 0 6px var(--c-accent-glow);
+}
+
+.nav-links .nav-link.active {
+  color: var(--c-accent-light);
+  background: var(--c-accent-subtle);
+  border-left-color: var(--c-accent);
+}
+
+.nav-links .nav-link.active::before {
+  background: var(--c-accent-light);
+  box-shadow: 0 0 8px var(--c-accent-glow);
+}
+
+.nav-section-label {
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: var(--sp-md) var(--sp-md) var(--sp-xs);
+  font-weight: 600;
+}
+
+/* ── Nav Footer ── */
+.nav-footer {
+  padding: var(--sp-md);
+  border-top: 1px solid var(--c-border);
+  flex-shrink: 0;
+}
+
+.nav-footer-text {
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+}
+
+/* ══════════════════════════════════════
+   MAIN CONTENT AREA
+   ══════════════════════════════════════ */
+.page-content {
+  margin-left: var(--nav-w);
+  min-height: 100vh;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Container ── */
+.container, .wrap {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 var(--sp-lg);
+}
+
+/* ── Section ── */
+.section {
+  padding: var(--sp-md) 0;
+}
+
+/* ── Titles ── */
+.page-title {
+  font-family: var(--f-display);
+  font-size: var(--fs-hero);
+  font-weight: 800;
+  line-height: var(--lh-tight);
+  color: var(--c-silver);
+  letter-spacing: -0.03em;
+  margin-bottom: var(--sp-sm);
+}
+
+.page-title .accent {
+  color: var(--c-accent-light);
+  display: inline-block;
+  position: relative;
+}
+
+.section-title {
+  font-family: var(--f-display);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--c-silver);
+  letter-spacing: -0.02em;
+  line-height: var(--lh-tight);
+  margin-bottom: var(--sp-md);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+}
+
+.section-title::before {
+  content: "";
+  width: 3px;
+  height: 0.9em;
+  background: linear-gradient(180deg, var(--c-accent), var(--c-accent-light));
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.post-title {
+  font-family: var(--f-display);
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  color: var(--c-silver);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+  transition: color var(--transition);
+}
+
+.post-title a {
+  color: inherit;
+}
+
+.post-title a:hover {
+  color: var(--c-accent-light);
+}
+
+/* ══════════════════════════════════════
+   POST CARDS & GEOMETRIC THUMBS
+   ══════════════════════════════════════ */
+.post-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--sp-md);
+}
+
+.post-card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  transition: all var(--transition);
+  position: relative;
+}
+
+.post-card:hover {
+  border-color: var(--c-border-glow);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-glow);
+}
+
+.post-card:hover .post-card-thumb-inner {
+  transform: scale(1.04);
+}
+
+/* ── Geometric CSS Art Thumbnails ── */
+.post-card-thumb {
+  height: 130px;
+  overflow: hidden;
+  position: relative;
+  background: var(--c-bg-alt);
+}
+
+.post-card-thumb-inner {
+  width: 100%;
+  height: 100%;
+  transition: transform var(--transition-slow);
+  position: relative;
+}
+
+.post-card-thumb-inner.geo-1 {
+  background:
+    linear-gradient(135deg, rgba(156,139,181,0.25) 0%, transparent 50%),
+    linear-gradient(225deg, rgba(123,140,159,0.15) 0%, transparent 50%),
+    conic-gradient(from 45deg at 70% 60%, var(--c-surface) 0deg, rgba(156,139,181,0.12) 90deg, var(--c-surface) 180deg, rgba(123,140,159,0.08) 270deg, var(--c-surface) 360deg);
+}
+.post-card-thumb-inner.geo-1::before {
+  content: "";
+  position: absolute;
+  width: 70px;
+  height: 70px;
+  border: 1.5px solid rgba(156,139,181,0.2);
+  border-radius: 50%;
+  top: 20%;
+  right: 15%;
+}
+.post-card-thumb-inner.geo-1::after {
+  content: "";
+  position: absolute;
+  width: 35px;
+  height: 35px;
+  background: rgba(156,139,181,0.1);
+  transform: rotate(45deg);
+  bottom: 20%;
+  left: 20%;
+}
+
+.post-card-thumb-inner.geo-2 {
+  background:
+    linear-gradient(60deg, rgba(123,140,159,0.15) 25%, transparent 25%),
+    linear-gradient(-60deg, rgba(156,139,181,0.12) 25%, transparent 25%),
+    linear-gradient(60deg, transparent 75%, rgba(123,140,159,0.12) 75%),
+    linear-gradient(-60deg, transparent 75%, rgba(156,139,181,0.08) 75%);
+  background-size: 40px 70px;
+}
+.post-card-thumb-inner.geo-2::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 30% 50%, rgba(156,139,181,0.15), transparent 60%);
+}
+
+.post-card-thumb-inner.geo-3 {
+  background: var(--c-bg-alt);
+  overflow: hidden;
+}
+.post-card-thumb-inner.geo-3::before {
+  content: "";
+  position: absolute;
+  width: 200%;
+  height: 200%;
+  top: -50%;
+  left: -50%;
+  background:
+    repeating-conic-gradient(
+      rgba(156,139,181,0.05) 0% 25%,
+      transparent 25% 50%
+    );
+  background-size: 30px 30px;
+}
+.post-card-thumb-inner.geo-3::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 30%, var(--c-bg-alt) 70%);
+}
+
+.post-card-thumb-inner.geo-4 {
+  background:
+    linear-gradient(135deg, var(--c-bg-alt) 33%, rgba(156,139,181,0.06) 33%, rgba(156,139,181,0.06) 66%, var(--c-bg-alt) 66%);
+}
+.post-card-thumb-inner.geo-4::before {
+  content: "";
+  position: absolute;
+  width: 50px;
+  height: 50px;
+  border: 1.5px solid rgba(123,140,159,0.2);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.post-card-thumb-inner.geo-4::after {
+  content: "";
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  background: rgba(156,139,181,0.12);
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* ── Card Body ── */
+.post-card-body {
+  padding: var(--sp-md);
+}
+
+.post-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  margin-bottom: var(--sp-xs);
+  letter-spacing: 0.02em;
+}
+
+.post-card-meta .meta-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--c-text-dim);
+}
+
+.post-card-excerpt {
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  line-height: 1.6;
+  margin-top: var(--sp-sm);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.post-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--sp-sm);
+}
+
+/* ══════════════════════════════════════
+   TAGS
+   ══════════════════════════════════════ */
+.tag {
+  display: inline-block;
+  font-size: var(--fs-tiny);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--c-accent-subtle);
+  color: var(--c-accent-light);
+  border: 1px solid rgba(156,139,181,0.15);
+  letter-spacing: 0.03em;
+  transition: all var(--transition);
+}
+
+.tag:hover {
+  background: rgba(156,139,181,0.15);
+  border-color: rgba(156,139,181,0.3);
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+}
+
+/* ══════════════════════════════════════
+   ARTICLE DETAIL
+   ══════════════════════════════════════ */
+.article-header {
+  padding: var(--sp-xl) 0 var(--sp-lg);
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: var(--sp-lg);
+}
+
+.article-header .article-category {
+  font-size: var(--fs-tiny);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--c-accent);
+  font-weight: 600;
+  margin-bottom: var(--sp-sm);
+}
+
+.article-header .post-title {
+  font-size: var(--fs-h1);
+  margin-bottom: var(--sp-md);
+}
+
+.article-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-md);
+  font-size: var(--fs-small);
+  color: var(--c-text-muted);
+  flex-wrap: wrap;
+}
+
+.article-meta .meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.article-meta .meta-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--c-border);
+}
+
+.article-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--c-text);
+  max-width: 700px;
+}
+
+.article-body h2 {
+  font-family: var(--f-display);
+  font-size: var(--fs-h2);
+  font-weight: 700;
+  color: var(--c-silver);
+  margin: var(--sp-xl) 0 var(--sp-md);
+  letter-spacing: -0.02em;
+}
+
+.article-body h3 {
+  font-family: var(--f-display);
+  font-size: var(--fs-h3);
+  font-weight: 600;
+  color: var(--c-silver);
+  margin: var(--sp-lg) 0 var(--sp-sm);
+}
+
+.article-body p {
+  margin-bottom: var(--sp-md);
+}
+
+.article-body blockquote {
+  border-left: 3px solid var(--c-accent);
+  padding: var(--sp-sm) var(--sp-md);
+  margin: var(--sp-md) 0;
+  background: var(--c-accent-subtle);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--c-text-muted);
+}
+
+.article-body code {
+  font-family: var(--f-mono);
+  font-size: 0.85em;
+  background: var(--c-surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--c-border);
+  color: var(--c-accent-light);
+}
+
+.article-body pre {
+  background: var(--c-bg-alt);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  padding: var(--sp-md);
+  overflow-x: auto;
+  margin: var(--sp-md) 0;
+}
+
+.article-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.article-body ul, .article-body ol {
+  padding-left: var(--sp-md);
+  margin-bottom: var(--sp-md);
+}
+
+.article-body li {
+  margin-bottom: var(--sp-xs);
+}
+
+.article-body img {
+  max-width: 100%;
+  border-radius: var(--radius);
+  margin: var(--sp-md) 0;
+}
+
+/* ══════════════════════════════════════
+   SIDEBAR
+   ══════════════════════════════════════ */
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+}
+
+.sidebar-section {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-md);
+  margin-bottom: var(--sp-md);
+}
+
+.sidebar-title {
+  font-family: var(--f-display);
+  font-size: var(--fs-small);
+  font-weight: 700;
+  color: var(--c-silver);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: var(--sp-sm);
+  padding-bottom: var(--sp-xs);
+  border-bottom: 1px solid var(--c-border);
+}
+
+/* ══════════════════════════════════════
+   BUTTONS
+   ══════════════════════════════════════ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border-radius: var(--radius);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-text);
+  cursor: pointer;
+  transition: all var(--transition);
+  text-decoration: none;
+}
+
+.btn:hover {
+  border-color: var(--c-accent);
+  color: var(--c-accent-light);
+  box-shadow: var(--shadow-glow);
+  background: var(--c-surface-hover);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--c-accent), var(--c-primary-dark));
+  border-color: var(--c-accent);
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--c-accent-light), var(--c-accent));
+  color: #fff;
+}
+
+/* ══════════════════════════════════════
+   ARCHIVE LIST
+   ══════════════════════════════════════ */
+.archive-list {
+  list-style: none;
+}
+
+.archive-item {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-md);
+  padding: var(--sp-sm) 0;
+  border-bottom: 1px solid var(--c-border);
+  transition: all var(--transition);
+}
+
+.archive-item:hover {
+  padding-left: var(--sp-sm);
+  border-bottom-color: var(--c-border-glow);
+}
+
+.archive-date {
+  font-family: var(--f-mono);
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.archive-title {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--c-text);
+  transition: color var(--transition);
+}
+
+.archive-item:hover .archive-title {
+  color: var(--c-accent-light);
+}
+
+/* ══════════════════════════════════════
+   LAYOUT WITH SIDEBAR
+   ══════════════════════════════════════ */
+.content-with-sidebar {
+  display: flex;
+  gap: var(--sp-lg);
+  align-items: flex-start;
+}
+
+.content-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ══════════════════════════════════════
+   HERO / BANNER
+   ══════════════════════════════════════ */
+.hero {
+  position: relative;
+  padding: var(--sp-xl) 0;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 50% 80% at 80% 20%, rgba(156,139,181,0.06), transparent),
+    radial-gradient(ellipse 40% 60% at 10% 80%, rgba(123,140,159,0.05), transparent);
+  pointer-events: none;
+}
+
+.hero-decoration {
+  position: absolute;
+  top: 15%;
+  right: 5%;
+  width: 160px;
+  height: 160px;
+  border: 1px solid rgba(156,139,181,0.08);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.hero-decoration::before {
+  content: "";
+  position: absolute;
+  inset: 20px;
+  border: 1px solid rgba(156,139,181,0.06);
+  border-radius: 50%;
+}
+
+.hero-decoration::after {
+  content: "";
+  position: absolute;
+  inset: 45px;
+  border: 1px solid rgba(156,139,181,0.04);
+  border-radius: 50%;
+}
+
+/* ══════════════════════════════════════
+   PAGINATION
+   ══════════════════════════════════════ */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-xs);
+  padding: var(--sp-lg) 0;
+}
+
+.pagination a, .pagination span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: var(--fs-small);
+  border-radius: var(--radius);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-muted);
+  transition: all var(--transition);
+}
+
+.pagination a:hover {
+  border-color: var(--c-accent);
+  color: var(--c-accent-light);
+}
+
+.pagination .active {
+  background: var(--c-accent-subtle);
+  border-color: var(--c-accent);
+  color: var(--c-accent-light);
+}
+
+/* ══════════════════════════════════════
+   FOOTER
+   ══════════════════════════════════════ */
+.site-footer {
+  margin-top: 48px;
+  padding: var(--sp-lg) 0;
+  border-top: 1px solid var(--c-border);
+  position: relative;
+}
+
+.site-footer::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 120px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--c-accent), transparent);
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-md);
+}
+
+.footer-text {
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  letter-spacing: 0.02em;
+}
+
+.footer-nav .nav-list {
+  list-style: none;
+  display: flex;
+  gap: var(--sp-md);
+}
+
+.footer-nav .nav-link {
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  letter-spacing: 0.03em;
+  transition: color var(--transition);
+}
+
+.footer-nav .nav-link:hover {
+  color: var(--c-accent-light);
+}
+
+/* ══════════════════════════════════════
+   STATS BAR
+   ══════════════════════════════════════ */
+.stats-bar {
+  display: flex;
+  gap: var(--sp-lg);
+  padding: var(--sp-md) 0;
+  border-bottom: 1px solid var(--c-border);
+  margin-bottom: var(--sp-md);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-value {
+  font-family: var(--f-display);
+  font-size: var(--fs-h3);
+  font-weight: 700;
+  color: var(--c-silver);
+}
+
+.stat-label {
+  font-size: var(--fs-tiny);
+  color: var(--c-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* ══════════════════════════════════════
+   ANIMATIONS
+   ══════════════════════════════════════ */
+@keyframes fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+[data-page-host] > * {
+  animation: fadeSlideUp 0.4s ease-out both;
+}
+
+/* ══════════════════════════════════════
+   RESPONSIVE
+   ══════════════════════════════════════ */
+@media (max-width: 900px) {
+  :root {
+    --nav-w: 0px;
+  }
+
+  .site-nav {
+    transform: translateX(-100%);
+    transition: transform var(--transition);
+    width: 260px;
+  }
+
+  .site-nav.open {
+    transform: translateX(0);
+  }
+
+  .page-content {
+    margin-left: 0;
+  }
+
+  .content-with-sidebar {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+  }
+
+  .post-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .container, .wrap {
+    padding: 0 var(--sp-md);
+  }
+
+  .hero {
+    padding: var(--sp-lg) 0;
+  }
+
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+</style>
+
+<style data-theme-safety="">/* === theme-safety: 溢出安全兜底，勿手工修改 === */
+html, body { max-width: 100%; overflow-x: clip; }
+[data-page-host] { box-sizing: border-box; max-width: 100%; }
+[data-page-host], [data-page-host] *,
+[data-page-host] *::before, [data-page-host] *::after { box-sizing: border-box; }
+/* 行内/host 子元素最小宽度修正，避免 flex/grid 子项撑破容器。
+   用 :where() 包裹降为 0 特异性，避免覆盖骨架设计系统的限宽容器（max-width 变量等）。 */
+:where([data-page-host] > *, [data-page-host] .container > *,
+  [data-page-host] [class*="grid"] > *, [data-page-host] [class*="list"] > *) { min-width: 0; max-width: 100%; }
+[data-page-host] img, [data-page-host] video, [data-page-host] iframe,
+[data-page-host] canvas, [data-page-host] svg, [data-page-host] table { max-width: 100%; }
+[data-page-host] img { height: auto; }
+[data-page-host] pre { max-width: 100%; overflow-x: auto; }
+[data-page-host] p, [data-page-host] h1, [data-page-host] h2, [data-page-host] h3,
+[data-page-host] h4, [data-page-host] h5, [data-page-host] h6, [data-page-host] li,
+[data-page-host] dd, [data-page-host] a, [data-page-host] td, [data-page-host] th {
+  overflow-wrap: anywhere; word-break: break-word;
+}
+[data-page-host] .article-body,
+[data-page-host] [data-map="body"] { overflow-wrap: anywhere; word-break: break-word; }
+/* 导航链接 li 的兜底：骨架可能生成 div 直接包 li（非法结构），清除 UA 默认圆点标记 */
+:where(nav li, [data-content-type="nav-list"] li) { list-style: none; }
+/* === /theme-safety === */</style></head>
+<body>
+
+<!-- ═══ NAVIGATION ═══ -->
+<nav class="site-nav" data-content="main-nav" data-content-type="nav-list">
+  <div class="nav-brand">
+    <div class="avatar" style="overflow: hidden;">
+      <img data-content="author-avatar" data-content-type="text" src="/api/uploads/36e6410c-8f70-4e6e-bc64-a7399410c686" alt="作者头像" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+    </div>
+    <div class="nav-brand-text">
+      <span class="nav-brand-title" data-content="blog-title" data-content-type="text">深空笔记</span>
+      <span class="nav-brand-sub" data-content="blog-subtitle" data-content-type="text">DEEP SPACE NOTES</span>
+    </div>
+  </div>
+
+  <div class="nav-links">
+    <div class="nav-section-label">导航</div>
+    <ul class="nav-list"><li class="nav-item"><a class="nav-link" href="/blog">首页</a></li><li class="nav-item"><a class="nav-link" href="/blog/archive">归档</a></li></ul>
+
+    <div class="nav-section-label">分类</div>
+    <ul class="nav-list">
+      <li class="nav-item"><a class="nav-link" href="/blog/category/tech">技术</a></li>
+      <li class="nav-item"><a class="nav-link" href="/blog/category/design">设计</a></li>
+      <li class="nav-item"><a class="nav-link" href="/blog/category/thoughts">随想</a></li>
+    </ul>
+
+    <div class="nav-section-label">标签</div>
+    <ul class="nav-list">
+      <li class="nav-item"><a class="nav-link" href="/blog/tag/css">CSS</a></li>
+      <li class="nav-item"><a class="nav-link" href="/blog/tag/javascript">JavaScript</a></li>
+      <li class="nav-item"><a class="nav-link" href="/blog/tag/sci-fi">科幻</a></li>
+    </ul>
+  </div>
+
+  <div class="nav-footer">
+    <p class="nav-footer-text" data-content="site-description" data-content-type="text">探索技术与设计的边界</p>
+  </div>
+</nav>
+
+<!-- ═══ PAGE CONTENT ═══ -->
+<main class="page-content">
+  <div data-page-host="">
+  <div class="page-content">
+    <div class="container">
+      
+      <section class="hero section">
+        <div class="hero-decoration"></div>
+        <h1 class="page-title" data-content="archive-title" data-content-type="text">星图_归档</h1>
+        <p class="post-card-excerpt" data-content="archive-subtitle" data-content-type="text">在代码与文字的星海中，锚定每一次思维的跃迁。追踪时间线上的每一个坐标。</p>
+      </section>
+
+      <div class="content-with-sidebar">
+        <div class="content-main">
+          
+          <section class="section">
+            <h2 class="section-title" data-content="tags-title" data-content-type="text">标签矩阵</h2>
+            <div class="tag-list" data-content="tag-cloud" data-content-type="dynamic-tags">
+              
+            <a href="/blog/tag/next-js" class="tag" data-map="link"><span data-map="name">Next.js</span></a><a href="/blog/tag/入门" class="tag" data-map="link"><span data-map="name">入门</span></a><a href="/blog/tag/工程化" class="tag" data-map="link"><span data-map="name">工程化</span></a><a href="/blog/tag/性能优化" class="tag" data-map="link"><span data-map="name">性能优化</span></a><a href="/blog/tag/css" class="tag" data-map="link"><span data-map="name">CSS</span></a><a href="/blog/tag/typescript" class="tag" data-map="link"><span data-map="name">TypeScript</span></a><a href="/blog/tag/架构" class="tag" data-map="link"><span data-map="name">架构</span></a><a href="/blog/tag/数据库" class="tag" data-map="link"><span data-map="name">数据库</span></a></div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title" data-content="articles-title" data-content-type="text">近期跃迁记录</h2>
+            <div class="post-grid" data-content="article-list" data-content-type="dynamic-articles">
+              
+            <article class="post-card">
+                <a href="/blog/开源项目的社区运营-39" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/开源项目的社区运营-39" data-map="link"><span data-map="title">开源项目的社区运营</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt">开源项目的社区运营 保持内容精简、要点清晰，是技术写作的核心追求。本文围绕主题给出几条可直接落地的建议。 明确读者画像 给出可运行的示例 补充延伸阅读材料 本文为演示内容第 39 篇</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/远程协作与异步沟通-38" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/远程协作与异步沟通-38" data-map="link"><span data-map="title">远程协作与异步沟通</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 远程协作与异步沟通 这篇文章尝试把复杂概念拆解成简单易懂的步骤。 js const result = await runPipeline(input) console.log(result) 结尾 看完之后欢迎在评论区交流。 本文为演示内</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/rgba-颜色模型解析-36" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/rgba-颜色模型解析-36" data-map="link"><span data-map="title">RGBA 颜色模型解析</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> RGBA 颜色模型解析 保持内容精简、要点清晰，是技术写作的核心追求。本文围绕主题给出几条可直接落地的建议。 明确读者画像 给出可运行的示例 补充延伸阅读材料 本文为演示内容第 36 篇</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/浏览器渲染流水线概述-35" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/浏览器渲染流水线概述-35" data-map="link"><span data-map="title">浏览器渲染流水线概述</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 浏览器渲染流水线概述 这篇文章尝试把复杂概念拆解成简单易懂的步骤。 js const result = await runPipeline(input) console.log(result) 结尾 看完之后欢迎在评论区交流。 本文为演示</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/tauri-与桌面端开发-33" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/tauri-与桌面端开发-33" data-map="link"><span data-map="title">Tauri 与桌面端开发</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> Tauri 与桌面端开发 保持内容精简、要点清晰，是技术写作的核心追求。本文围绕主题给出几条可直接落地的建议。 明确读者画像 给出可运行的示例 补充延伸阅读材料 本文为演示内容第 33 篇</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/数据可视化图表选型-32" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/数据可视化图表选型-32" data-map="link"><span data-map="title">数据可视化图表选型</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 数据可视化图表选型 这篇文章尝试把复杂概念拆解成简单易懂的步骤。 js const result = await runPipeline(input) console.log(result) 结尾 看完之后欢迎在评论区交流。 本文为演示内</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/设计系统中的色彩规范-30" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/设计系统中的色彩规范-30" data-map="link"><span data-map="title">设计系统中的色彩规范</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 设计系统中的色彩规范 保持内容精简、要点清晰，是技术写作的核心追求。本文围绕主题给出几条可直接落地的建议。 明确读者画像 给出可运行的示例 补充延伸阅读材料 本文为演示内容第 30 篇</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/微前端架构模式梳理-29" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/微前端架构模式梳理-29" data-map="link"><span data-map="title">微前端架构模式梳理</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 微前端架构模式梳理 这篇文章尝试把复杂概念拆解成简单易懂的步骤。 js const result = await runPipeline(input) console.log(result) 结尾 看完之后欢迎在评论区交流。 本文为演示内</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/常见-vue-组件复用陷阱-27" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/常见-vue-组件复用陷阱-27" data-map="link"><span data-map="title">常见 Vue 组件复用陷阱</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 常见 Vue 组件复用陷阱 保持内容精简、要点清晰，是技术写作的核心追求。本文围绕主题给出几条可直接落地的建议。 明确读者画像 给出可运行的示例 补充延伸阅读材料 本文为演示内容第 27 篇</p>
+                </div>
+              </article><article class="post-card">
+                <a href="/blog/响应式设计的断点策略-26" class="post-card-thumb" data-map="link">
+                  
+                </a>
+                <div class="post-card-body">
+                  <div class="post-card-meta">
+                    <span data-map="date">2026-08-09</span>
+                    <span class="meta-dot"></span>
+                    <span data-map="category">教程</span>
+                  </div>
+                  <h3 class="post-title"><a href="/blog/响应式设计的断点策略-26" data-map="link"><span data-map="title">响应式设计的断点策略</span></a></h3>
+                  <p class="post-card-excerpt" data-map="excerpt"> 响应式设计的断点策略 这篇文章尝试把复杂概念拆解成简单易懂的步骤。 js const result = await runPipeline(input) console.log(result) 结尾 看完之后欢迎在评论区交流。 本文为演示</p>
+                </div>
+              </article><nav style="display:flex;gap:0.375rem;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:1.5rem;"><a href="/blog/archive" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;color:#9CA3AF;pointer-events:none;">上一页</a><a href="/blog/archive" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;background:#E5A83D;border-color:#E5A83D;color:#181A1E;font-weight:600;">1</a><a href="/blog/archive?page=2" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;">2</a><a href="/blog/archive?page=3" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;">3</a><a href="/blog/archive?page=2" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;">下一页</a></nav></div>
+          </section>
+
+        </div>
+
+        <aside class="sidebar">
+          <div class="sidebar-section">
+            <h3 class="sidebar-title" data-content="author-title" data-content-type="text">观测者</h3>
+            <div class="avatar" style="overflow: hidden;">
+              <img data-map="author-avatar" src="/api/uploads/36e6410c-8f70-4e6e-bc64-a7399410c686" alt="avatar" style="width: 100%; height: 100%; object-fit: cover; display: block;">
+            </div>
+            <p data-content="author-name" data-content-type="text">作者名</p>
+            <p data-content="author-bio" data-content-type="text">作者简介</p>
+          </div>
+          
+          <div class="sidebar-section">
+            <h3 class="sidebar-title" data-content="stats-title" data-content-type="text">星图统计</h3>
+            <div class="stats-bar">
+              <div class="stat-item">
+                <div class="stat-value" data-content="stat-articles" data-content-type="text">0</div>
+                <div class="stat-label" data-content="stat-articles-label" data-content-type="text">文章</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value" data-content="stat-views" data-content-type="text">0</div>
+                <div class="stat-label" data-content="stat-views-label" data-content-type="text">访问</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-section">
+            <h3 class="sidebar-title" data-content="timeline-title" data-content-type="text">时间线</h3>
+            <ul class="archive-list" data-content="archive-list" data-content-type="dynamic-articles">
+              
+            <li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/开源项目的社区运营-39" class="archive-title" data-map="link"><span data-map="title">开源项目的社区运营</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/远程协作与异步沟通-38" class="archive-title" data-map="link"><span data-map="title">远程协作与异步沟通</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/rgba-颜色模型解析-36" class="archive-title" data-map="link"><span data-map="title">RGBA 颜色模型解析</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/浏览器渲染流水线概述-35" class="archive-title" data-map="link"><span data-map="title">浏览器渲染流水线概述</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/tauri-与桌面端开发-33" class="archive-title" data-map="link"><span data-map="title">Tauri 与桌面端开发</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/数据可视化图表选型-32" class="archive-title" data-map="link"><span data-map="title">数据可视化图表选型</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/设计系统中的色彩规范-30" class="archive-title" data-map="link"><span data-map="title">设计系统中的色彩规范</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/微前端架构模式梳理-29" class="archive-title" data-map="link"><span data-map="title">微前端架构模式梳理</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/常见-vue-组件复用陷阱-27" class="archive-title" data-map="link"><span data-map="title">常见 Vue 组件复用陷阱</span></a>
+              </li><li class="archive-item">
+                <span class="archive-date" data-map="date">2026-08-09</span>
+                <a href="/blog/响应式设计的断点策略-26" class="archive-title" data-map="link"><span data-map="title">响应式设计的断点策略</span></a>
+              </li><nav style="display:flex;gap:0.375rem;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:1.5rem;"><a href="/blog/archive" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;color:#9CA3AF;pointer-events:none;">上一页</a><a href="/blog/archive" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;background:#E5A83D;border-color:#E5A83D;color:#181A1E;font-weight:600;">1</a><a href="/blog/archive?page=2" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;">2</a><a href="/blog/archive?page=3" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;">3</a><a href="/blog/archive?page=2" style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;">下一页</a></nav></ul>
+          </div>
+        </aside>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-inner">
+        <p class="footer-text" data-content="copyright" data-content-type="text">版权声明</p>
+        <nav class="footer-nav" data-content="footer-nav" data-content-type="nav-list">
+          <ul class="nav-list"><li><a class="nav-link" href="/blog">首页</a></li><li><a class="nav-link" href="/blog/archive">归档</a></li><li><a class="nav-link" href="/blog/category/tech">技术</a></li><li><a class="nav-link" href="/blog/tag/css">CSS</a></li></ul>
+        </nav>
+      </div>
+    </div>
+  </footer>
+</main>
+
+
+<script data-theme-nav-measure="">(function(){var sync=function(){var els=document.querySelectorAll('nav[data-content="main-nav"], nav, header');var h=0;for(var i=0;i<els.length;i++){var el=els[i];if(window.getComputedStyle(el).position!=='fixed'){continue;}var r=el.getBoundingClientRect();if(r.height>0&&r.width>0&&r.height>=(window.innerHeight||r.height)*0.5){continue;}h=r.height;break;}document.documentElement.style.setProperty('--nav-h',h+'px');};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();</script></body></html>

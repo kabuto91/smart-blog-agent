@@ -8,7 +8,7 @@ import {
   validatePageFragment,
   normalizeThemeSpacing,
 } from "@/lib/theme/theme-splitter"
-import { injectPageIntoLayout } from "@/lib/theme/layout-inject"
+import { injectPageIntoLayout, stripRedundantFragmentWrappers } from "@/lib/theme/layout-inject"
 
 const LAYOUT = `<!DOCTYPE html>
 <html>
@@ -169,6 +169,61 @@ describe("mergeThemePage / injectPageIntoLayout", () => {
     const merged = injectPageIntoLayout(noHost, "<p>注入</p>")
     expect(merged).toContain("注入")
     expect(merged.indexOf("注入")).toBeLessThan(merged.indexOf("<footer>"))
+  })
+})
+
+describe("stripRedundantFragmentWrappers", () => {
+  it("剥离线外层 data-page-host 与嵌套的 page-content 包裹（列表/详情形态）", () => {
+    const frag = `<div data-page-host="">
+  <div class="page-content">
+    <div class="container"><h1>标题</h1><p>正文</p></div>
+  </div>
+</div>`
+    const out = stripRedundantFragmentWrappers(frag)
+    expect(out).not.toContain("data-page-host")
+    expect(out).not.toContain('class="page-content"')
+    expect(out).toContain('class="container"')
+    // 内容保留
+    expect(out).toContain("<h1>标题</h1>")
+    // 结构应变为 container 直接作为根
+    expect(out.startsWith('<div class="container">')).toBe(true)
+  })
+
+  it("剥离 <main class=\"page-content\" data-page-host> 首页形态", () => {
+    const frag = `<main class="page-content" data-page-host="">
+  <section class="hero"><h1>首页标题</h1></section>
+  <div class="container"><p>列表</p></div>
+</main>`
+    const out = stripRedundantFragmentWrappers(frag)
+    expect(out).not.toContain("data-page-host")
+    expect(out).not.toContain('class="page-content"')
+    expect(out).toContain('class="hero"')
+    expect(out).toContain("<h1>首页标题</h1>")
+  })
+
+  it("无冗余包裹的普通片段保持不变", () => {
+    const frag = '<div class="container"><p>保持</p></div>'
+    expect(stripRedundantFragmentWrappers(frag)).toBe(frag)
+  })
+
+  it("保留片段内部合法的 page-content 子容器（不误伤）", () => {
+    const frag = '<div class="container"><div class="page-content">x</div></div>'
+    expect(stripRedundantFragmentWrappers(frag)).toBe(frag)
+  })
+
+  it("注入时剥离冗余包裹，避免侧边栏偏移翻倍", () => {
+    const frag = `<div data-page-host=""><div class="page-content"><div class="container">正文</div></div></div>`
+    const merged = injectPageIntoLayout(LAYOUT, frag)
+    expect(merged).toContain("正文")
+    // host 内不应再出现嵌套的 page-content 根包裹
+    const host = new JSDOM(merged).window.document.querySelector(
+      "[data-page-host]"
+    )
+    expect(host?.querySelector(":scope > .page-content")).toBeNull()
+    expect(host?.querySelector(":scope > div[data-page-host]")).toBeNull()
+    expect(host?.querySelector(":scope > .container")?.textContent).toContain(
+      "正文"
+    )
   })
 })
 
