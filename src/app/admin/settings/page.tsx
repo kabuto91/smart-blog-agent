@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Save, Loader2, Eye, BookOpen, ThumbsUp, Upload, Bookmark, Plus, Trash2 } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
+import { Save, Loader2, Eye, BookOpen, ThumbsUp, Upload, Bookmark, Plus, Trash2, UserRound, Sparkles } from "lucide-react"
 import { FIELD_DEFINITIONS, EDITABLE_KEYS } from "@/lib/field-registry"
 import type { StatFieldKey } from "@/lib/field-registry"
 
@@ -31,6 +32,14 @@ export default function SettingsPage() {
   const [newKey, setNewKey] = useState("")
   const [newText, setNewText] = useState("")
 
+  // 用户画像（独立区块）
+  const [profile, setProfile] = useState("")
+  const [profileEnabled, setProfileEnabled] = useState(true)
+  const [profileLoading, setProfileLoading] = useState(true)
+  const [profileGenerating, setProfileGenerating] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileSuccess, setProfileSuccess] = useState(false)
+
   useEffect(() => {
     fetch("/api/site-config")
       .then((res) => res.json())
@@ -52,6 +61,18 @@ export default function SettingsPage() {
       .catch(() => {
         // 可复用文本加载失败不阻塞页面
       })
+    fetch("/api/user-profile")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && typeof data === "object") {
+          if (typeof data.profile === "string") setProfile(data.profile)
+          if (typeof data.enabled === "boolean") setProfileEnabled(data.enabled)
+        }
+      })
+      .catch(() => {
+        // 画像加载失败不阻塞页面
+      })
+      .finally(() => setProfileLoading(false))
   }, [])
 
     const persistConfig = useCallback(async (cfg: Record<string, string>) => {
@@ -176,6 +197,43 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleProfileGenerate() {
+    setProfileGenerating(true)
+    try {
+      const res = await fetch("/api/user-profile", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || "生成失败")
+      setProfile(data.profile ?? "")
+      alert(`已基于 ${data.articleCount ?? 0} 篇文章生成画像，请确认后保存`)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "生成失败")
+    } finally {
+      setProfileGenerating(false)
+    }
+  }
+
+  async function handleProfileSave() {
+    setProfileSaving(true)
+    setProfileSuccess(false)
+    try {
+      const res = await fetch("/api/user-profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile, enabled: profileEnabled }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error || "保存失败")
+      }
+      setProfileSuccess(true)
+      setTimeout(() => setProfileSuccess(false), 2000)
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "保存失败")
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
   const editableEntries = Object.entries(FIELD_DEFINITIONS)
     .filter(([, def]) => !def.readonly)
     .map(([key]) => [key, config[key] ?? ""] as const)
@@ -265,6 +323,90 @@ export default function SettingsPage() {
               )}
             </div>
           ))}
+
+          {/* 用户画像（独立区块，单独保存） */}
+          <hr className="my-2 border-black/[0.06]" />
+          <div>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="flex items-center gap-1.5 text-sm font-medium text-[#1C1C1E]">
+                  <UserRound className="size-3.5 text-[#E5A83D]" />
+                  用户画像（User Profile）
+                </h2>
+                <p className="mt-0.5 text-xs text-[#6B7280]">
+                  描述博客内容方向与写作风格，生成主题/文章时自动注入 prompt
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-3">
+              <Textarea
+                value={profile}
+                onChange={(e) => setProfile(e.target.value)}
+                className="w-full"
+                rows={6}
+                disabled={profileLoading}
+                placeholder="例如：主要写前端工程与技术成长方向的内容，风格口语化、有观点、重实践…… 可点击下方按钮基于已发布文章自动生成"
+              />
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={profileEnabled}
+                  onClick={() => setProfileEnabled((v) => !v)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                    profileEnabled ? "bg-[#E5A83D]" : "bg-black/[0.12]"
+                  }`}
+                >
+                  <span
+                    className={`inline-block size-4 transform rounded-full bg-white shadow transition-transform ${
+                      profileEnabled ? "translate-x-[18px]" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+                <span className="text-xs text-[#6B7280]">
+                  生成主题/文章时注入画像
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Button
+                  onClick={handleProfileGenerate}
+                  disabled={profileGenerating}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                >
+                  {profileGenerating ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-3.5" />
+                  )}
+                  从文章列表生成画像
+                </Button>
+                <Button
+                  onClick={handleProfileSave}
+                  disabled={profileSaving}
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                >
+                  {profileSaving ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Save className="size-3.5" />
+                  )}
+                  保存画像
+                </Button>
+                {profileSuccess && (
+                  <span className="text-sm text-green-600 animate-in fade-in">
+                    已保存
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* 可复用文本（共享配置）：独立区块，单独保存 */}
           <hr className="my-2 border-black/[0.06]" />

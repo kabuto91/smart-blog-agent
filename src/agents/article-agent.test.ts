@@ -80,4 +80,25 @@ describe("buildArticleMessages", () => {
     const text = (human as HumanMessage).content as string
     expect(text).not.toContain("frontmatter")
   })
+
+  it("authorProfile 注入写作风格参考", () => {
+    const [, human] = buildArticleMessages({
+      title: "T",
+      mode: "generate",
+      authorProfile: "画像内容",
+    })
+    const text = (human as HumanMessage).content as string
+    expect(text).toContain("画像内容")
+    expect(text).toContain("作者画像")
+  })
+
+  it("authorProfile 为空时不注入画像段落", () => {
+    const [, human] = buildArticleMessages({
+      title: "T",
+      mode: "generate",
+      authorProfile: "",
+    })
+    const text = (human as HumanMessage).content as string
+    expect(text).not.toContain("作者画像")
+  })
 })

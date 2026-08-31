@@ -106,6 +106,8 @@ export interface ThemeGraphInput {
   pages?: Record<string, string>
   contentConfig?: string
   siteConfig?: Record<string, string>
+  /** 作者画像：博客内容方向与写作风格，供设计取向与占位内容参考 */
+  userProfile?: string
 }
 
 export type PageValidation = PageFragmentIssue
@@ -145,6 +147,7 @@ const ThemeStateAnnotation = Annotation.Root({
   targetPage: last<string>(() => "skeleton"),
   prevLayout: last<string>(() => ""),
   siteConfig: last<Record<string, string>>(() => ({})),
+  userProfile: last<string>(() => ""),
 
   designBrief: last<string>(() => ""),
   layoutHtml: last<string>(() => ""),
@@ -225,7 +228,12 @@ function makePlannerNode(ctx: NodeContext) {
     if (state.iteration) return {}
     ctx.emitter?.stage("planner", "规划设计方向", "start")
     const seeds = rollDesignSeeds()
-    const brief = await generateDesignBrief(ctx.llm, state.userRequest, seeds)
+    const brief = await generateDesignBrief(
+      ctx.llm,
+      state.userRequest,
+      seeds,
+      state.userProfile
+    )
     ctx.emitter?.stage("planner", "规划设计方向", "done", brief)
     return { designBrief: brief }
   }
@@ -234,8 +242,12 @@ function makePlannerNode(ctx: NodeContext) {
 async function generateDesignBrief(
   llm: BaseChatModel,
   userRequest: string,
-  seeds: DesignSeeds
+  seeds: DesignSeeds,
+  userProfile = ""
 ): Promise<string> {
+  const profileSection = userProfile.trim()
+    ? `\n\n【作者画像（博客内容方向与写作风格，供设计取向参考）】\n${userProfile.trim()}`
+    : ""
   const messages = [
     new SystemMessage(
       `你是一个博客主题设计总监。从用户需求中提炼一份简短的设计简报，用于统一指导后续的主题骨架与三个页面生成，保证风格一致。
@@ -244,7 +256,7 @@ async function generateDesignBrief(
 如果用户已给出明确风格，直接提炼；否则以【随机设计方向种子】为基准展开细化。`
     ),
     new HumanMessage(
-      `用户需求：${userRequest}
+      `用户需求：${userRequest}${profileSection}
 
 【随机设计方向种子】
 本次必须以此组合为基础展开细化（仅当用户需求中已明确指定某维度的方向时，才用用户的覆盖对应维度，其余维度必须遵循种子）：
@@ -285,6 +297,9 @@ function makeSkeletonNode(ctx: NodeContext) {
 
     let userContent = state.userRequest
     if (state.designBrief) userContent += `\n\n【设计简报】\n${state.designBrief}`
+    if (state.userProfile.trim()) {
+      userContent += `\n\n【作者画像（博客内容方向与写作风格，供占位内容与设计取向参考）】\n${state.userProfile.trim()}`
+    }
     if (state.prevLayout) {
       userContent += `\n\n【之前的骨架（保持其风格，按新需求调整）】\n\`\`\`html\n${state.prevLayout}\n\`\`\``
     }
@@ -316,6 +331,7 @@ function buildSkeletonPayload(
     userRequest: state.userRequest,
     conversationId: state.conversationId,
     siteConfig: state.siteConfig,
+    userProfile: state.userProfile,
     designBrief: state.designBrief,
     prevLayout: overrides?.prevLayout ?? state.prevLayout,
     skeletonFeedback: overrides?.skeletonFeedback ?? state.skeletonFeedback,
@@ -334,6 +350,7 @@ function buildPagePayload(
     userRequest: state.userRequest,
     conversationId: state.conversationId,
     siteConfig: state.siteConfig,
+    userProfile: state.userProfile,
     designBrief: state.designBrief,
     layoutHtml: state.layoutHtml,
     pages: state.pages,
@@ -370,6 +387,9 @@ function makePageNode(pageType: ThemePageType, ctx: NodeContext) {
     )
     let userContent = state.userRequest
     if (state.designBrief) userContent += `\n\n【设计简报】\n${state.designBrief}`
+    if (state.userProfile.trim()) {
+      userContent += `\n\n【作者画像（博客内容方向与写作风格，供占位内容与设计取向参考）】\n${state.userProfile.trim()}`
+    }
     const prevHtml = state.pages[pageType]
     if (prevHtml) {
       userContent += `\n\n当前「${pageTypeLabel(pageType)}」正文状态：\n\`\`\`html\n${prevHtml}\n\`\`\``

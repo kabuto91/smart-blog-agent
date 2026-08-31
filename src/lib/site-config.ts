@@ -82,4 +82,46 @@ export async function saveFeaturedArticleIds(ids: string[]): Promise<void> {
   })
 }
 
+/** site_config.config 中用户画像文本的键。刻意不进 EDITABLE_KEYS，避免污染站点设置文本表单。 */
+export const USER_PROFILE_KEY = "userProfile"
+
+/** site_config.config 中「生成时注入用户画像」开关的键。 */
+export const USER_PROFILE_ENABLED_KEY = "userProfileEnabled"
+
+/** 读取用户画像文本与注入开关。 */
+export async function getUserProfile(): Promise<{
+  profile: string
+  enabled: boolean
+}> {
+  try {
+    const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
+    const raw = row?.config
+      ? (JSON.parse(row.config) as Record<string, unknown>)
+      : {}
+    return {
+      profile: typeof raw[USER_PROFILE_KEY] === "string" ? raw[USER_PROFILE_KEY] : "",
+      enabled: raw[USER_PROFILE_ENABLED_KEY] !== false,
+    }
+  } catch {
+    // table may not exist yet
+  }
+  return { profile: "", enabled: true }
+}
+
+/** 保存用户画像文本与注入开关（合并写入 site_config.config，不影响其它字段）。 */
+export async function saveUserProfile(
+  profile: string,
+  enabled: boolean
+): Promise<void> {
+  const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
+  const current = row?.config ? (JSON.parse(row.config) as Record<string, unknown>) : {}
+  current[USER_PROFILE_KEY] = profile
+  current[USER_PROFILE_ENABLED_KEY] = enabled
+  await prisma.siteConfig.upsert({
+    where: { id: 1 },
+    create: { id: 1, config: JSON.stringify(current) },
+    update: { config: JSON.stringify(current) },
+  })
+}
+
 export { EDITABLE_KEYS }

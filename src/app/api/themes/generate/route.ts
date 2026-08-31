@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
 import { addMessage, getLatestSnapshot } from "@/lib/theme/theme-session"
-import { getSiteConfig } from "@/lib/site-config"
+import { getSiteConfig, getUserProfile } from "@/lib/site-config"
 import { getUpload } from "@/lib/uploads"
 import { analyzeImage } from "@/lib/llm/vision-analyze"
 import { isVisionConfigured } from "@/lib/llm/vision-client"
@@ -72,6 +72,7 @@ export async function POST(request: Request) {
 
     const snapshot = await getLatestSnapshot(conversationId)
     const siteConfig = await getSiteConfig()
+    const { profile, enabled } = await getUserProfile()
 
     // 迭代模式：已有骨架，仅重生成目标页面；否则走完整流程（骨架会读取 prevLayout 保持风格）。
     const iteration = Boolean(
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
       prevLayout: snapshot?.layout ?? "",
       pages: snapshot?.pages ?? {},
       siteConfig,
+      userProfile: enabled ? profile : "",
     }
 
     const stream = createSSEStream(async ({ send, close }) => {

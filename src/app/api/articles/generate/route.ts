@@ -5,6 +5,7 @@ import {
 } from "@/agents/article-agent"
 import { createLLM } from "@/lib/llm/client"
 import { createSSEStream, SSE_HEADERS } from "@/lib/stream/sse"
+import { getUserProfile } from "@/lib/site-config"
 
 export const runtime = "nodejs"
 
@@ -35,6 +36,8 @@ export async function POST(request: Request) {
   }
   const mode: ArticleGenMode = body.mode === "generate" ? "generate" : "continue"
 
+  const { profile, enabled } = await getUserProfile()
+
   const stream = createSSEStream(async ({ send, close }) => {
     const llm = await createLLM(true)
     const messages = buildArticleMessages({
@@ -44,6 +47,7 @@ export async function POST(request: Request) {
       instruction,
       mode,
       includeMeta: body.includeMeta,
+      authorProfile: enabled ? profile : "",
     })
 
     for await (const chunk of await llm.stream(messages)) {

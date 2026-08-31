@@ -11,6 +11,8 @@ export interface ArticleGenParams {
   mode: ArticleGenMode
   /** 是否同时生成标题与摘要（以 frontmatter 形式输出在正文前） */
   includeMeta?: boolean
+  /** 作者画像：帮助保持一致的选题与写作风格（用户本次明确要求优先） */
+  authorProfile?: string
 }
 
 export const ARTICLE_SYSTEM_PROMPT = `你是一位热爱写作、经验丰富的博客作者，用中文写文章时就像一个真人博主在跟读者面对面聊天：有观点、有温度、有幽默感，读起来自然流畅，而不是冷冰冰的机器腔。
@@ -48,6 +50,11 @@ export function buildArticleMessages(params: ArticleGenParams): BaseMessage[] {
   }
   if (params.instruction?.trim()) {
     parts.push(`写作要求/要点：\n${params.instruction.trim()}`)
+  }
+  if (params.authorProfile?.trim()) {
+    parts.push(
+      `【作者画像（保持一致的选题与写作风格，但以用户本次明确要求为准）】\n${params.authorProfile.trim()}`
+    )
   }
 
   if (mode === "continue") {
