@@ -316,15 +316,22 @@ export function ensureMultipleAvatarPlaces(doc: Document, avatarUrl?: string): v
   if (hasAvatarInBody) return
 
   // 按优先级寻找注入位置：<aside> > 含 author/bio/sidebar 的容器 > 正文首部
-  const target = (
-    [
-      host.querySelector("aside"),
-      host.querySelector<HTMLElement>(
-        "[class*='author'], [class*='bio'], [class*='sidebar'], [class*='widget'], [class*='about']"
-      ),
-    ] as (Element | null)[]
+  // 注意用 querySelectorAll 遍历全部候选：querySelector 只取第一个匹配，
+  // 若首个匹配是 .grid-sidebar 等布局容器被过滤后，需要能回退到真正的 .sidebar。
+  const aside = host.querySelector("aside")
+  const authorContainers = Array.from(
+    host.querySelectorAll<HTMLElement>(
+      "[class*='author'], [class*='bio'], [class*='sidebar'], [class*='widget'], [class*='about']"
+    )
   )
-    .filter((el): el is Element => !!el)
+  const target = (
+    [aside, ...authorContainers].filter(
+      (el): el is HTMLElement => !!el
+    ) as HTMLElement[]
+  )
+    // 布局包装容器（如 .grid-sidebar / .content-with-sidebar）承载文章列表，
+    // 不是作者信息容器；[class*='sidebar'] 子串会误匹配它们，注入头像会破坏双栏布局
+    .filter((el) => !isArticleListHost(el))
     .find((el) => containerHasTextBesidesAvatar(el))
 
   const avatarHtml = `<img class="avatar" src="${avatarUrl}" alt="作者头像" style="width:64px;height:64px;border-radius:50%;object-fit:cover;overflow:hidden;">`
@@ -335,6 +342,11 @@ export function ensureMultipleAvatarPlaces(doc: Document, avatarUrl?: string): v
   if (target) {
     target.insertAdjacentHTML("afterbegin", avatarHtml)
   }
+}
+
+/** 判定元素是否为承载文章列表的布局包装容器（如 .grid-sidebar / .content-with-sidebar）。 */
+function isArticleListHost(el: Element): boolean {
+  return !!el.querySelector('[data-content-type="dynamic-articles"]')
 }
 
 /**
@@ -978,7 +990,7 @@ function renderListField(
 
   const clones: Element[] = []
   for (const item of data) {
-    const clone = template.cloneNode(true) as Element
+    let clone = template.cloneNode(true) as Element
 
     let linkApplied = false
     for (const [mapKey, dataKey] of mappings) {
@@ -989,7 +1001,19 @@ function renderListField(
       if (mapKey === "link") {
         linkApplied = true
         for (const target of targets) {
-          target.setAttribute("href", value)
+          if (target.tagName.toLowerCase() === "a") {
+            target.setAttribute("href", value)
+          } else {
+            // 容器型链接目标（如整张卡片 <article data-map="link">）：
+            // setAttribute("href") 对非 <a> 无效，需用 display:contents 的 <a> 包裹——
+            // 包裹层不产生盒子、不影响 grid/布局，且整卡可点击跳转。
+            const anchor = container.ownerDocument.createElement("a")
+            anchor.setAttribute("href", value)
+            anchor.setAttribute("style", "display:contents")
+            target.replaceWith(anchor)
+            anchor.appendChild(target)
+            if (target === clone) clone = anchor
+          }
         }
       } else if (mapKey === "cover") {
         // 封面图：目标是 img（或含 img）时填充 src；无封面时移除图片块
@@ -1046,6 +1070,15 @@ function renderListField(
         const anchors = clone.querySelectorAll("a[href]")
         if (anchors.length === 1) {
           anchors[0].setAttribute("href", item.link)
+        } else if (anchors.length === 0 && clone.matches('[data-map="link"]')) {
+          // 容器型卡片（data-map="link" 标在卡片根上）且无内链时：
+          // 用 display:contents 的 <a> 包裹整卡，使其可点击且不破坏布局
+          const anchor = container.ownerDocument.createElement("a")
+          anchor.setAttribute("href", item.link)
+          anchor.setAttribute("style", "display:contents")
+          clone.replaceWith(anchor)
+          anchor.appendChild(clone)
+          clone = anchor
         }
       }
     }

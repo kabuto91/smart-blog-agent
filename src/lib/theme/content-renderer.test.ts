@@ -294,6 +294,33 @@ describe("renderContent ensureMultipleAvatarPlaces 兜底", () => {
     expect(hostContent).not.toContain(`<img class="avatar" src="${AVATAR_URL}"`)
   })
 
+  it("grid-sidebar 布局容器不注入头像，头像注入到真正的 sidebar 内", () => {
+    const html = withHost(
+      `<div class="grid-sidebar">
+        <div class="content-main">
+          <section data-content="article-list" data-content-type="dynamic-articles">
+            <article><a data-map="title">样本标题</a></article>
+          </section>
+        </div>
+        <div class="sidebar"><h3>关于我</h3><p>作者简介</p></div>
+      </div>`
+    )
+    const out = renderContent(
+      html,
+      {},
+      undefined,
+      { "author-avatar": AVATAR_URL },
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    const host = doc.querySelector("[data-page-host]")!
+    // 头像必须注入到 .sidebar 内，而不是 .grid-sidebar 的顶部
+    expect(host.querySelector(".sidebar img.avatar")).not.toBeNull()
+    expect(host.querySelector(".grid-sidebar > img.avatar")).toBeNull()
+    const children = Array.from(host.querySelectorAll(".grid-sidebar > *"))
+    expect(children[0]?.className ?? "").toContain("content-main")
+  })
+
   it("无 data-page-host 时不报错", () => {
     const html = `<body><main><p>无 host</p></main></body>`
     expect(() =>
@@ -819,6 +846,50 @@ describe("renderContent 封面图渲染", () => {
     expect(doc.querySelectorAll(".card-cover").length).toBe(0)
     expect(out).toContain("真实文章A")
     expect(out).toContain("真实文章B")
+  })
+
+  it("data-map=link 标在卡片容器上时，用 display:contents 的 <a> 包裹整卡使其可点击", () => {
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card" data-map="link">
+        <div class="post-meta"><span data-map="date">2024.05</span></div>
+        <h3 class="post-title" data-map="title">模板标题</h3>
+        <p class="post-excerpt" data-map="excerpt">模板摘要</p>
+      </article>
+    </section>`
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: `<article class="post-card" data-map="link">
+          <div class="post-meta"><span data-map="date">2024.05</span></div>
+          <h3 class="post-title" data-map="title">模板标题</h3>
+          <p class="post-excerpt" data-map="excerpt">模板摘要</p>
+        </article>`,
+        // 真实场景：fieldMapping 不含 link（link 标在卡片容器上），走兜底包裹
+        fieldMapping: { date: "date", title: "title", excerpt: "excerpt" },
+      },
+    }
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实文章A", excerpt: "摘要A", date: "2026-01-01", category: "", slug: "real-a" },
+        { id: 2, title: "真实文章B", excerpt: "摘要B", date: "2026-01-02", category: "", slug: "real-b" },
+      ],
+    }
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const list = doc.querySelector('[data-content="article-list"]')!
+    // 每张卡片被 <a style="display:contents" href="/blog/..."> 包裹
+    const anchors = Array.from(list.children).filter((c) => c.tagName === "A")
+    expect(anchors.length).toBe(2)
+    expect(anchors[0].getAttribute("href")).toBe("/blog/real-a")
+    expect(anchors[1].getAttribute("href")).toBe("/blog/real-b")
+    expect(anchors.every((a) => a.getAttribute("style")?.includes("display:contents"))).toBe(true)
+    expect(anchors[0].querySelector(".post-card .post-title")?.textContent).toContain("真实文章A")
+    expect(anchors[0].querySelector(".post-card .post-excerpt")?.textContent).toContain("摘要A")
+    // 原数据-map 仍在卡片上，但不在包裹锚点上
+    expect(list.querySelector("article[data-map='link']")).not.toBeNull()
   })
 
   const detailHtml = (withCoverPlaceholder: boolean) => `<!DOCTYPE html>
