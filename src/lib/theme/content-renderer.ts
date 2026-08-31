@@ -1091,6 +1091,36 @@ function renderListField(
 
     fillTagAnchorText(clone, item)
 
+    // 整卡可点：LLM 常把 data-map="link" 放在卡片内部的小按钮（如 READ/ACCESS）上，
+    // 导致只有按钮可点、标题/摘要/封面点不动。这里对动态文章卡片统一处理：
+    // 用 display:contents 的 <a> 包裹整卡（不影响布局），并把卡内原有 <a> 降级为
+    // <span>，避免 <a> 嵌套产生非法链接。根节点本身就是 <a>（如侧栏归档项）或
+    // 无内链的卡片（如归档页 data-map="link" 在 article 根上）不受影响。
+    if (
+      field.type === "dynamic-articles" &&
+      item.link &&
+      clone.tagName.toLowerCase() !== "a" &&
+      clone.querySelector("a")
+    ) {
+      const anchor = container.ownerDocument.createElement("a")
+      anchor.setAttribute("href", item.link)
+      anchor.setAttribute("style", "display:contents")
+      clone.replaceWith(anchor)
+      anchor.appendChild(clone)
+      clone = anchor
+      for (const inner of Array.from(
+        anchor.querySelectorAll("a")
+      ) as HTMLAnchorElement[]) {
+        const span = container.ownerDocument.createElement("span")
+        for (const attr of Array.from(inner.attributes)) {
+          span.setAttribute(attr.name, attr.value)
+        }
+        // 保留按钮原有文案/图标（如 READ/ACCESS），避免降级后按钮变空
+        while (inner.firstChild) span.appendChild(inner.firstChild)
+        inner.replaceWith(span)
+      }
+    }
+
     clones.push(clone)
   }
 

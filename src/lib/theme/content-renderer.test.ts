@@ -508,8 +508,8 @@ describe("renderContent 动态列表不重复整块面板", () => {
     const doc = dom.window.document
     const section = doc.querySelector('[data-content="article-list"]')
     expect(section).toBeTruthy()
-    // 克隆项是 section 的直接子元素（不嵌套进样本项内部）
-    const directItems = section!.querySelectorAll(":scope > article.post-list-item")
+    // 克隆项被 display:contents 的整卡 <a> 包裹，平铺为 section 直接子级（不嵌套进样本项内部）
+    const directItems = section!.querySelectorAll(":scope > a > article.post-list-item")
     expect(directItems.length).toBe(2)
     // 没有嵌套 article（article 内不再包含 article）
     expect(section!.querySelectorAll("article article").length).toBe(0)
@@ -517,7 +517,9 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(out).not.toContain("样本标题")
     expect(directItems[0].textContent).toContain("真实文章A")
     expect(directItems[1].textContent).toContain("真实文章B")
-    expect(directItems[0].querySelector("a")!.getAttribute("href")).toBe("/blog/real-a")
+    // 链接在整卡包裹层上，卡内原 <a> 已降级为 span
+    expect(directItems[0].parentElement!.tagName).toBe("A")
+    expect(directItems[0].parentElement!.getAttribute("href")).toBe("/blog/real-a")
     expect(directItems[0].querySelector(".date")!.textContent).toBe("2026-01-01")
   })
 
@@ -559,8 +561,8 @@ describe("renderContent 动态列表不重复整块面板", () => {
     const doc = dom.window.document
     const section = doc.querySelector('[data-content="article-list"]')
     expect(section).toBeTruthy()
-    // 克隆卡片是 section 直接子元素且数量正确
-    const cards = section!.querySelectorAll(":scope > article.post-card")
+    // 克隆卡片被整卡 <a> 包裹，平铺为 section 直接子级且数量正确
+    const cards = section!.querySelectorAll(":scope > a > article.post-card")
     expect(cards.length).toBe(2)
     // 卡片未被嵌套进其他卡片，也没有残缺 li 克隆散落
     expect(section!.querySelectorAll("article article").length).toBe(0)
@@ -628,9 +630,9 @@ describe("renderContent 动态列表不重复整块面板", () => {
     // 真实卡片渲染进网格包装内（不是 section 直接子级）
     const grid = section!.querySelector("div.magazine-grid")
     expect(grid).toBeTruthy()
-    const cards = grid!.querySelectorAll(":scope > article.post-card")
+    const cards = grid!.querySelectorAll(":scope > a > article.post-card")
     expect(cards.length).toBe(2)
-    expect(section!.querySelectorAll(":scope > article.post-card").length).toBe(0)
+    expect(section!.querySelectorAll(":scope > a > article.post-card").length).toBe(0)
 
     // section 的静态结构保留：标题 + 查看按钮
     expect(section!.querySelector("h2.section-title")?.textContent).toContain("最新电波")
@@ -648,12 +650,13 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(cards[0].querySelector('[data-map="title"]')!.textContent).toContain("真实文章A")
     expect(cards[0].querySelector('[data-map="date"]')!.textContent).toBe("2026-01-01")
     expect(cards[0].querySelector('[data-map="category"]')!.textContent).toBe("设计")
-    expect(cards[0].querySelector("a[data-map=link]")!.getAttribute("href")).toBe("/blog/real-a")
+    // 链接在整卡包裹层上，卡内原 link <a> 已降级为 span
+    expect(cards[0].parentElement!.getAttribute("href")).toBe("/blog/real-a")
 
-    // 标签形 link 锚点文本被分类填充，不再残留 SYNTHWAVE 样例
+    // 标签形 link 锚点文本被分类填充，不再残留 SYNTHWAVE 样例（降级后为 span.tag）
     expect(out).not.toContain("SYNTHWAVE")
-    expect(cards[0].querySelector("a.tag")!.textContent).toBe("设计")
-    expect(cards[1].querySelector("a.tag")!.textContent).toBe("随笔")
+    expect(cards[0].querySelector("span.tag")!.textContent).toBe("设计")
+    expect(cards[1].querySelector("span.tag")!.textContent).toBe("随笔")
   })
 })
 
@@ -890,6 +893,48 @@ describe("renderContent 封面图渲染", () => {
     expect(anchors[0].querySelector(".post-card .post-excerpt")?.textContent).toContain("摘要A")
     // 原数据-map 仍在卡片上，但不在包裹锚点上
     expect(list.querySelector("article[data-map='link']")).not.toBeNull()
+  })
+
+  it("data-map=link 在卡内按钮上时，整卡被包裹成链接且按钮降级为 span（不嵌套 a）", () => {
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card">
+        <h3 class="post-title" data-map="title">模板标题</h3>
+        <a href="#" data-map="link" class="btn btn-sm">READ</a>
+      </article>
+    </section>`
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: `<article class="post-card">
+          <h3 class="post-title" data-map="title">模板标题</h3>
+          <a href="#" data-map="link" class="btn btn-sm">READ</a>
+        </article>`,
+        fieldMapping: { title: "title", link: "link" },
+      },
+    }
+    const dynamicData = {
+      articles: [
+        { id: 1, title: "真实文章A", excerpt: "", date: "2026-01-01", category: "", slug: "real-a" },
+      ],
+    }
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const list = doc.querySelector('[data-content="article-list"]')!
+    const wrapper = list.firstElementChild
+    expect(wrapper?.tagName).toBe("A")
+    expect(wrapper?.getAttribute("href")).toBe("/blog/real-a")
+    expect(wrapper?.getAttribute("style")).toContain("display:contents")
+    const card = wrapper?.querySelector(".post-card")
+    expect(card).not.toBeNull()
+    expect(card?.querySelector(".post-title")?.textContent).toContain("真实文章A")
+    // 卡内按钮 <a> 已降级为 <span>，无嵌套 <a>，且按钮文案保留
+    expect(wrapper?.querySelector("a")).toBeNull()
+    const spanBtn = wrapper?.querySelector("span.btn")
+    expect(spanBtn).not.toBeNull()
+    expect(spanBtn?.textContent).toBe("READ")
   })
 
   const detailHtml = (withCoverPlaceholder: boolean) => `<!DOCTYPE html>
@@ -1262,7 +1307,7 @@ describe("renderContent featured-articles 精选区块", () => {
     expect(out).not.toContain("最新A")
     expect(out).not.toContain("样本标题")
     const doc = new JSDOM(out).window.document
-    const item = doc.querySelector('[data-content="featured-articles"] > article')
+    const item = doc.querySelector('[data-content="featured-articles"] > a > article')
     expect(item!.textContent).toContain("甲摘要")
   })
 
