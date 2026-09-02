@@ -68,7 +68,7 @@ node scripts/publish.mjs --file ./article.md [--title 标题] [--tags 前端,后
 | `--dry-run` | 可选。试跑模式：填充标题/正文/分类/标签并在发布弹窗就绪后停住，不执行最终发布，用于验证流程。 |
 | `--timeout` | 可选。整体超时毫秒数，默认 180000（3 分钟）。 |
 
-> **发布模式判定**：提供 `--article-id` 且未传 `--force-new` 时，脚本先调用掘金 `content_api/v1/article/detail` 接口（`article_id` 传数字、带 `aid=2608` 等参数，仅本人文章才返回 `draft_id`）快速探测；接口无果时再通过**浏览器**打开 `https://juejin.cn/post/<id>` 判定存在性，并从本人文章的「编辑」入口提取 `draft_id`。文章不存在 → 自动新增；存在但找不到草稿编辑入口 → 中止并报错（避免误新增重复文章）；如需无视绑定强制新增请加 `--force-new`。
+> **发布模式判定**：提供 `--article-id` 且未传 `--force-new` 时，脚本通过**浏览器**打开 `https://juejin.cn/post/<id>` 判定存在性（文章渲染 → 存在；「找不到页面」→ 不存在），并对本人文章点击作者信息区的「编辑」按钮（`span.author-info-edit-btn`），捕获跳转到 `/editor/drafts/<draft_id>` 得到编辑入口。文章不存在 → 自动新增；存在但点不动编辑按钮/拿不到 draft_id → 中止并报错（避免误新增重复文章）；如需无视绑定强制新增请加 `--force-new`。
 
 输出为一行 JSON：
 

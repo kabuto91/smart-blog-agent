@@ -147,35 +147,9 @@ async function pasteText(page, context, text) {
   await page.keyboard.press("Control+V")
 }
 
-// 用掘金 API 探测 post id 对应文章是否仍存在（本人文章才会返回 draft_id）。
-// 返回 draft_id 字符串；无法确认时返回 null（不抛错，交由浏览器探测兜底）。
-async function probeArticleDraftId(cookieString, articleId) {
-  if (!articleId || articleId === "0") return null
-  try {
-    const res = await fetch(`https://api.juejin.cn/content_api/v1/article/detail?aid=2608&spider=0`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Cookie: cookieString,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        Referer: "https://juejin.cn/",
-        Origin: "https://juejin.cn",
-      },
-      // article_id 必须是数字，传字符串会被掘金判为“参数错误”
-      body: JSON.stringify({ article_id: Number(articleId) }),
-    })
-    if (!res.ok) return null
-    const json = await res.json()
-    if (json && json.err_no === 0 && json.data && json.data.draft_id) {
-      return String(json.data.draft_id)
-    }
-  } catch {
-    // 探测异常忽略，交由浏览器探测兜底
-  }
-  return null
-}
-
-// 用浏览器探测 post id 对应文章是否存在，并在存在时尝试提取“编辑”入口的 draft_id。
+// 用浏览器探测 post id 对应文章是否存在，并在存在时点击「编辑」入口获取 draft_id。
+// 掘金本人文章页的编辑入口是 <span class="author-info-edit-btn">编辑</span>（非 <a> 链接），
+// 点击后会**新开标签页**打开 /editor/drafts/<draft_id>。
 // 返回 { exists: boolean, draftId: string }。
 async function probePostInBrowser(page, articleId) {
   await page.goto(`https://juejin.cn/post/${articleId}`, { waitUntil: "domcontentloaded", timeout: 60000 })
@@ -190,20 +164,49 @@ async function probePostInBrowser(page, articleId) {
     }, { timeout: 30000 })
     .catch(() => {})
   await delay(3000)
-  // 若是本人文章，等待“编辑”入口渲染（a[href*='/editor/drafts/']）
-  try {
-    await page.waitForSelector("a[href*='/editor/drafts/']", { timeout: 5000 })
-  } catch {
-    // 未发现编辑入口，忽略
-  }
-  return page.evaluate(() => {
+
+  const state = await page.evaluate(() => {
     const hasArticle = !!document.querySelector("#article-root, .article-content, .markdown-body, article h1")
     const text = document.title + " " + (document.body?.innerText || "").slice(0, 2000)
     const notFound = /找不到页面|文章不存在|内容为空|页面不存在/.test(text)
-    const editLinks = Array.from(document.querySelectorAll("a[href*='/editor/drafts/']")).map((a) => a.getAttribute("href") || "")
-    const m = editLinks[0]?.match(/\/editor\/drafts\/(\d+)/)
-    return { exists: hasArticle && !notFound, draftId: m ? m[1] : "" }
+    const editSel = document.querySelector("span.author-info-edit-btn") ? "span.author-info-edit-btn" : ""
+    return { exists: hasArticle && !notFound, editSel }
   })
+  if (!state.exists) return { exists: false, draftId: "" }
+  if (!state.editSel) return { exists: true, draftId: "" }
+
+  // 点击「编辑」会新开标签页打开 /editor/drafts/<draft_id>，监听 context 的新页面
+  const context = page.context()
+  const popupPromise = new Promise((resolve) => {
+    const handler = (p) => {
+      context.off("page", handler)
+      resolve(p)
+    }
+    context.on("page", handler)
+  })
+  try {
+    await page.click(state.editSel, { timeout: 10000 })
+  } catch {
+    return { exists: true, draftId: "" }
+  }
+  const popup = await Promise.race([
+    popupPromise,
+    new Promise((resolve) => setTimeout(() => resolve(null), 15000)),
+  ])
+  if (popup) {
+    try {
+      await popup.waitForURL(/\/editor\/drafts\/\d+/, { timeout: 15000 })
+      const m = popup.url().match(/\/editor\/drafts\/(\d+)/)
+      if (m) {
+        await popup.close().catch(() => {})
+        return { exists: true, draftId: m[1] }
+      }
+    } catch {
+      // 等待编辑器跳转超时
+    }
+    await popup.close().catch(() => {})
+  }
+  return { exists: true, draftId: "" }
 }
 
 // 从结果 URL 提取掘金 post id
@@ -280,31 +283,24 @@ async function main() {
 
   // 决定发布模式：提供了 --article-id 且未强制新增时，先探测掘金上该文章是否存在
   // 存在 → 更新流程（打开草稿编辑器修改）；不存在 → 回退新增流程
+  // 说明：掘金 content_api/v1/article/detail 接口对任何文章（含本人）都返回 err_no:404，
+  // 因此统一用浏览器探测存在性并点击「编辑」入口获取 draft_id。
   let targetUrl = EDITOR_URL
   let isUpdate = false
   if (args.articleId && !args.forceNew) {
-    // 快速 API 探测（仅本人文章返回 draft_id），失败/不确定则交由浏览器探测兜底
-    let draftId = cookieString ? await probeArticleDraftId(cookieString, args.articleId) : null
-    if (!draftId) {
-      const probe = await probePostInBrowser(page, args.articleId)
-      if (probe.exists) {
-        draftId = probe.draftId
-        if (!draftId) {
-          await browser.close()
-          console.log(JSON.stringify({ ok: false, message: `已绑定的掘金文章（post ${args.articleId}）仍存在，但未能定位其草稿编辑入口，已中止发布，避免重复新增；请到掘金手动编辑该文章，或使用 --force-new 强制新增` }))
-          process.exitCode = 1
-          return
-        }
-        console.log(`检测到已绑定掘金文章（post ${args.articleId}），走更新流程`)
-      } else {
-        console.log(`已绑定的掘金文章（post ${args.articleId}）在掘金不存在，自动走新增发布`)
+    const probe = await probePostInBrowser(page, args.articleId)
+    if (probe.exists) {
+      if (!probe.draftId) {
+        await browser.close()
+        console.log(JSON.stringify({ ok: false, message: `已绑定的掘金文章（post ${args.articleId}）仍存在，但未能定位其草稿编辑入口，已中止发布，避免重复新增；请到掘金手动编辑该文章，或使用 --force-new 强制新增` }))
+        process.exitCode = 1
+        return
       }
-    } else {
-      console.log(`检测到已绑定掘金文章（post ${args.articleId}），走更新流程`)
-    }
-    if (draftId) {
       isUpdate = true
-      targetUrl = `https://juejin.cn/editor/drafts/${draftId}`
+      targetUrl = `https://juejin.cn/editor/drafts/${probe.draftId}`
+      console.log(`检测到已绑定掘金文章（post ${args.articleId}），走更新流程`)
+    } else {
+      console.log(`已绑定的掘金文章（post ${args.articleId}）在掘金不存在，自动走新增发布`)
     }
   }
 
@@ -354,12 +350,13 @@ async function main() {
     // 等待掘金解析 markdown 并上传图片（图片较多时耗时较长）
     await delay(12000)
 
-    // 6. 点击「发布」，打开发布设置弹窗
-    // 掘金编辑页顶栏有「发布」按钮（草稿箱右侧），点击后弹出发布设置弹窗
+    // 6. 点击「发布/更新」，打开发布设置弹窗
+    // 掘金编辑页顶栏按钮：新增流程为「发布」，更新流程为「更新」（草稿箱右侧），点击后弹出发布设置弹窗
     const publishBtn = await firstVisible(page, [
       'button:has-text("发布")',
       '.panel button:has-text("发布")',
       '[class*="editor"] button:has-text("发布")',
+      'button:has-text("更新")',
       'text=发布文章',
     ], 30000)
     if (!publishBtn) {
@@ -369,36 +366,58 @@ async function main() {
       return
     }
     await publishBtn.click()
-    // 等待发布弹窗渲染（出现「确定并发布」按钮）
+    // 等待发布弹窗渲染（新增流程「确定并发布」/ 更新流程「确定并更新」）
     const confirmBtnWait = await firstVisible(page, [
       'button:has-text("确定并发布")',
       '[class*="dialog"] button:has-text("确定并发布")',
+      'button:has-text("确定并更新")',
+      '[class*="dialog"] button:has-text("确定并更新")',
     ], 15000)
 
-    // 7. 选择分类：优先指定分类；找不到则回退到第一个分类（避免分类为空被掘金校验拦截）
+    // 7. 选择分类
+    // 先等分类面板渲染完成再做匹配，避免面板渲染慢导致指定分类匹配不到而误选第一个分类。
+    // 更新流程掘金会默认选中原分类（div.item.active）：若未指定分类则保留默认，不额外点击。
     let selectedCategory = ""
     if (confirmBtnWait) {
-      if (category) {
-        const catEl = await firstVisible(page, [
-          `[class*="category-list"] div:has-text("${category}")`,
-          `.form-item-content.category-list div:text-is("${category}")`,
-          `.category-list:has-text("${category}")`,
-        ], 8000)
-        if (catEl) {
-          await catEl.click()
-          selectedCategory = category
+      const catList = await firstVisible(page, [
+        ".form-item-content.category-list",
+        '[class*="category-list"]',
+      ], 15000)
+      if (catList) {
+        if (category) {
+          const catEl = await firstVisible(page, [
+            `.form-item-content.category-list div.item:text-is("${category}")`,
+            `[class*="category-list"] div.item:text-is("${category}")`,
+            `[class*="category-list"] div:has-text("${category}")`,
+          ], 15000)
+          if (catEl) {
+            await catEl.click()
+            selectedCategory = category
+            console.log(`分类：请求「${category}」，已选中`)
+          } else {
+            console.log(`分类：掘金分类面板中没有「${category}」，将回退处理`)
+          }
         }
-      }
-      if (!selectedCategory) {
-        // 指定分类不存在（如「教程」不在掘金固定分类中）→ 选第一个分类
-        const firstCat = await firstVisible(page, [
-          '[class*="category-list"] div:not([class*="category-list"])',
-          '[class*="category-list"] li:first-child',
-          '[class*="category-list"] *:nth-child(1)',
-        ], 5000)
-        if (firstCat) {
-          await firstCat.click()
-          selectedCategory = "（自动选择第一个分类）"
+        if (!selectedCategory) {
+          const active = await page.$(
+            '.form-item-content.category-list div.item.active, [class*="category-list"] div.item.active'
+          )
+          if (active) {
+            // 更新流程默认带原分类，保留
+            selectedCategory = "（保留掘金默认分类）"
+          } else {
+            const firstCat = await firstVisible(page, [
+              ".form-item-content.category-list div.item",
+              '[class*="category-list"] div.item',
+              '[class*="category-list"] div',
+            ], 8000)
+            if (firstCat) {
+              await firstCat.click()
+              const txt = (await firstCat.innerText().catch(() => "")) || ""
+              selectedCategory = `（自动选择第一个分类：${txt}）`
+              console.log(`分类：已自动选择第一个分类「${txt}」`)
+            }
+          }
         }
       }
     }

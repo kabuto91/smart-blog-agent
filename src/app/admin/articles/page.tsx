@@ -30,7 +30,7 @@ export default function ArticlesPage() {
   const [tags, setTags] = useState<TagListItem[]>([])
   const [collections, setCollections] = useState<CollectionListItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [editorOpen, setEditorOpen] = useState(false)
+  const [view, setView] = useState<"list" | "editor">("list")
   const [editingArticle, setEditingArticle] = useState<ArticleListItem | null>(null)
   const [editorKey, setEditorKey] = useState(0)
   const [metaOpen, setMetaOpen] = useState(false)
@@ -89,13 +89,13 @@ export default function ArticlesPage() {
   function openCreate() {
     setEditingArticle(null)
     setEditorKey((k) => k + 1)
-    setEditorOpen(true)
+    setView("editor")
   }
 
   function openEdit(article: ArticleListItem) {
     setEditingArticle(article)
     setEditorKey((k) => k + 1)
-    setEditorOpen(true)
+    setView("editor")
   }
 
   async function handleSaved(article: ArticleListItem) {
@@ -105,6 +105,7 @@ export default function ArticlesPage() {
         ? prev.map((a) => (a.id === article.id ? article : a))
         : [article, ...prev]
     })
+    setView("list")
   }
 
   async function handleTogglePublished(article: ArticleListItem) {
@@ -130,7 +131,38 @@ export default function ArticlesPage() {
 
   return (
     <>
-      <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-4">
+        {/* Tab bar */}
+        <div className="flex items-center gap-1 border-b border-black/[0.08]">
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={`-mb-px cursor-pointer border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              view === "list"
+                ? "border-[#E5A83D] text-[#1C1C1E]"
+                : "border-transparent text-[#6B7280] hover:text-[#1C1C1E]"
+            }`}
+          >
+            文章列表
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (view !== "editor" || editingArticle) openCreate()
+            }}
+            className={`-mb-px cursor-pointer border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+              view === "editor"
+                ? "border-[#E5A83D] text-[#1C1C1E]"
+                : "border-transparent text-[#6B7280] hover:text-[#1C1C1E]"
+            }`}
+          >
+            {editingArticle && view === "editor" ? "编辑文章" : "新建文章"}
+          </button>
+        </div>
+
+        {/* List view */}
+        {view === "list" ? (
+        <>
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -281,7 +313,7 @@ export default function ArticlesPage() {
             {paged.map((article, index) => (
               <div
                 key={article.id}
-                className={`group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-[#F5F4F1] ${
+                className={`group flex items-center gap-4 px-5 py-3 transition-colors hover:bg-[#F5F4F1] ${
                   index > 0 ? "border-t border-black/[0.04]" : ""
                 }`}
               >
@@ -419,21 +451,22 @@ export default function ArticlesPage() {
             </div>
           </div>
         )}
+        </>
+        ) : (
+          <ArticleEditorDialog
+            key={editorKey}
+            inline
+            article={editingArticle}
+            categories={categories}
+            tags={tags}
+            collections={collections}
+            onSaved={handleSaved}
+            onConfirmClose={() => setView("list")}
+            onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
+            onCollectionCreated={(c) => setCollections((prev) => [...prev, c])}
+          />
+        )}
       </div>
-
-      {/* Editor dialog */}
-      <ArticleEditorDialog
-        key={editorKey}
-        open={editorOpen}
-        onOpenChange={setEditorOpen}
-        article={editingArticle}
-        categories={categories}
-        tags={tags}
-        collections={collections}
-        onSaved={handleSaved}
-        onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
-        onCollectionCreated={(c) => setCollections((prev) => [...prev, c])}
-      />
 
       {/* Meta manager */}
       <MetaManagerDialog

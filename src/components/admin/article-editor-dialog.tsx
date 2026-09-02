@@ -35,8 +35,13 @@ import type {
 import type { CollectionListItem } from "@/lib/collections"
 
 interface ArticleEditorDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  /** true 时以页面内嵌(tab)形式渲染，不弹窗。 */
+  inline?: boolean
+  /** 内嵌模式下点“取消/返回列表”时回调。 */
+  onConfirmClose?: () => void
+  /** 仅弹窗模式下使用。 */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   article: ArticleListItem | null
   categories: CategoryListItem[]
   tags: TagListItem[]
@@ -99,6 +104,53 @@ const previewStyles = `
 .article-preview hr { border: none; border-top: 1px solid rgba(0,0,0,0.1); margin: 1.2em 0; }
 `
 
+interface EditorChromeProps {
+  inline: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  onConfirmClose?: () => void
+  title: string
+  children: React.ReactNode
+}
+
+/** 编辑器外壳：弹窗模式渲染 Dialog，内嵌模式渲染带标题栏的页面区块。 */
+function EditorChrome({
+  inline,
+  open,
+  onOpenChange,
+  onConfirmClose,
+  title,
+  children,
+}: EditorChromeProps) {
+  if (inline) {
+    return (
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-black/[0.06] bg-white min-h-[60vh] max-h-[calc(100vh-150px)]">
+        <div className="flex items-center justify-between border-b border-black/[0.06] bg-[#F5F4F1] px-5 py-3">
+          <h2 className="text-base font-semibold text-[#1C1C1E]">{title}</h2>
+          <Button type="button" variant="outline" size="sm" onClick={() => onConfirmClose?.()}>
+            返回列表
+          </Button>
+        </div>
+        {children}
+      </div>
+    )
+  }
+  return (
+    <Dialog open={open ?? false} onOpenChange={onOpenChange ?? (() => {})}>
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogContent
+          className="sm:max-w-6xl lg:max-w-7xl"
+          showCloseButton={false}
+        >
+          <DialogTitle className="pb-3 text-[#1C1C1E]">{title}</DialogTitle>
+          {children}
+        </DialogContent>
+      </DialogPortal>
+    </Dialog>
+  )
+}
+
 export function ArticleEditorDialog({
   open,
   onOpenChange,
@@ -109,6 +161,8 @@ export function ArticleEditorDialog({
   onSaved,
   onTagCreated,
   onCollectionCreated,
+  inline = false,
+  onConfirmClose,
 }: ArticleEditorDialogProps) {
   const [title, setTitle] = useState(article?.title ?? "")
   const [slug, setSlug] = useState(article?.slug ?? "")
@@ -333,7 +387,7 @@ export function ArticleEditorDialog({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "保存失败")
       onSaved(data)
-      onOpenChange(false)
+      onOpenChange?.(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败")
     } finally {
@@ -455,18 +509,18 @@ export function ArticleEditorDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogPortal>
-        <DialogOverlay />
-        <DialogContent
-          className="sm:max-w-6xl lg:max-w-7xl"
-          showCloseButton={false}
+      <EditorChrome
+        inline={inline}
+        open={open}
+        onOpenChange={onOpenChange}
+        onConfirmClose={onConfirmClose}
+        title={article ? "编辑文章" : "新建文章"}
+      >
+        <div
+          className={`flex flex-col gap-4 ${
+            inline ? "min-h-0 min-w-0 flex-1 px-5" : "max-h-[78vh]"
+          }`}
         >
-          <DialogTitle className="pb-3 text-[#1C1C1E]">
-            {article ? "编辑文章" : "新建文章"}
-          </DialogTitle>
-
-          <div className="flex max-h-[78vh] flex-col gap-4">
             {/* Scrollable middle: metadata + editor + hints */}
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
               {/* Collapsible metadata */}
@@ -474,7 +528,7 @@ export function ArticleEditorDialog({
                 <button
                   type="button"
                   onClick={() => setMetaOpen((v) => !v)}
-                  className="flex w-full items-center justify-between px-4 py-3 text-left"
+                  className="flex w-full items-center justify-between px-4 py-2.5 text-left"
                 >
                   <span className="text-sm font-medium text-[#1C1C1E]">文章信息</span>
                   <span className="flex items-center gap-1 text-xs text-[#6B7280]">
@@ -809,7 +863,7 @@ export function ArticleEditorDialog({
             </div>
 
             {/* Editor split */}
-            <div className="flex min-h-[32vh] flex-1 gap-4">
+            <div className="flex min-h-[42vh] flex-1 gap-4">
               {/* Left: code editor */}
               <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-black/[0.06] bg-white">
                 <div className="flex items-center justify-between border-b border-black/[0.06] bg-[#F5F4F1] px-3 py-1.5">
@@ -927,7 +981,7 @@ export function ArticleEditorDialog({
             )}
 
             {/* Footer */}
-            <div className="flex justify-end gap-2 border-t border-black/[0.06] pt-4">
+            <div className="flex justify-end gap-3 border-t border-black/[0.06] pt-4 pb-1">
               <div className="mr-auto flex flex-col gap-1.5">
                 <label className="flex cursor-pointer items-center gap-2 text-sm text-[#6B7280]">
                   <input
@@ -1032,11 +1086,12 @@ export function ArticleEditorDialog({
                     ? "更新到掘金"
                     : "发布到掘金"}
               </Button>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
-                取消
-              </Button>
-              <Button
-                onClick={handleSave}
+              {!inline && (
+                <Button variant="outline" onClick={() => onOpenChange?.(false)}>
+                  取消
+                </Button>
+              )}
+              <Button onClick={handleSave}
                 disabled={saving}
                 className="bg-[#E5A83D] text-[#181A1E] hover:bg-[#D4A035]"
               >
@@ -1051,9 +1106,7 @@ export function ArticleEditorDialog({
 
           <style>{prismStyles}</style>
           <style>{previewStyles}</style>
-        </DialogContent>
-      </DialogPortal>
-    </Dialog>
+      </EditorChrome>
 
     <ArticleGenerateDialog
       open={generateOpen}
