@@ -4,7 +4,6 @@ import {
   toArticleDetailData,
   toCategoryData,
   toTagData,
-  renderBlogTheme,
   renderThemePage,
   renderCustomThemePage,
   blogNotFoundHtml,
@@ -12,6 +11,7 @@ import {
   HOME_PAGE_TAG_LIMIT,
 } from "@/lib/blog"
 import { buildCollectionNavHtml } from "@/lib/collections-render"
+import { bumpArticleRead, buildArticleStatsBar } from "@/lib/article-stats"
 
 export const runtime = "nodejs"
 
@@ -37,6 +37,10 @@ export async function GET(
     })
   }
 
+  // 阅读量：每打开一次详情页 +1，并读取最新阅读数用于展示
+  const readCount = await bumpArticleRead(article.id)
+  const likeCount = article.likeCount
+
   const [categories, tags, nav] = await Promise.all([
     getCategories(true),
     getTags(),
@@ -52,22 +56,24 @@ export async function GET(
       .map(toTagData),
   }
 
-  // 文章属于合集时，在正文后注入合集进度导航
-  if (nav.length > 0) {
-    const html = await renderThemePage(
-      "detail",
-      dynamicData,
-      { afterBodyHtml: buildCollectionNavHtml(nav) }
-    )
-    if (html === null) {
-      return new Response(blogNotConfiguredHtml, {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      })
-    }
-    return new Response(html, {
+  // 正文后注入统计条（阅读数 + 点赞按钮）；文章属于合集时一并注入合集进度导航
+  const statsBar = buildArticleStatsBar({
+    id: article.id,
+    readCount,
+    likeCount,
+  })
+  const afterBodyHtml =
+    nav.length > 0 ? buildCollectionNavHtml(nav) + statsBar : statsBar
+
+  const html = await renderThemePage("detail", dynamicData, {
+    afterBodyHtml,
+  })
+  if (html === null) {
+    return new Response(blogNotConfiguredHtml, {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     })
   }
-
-  return renderBlogTheme(dynamicData)
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  })
 }
