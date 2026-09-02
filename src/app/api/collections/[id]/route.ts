@@ -11,6 +11,7 @@ interface PatchRequest {
   slug?: string
   description?: string | null
   coverImage?: string | null
+  juejinColumnId?: string | null
 }
 
 export async function PATCH(
@@ -25,6 +26,7 @@ export async function PATCH(
       slug: body.slug,
       description: body.description,
       coverImage: body.coverImage,
+      juejinColumnId: body.juejinColumnId,
     })
     return Response.json(collection)
   } catch (error) {

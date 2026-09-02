@@ -21,6 +21,9 @@ import {
   ChevronRight,
   Search,
   ExternalLink,
+  Download,
+  Link,
+  Unlink,
 } from "lucide-react"
 import type { ArticleListItem } from "@/lib/articles"
 
@@ -31,7 +34,13 @@ interface CollectionItem {
   description: string | null
   coverImage: string | null
   articleCount: number
+  juejinColumnId: string | null
   createdAt: string
+}
+
+interface JuejinColumn {
+  columnId: string
+  title: string
 }
 
 interface CollectionArticle extends ArticleListItem {
@@ -58,6 +67,14 @@ export default function CollectionsPage() {
   const [addSearch, setAddSearch] = useState("")
   const [reordering, setReordering] = useState(false)
 
+  // 掘金专栏同步相关状态
+  const [juejinAvailable, setJuejinAvailable] = useState(false)
+  const [juejinColumns, setJuejinColumns] = useState<JuejinColumn[]>([])
+  const [importing, setImporting] = useState(false)
+  const [pushToJuejin, setPushToJuejin] = useState(false)
+  const [bindTarget, setBindTarget] = useState<CollectionItem | null>(null)
+  const [bindBusy, setBindBusy] = useState(false)
+
   useEffect(() => {
     let cancelled = false
     Promise.all([fetch("/api/collections"), fetch("/api/articles")])
@@ -77,12 +94,83 @@ export default function CollectionsPage() {
     }
   }, [])
 
+  // 探测掘金 Cookie 是否已配置，并预取本人专栏列表（供绑定用）
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/juejin/columns")
+      .then(async (res) => {
+        if (cancelled) return
+        if (!res.ok) {
+          setJuejinAvailable(false)
+          return
+        }
+        const data = await res.json()
+        if (Array.isArray(data)) {
+          setJuejinAvailable(true)
+          setJuejinColumns(data)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setJuejinAvailable(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 从掘金导入专栏为本地合集
+  async function handleImport() {
+    setImporting(true)
+    setError("")
+    try {
+      const res = await fetch("/api/juejin/columns/import", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "导入失败")
+      window.alert(data.message)
+      const collectionsRes = await fetch("/api/collections")
+      if (collectionsRes.ok) setCollections(await collectionsRes.json())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导入失败")
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  // 绑定 / 解绑掘金专栏
+  async function handleBind(collectionId: string, columnId: string | null) {
+    setBindBusy(true)
+    try {
+      const res = await fetch(`/api/collections/${collectionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ juejinColumnId: columnId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "操作失败")
+      setCollections((prev) =>
+        prev.map((c) =>
+          c.id === collectionId
+            ? { ...c, juejinColumnId: data.juejinColumnId ?? null }
+            : c
+        )
+      )
+      if (bindTarget?.id === collectionId) {
+        setBindTarget((t) => (t ? { ...t, juejinColumnId: data.juejinColumnId ?? null } : t))
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "操作失败")
+    } finally {
+      setBindBusy(false)
+    }
+  }
+
   function openCreate() {
     setEditing(null)
     setName("")
     setSlug("")
     setDescription("")
     setCoverImage("")
+    setPushToJuejin(false)
     setError("")
     setEditorOpen(true)
   }
@@ -93,6 +181,7 @@ export default function CollectionsPage() {
     setSlug(c.slug)
     setDescription(c.description ?? "")
     setCoverImage(c.coverImage ?? "")
+    setPushToJuejin(false)
     setError("")
     setEditorOpen(true)
   }
@@ -119,10 +208,42 @@ export default function CollectionsPage() {
       )
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "保存失败")
+
+      // 新建合集且勾选「推送到掘金专栏」时，调用掘金创建接口并回写绑定的 juejinColumnId
+      let columnId: string | null = data.juejinColumnId ?? null
+      if (!editing && pushToJuejin) {
+        try {
+          const pushRes = await fetch("/api/juejin/columns", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              collectionId: data.id,
+              name: trimmed,
+              abstract: description.trim() || undefined,
+            }),
+          })
+          const pushData = await pushRes.json()
+          if (pushRes.ok && pushData.columnId) {
+            columnId = pushData.columnId
+            window.alert(`已在掘金创建专栏「${trimmed}」并同步到该合集`)
+          } else {
+            window.alert(
+              `合集「${trimmed}」已创建，但推送掘金专栏失败：${pushData.error || "未知错误"}`
+            )
+          }
+        } catch (e) {
+          window.alert(
+            `合集「${trimmed}」已创建，但推送掘金专栏异常：${
+              e instanceof Error ? e.message : "未知错误"
+            }`
+          )
+        }
+      }
+
       setCollections((prev) =>
         editing
           ? prev.map((c) => (c.id === editing.id ? { ...c, ...data } : c))
-          : [...prev, { ...data, articleCount: 0 }]
+          : [...prev, { ...data, articleCount: 0, juejinColumnId: columnId }]
       )
       setEditorOpen(false)
     } catch (e) {
@@ -225,6 +346,25 @@ export default function CollectionsPage() {
             <Button
               variant="outline"
               size="sm"
+              onClick={handleImport}
+              disabled={importing || !juejinAvailable}
+              title={
+                juejinAvailable
+                  ? "从掘金拉取我的专栏并导入为本地合集"
+                  : "先在「个人管理」配置掘金 Cookie"
+              }
+              className="gap-1.5"
+            >
+              {importing ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Download className="size-3.5" />
+              )}
+              从掘金导入
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => window.open("/collections", "_blank")}
               className="gap-1.5"
             >
@@ -240,6 +380,12 @@ export default function CollectionsPage() {
             </Button>
           </div>
         </div>
+
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+            {error}
+          </div>
+        )}
 
         {/* Loading */}
         {loading && (
@@ -297,6 +443,19 @@ export default function CollectionsPage() {
                           {c.articleCount} 篇文章
                         </span>
                         <span>/collections/{c.slug}</span>
+                        {c.juejinColumnId && (
+                          <button
+                            type="button"
+                            onClick={() => setBindTarget(c)}
+                            className="rounded-full bg-green-600/10 px-2 py-0.5 text-green-700 hover:bg-green-600/20"
+                            title="已同步掘金专栏，点击查看/解绑"
+                          >
+                            <span className="flex items-center gap-1">
+                              <Link className="size-2.5" />
+                              已同步掘金专栏
+                            </span>
+                          </button>
+                        )}
                         {c.description && (
                           <span className="truncate text-[#6B7280]/70">
                             {c.description}
@@ -315,6 +474,16 @@ export default function CollectionsPage() {
                     >
                       <Library className="size-3.5" />
                     </Button>
+                    {juejinAvailable && !c.juejinColumnId && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => setBindTarget(c)}
+                        title="绑定掘金专栏"
+                      >
+                        <Link className="size-3.5" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-sm"
@@ -494,6 +663,17 @@ export default function CollectionsPage() {
                   placeholder="https://..."
                 />
               </div>
+              {!editing && juejinAvailable && (
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-[#1C1C1E]">
+                  <input
+                    type="checkbox"
+                    checked={pushToJuejin}
+                    onChange={(e) => setPushToJuejin(e.target.checked)}
+                    className="size-4 accent-[#E5A83D]"
+                  />
+                  保存后同时推送到掘金创建同名专栏
+                </label>
+              )}
               {error && <p className="text-sm text-red-500">{error}</p>}
               <div className="flex justify-end gap-2">
                 <Button
@@ -512,6 +692,85 @@ export default function CollectionsPage() {
                 </Button>
               </div>
             </div>
+          </DialogContent>
+        </DialogPortal>
+      </Dialog>
+
+      {/* 掘金专栏绑定/解绑对话框 */}
+      <Dialog
+        open={!!bindTarget}
+        onOpenChange={(open) => {
+          if (!open) setBindTarget(null)
+        }}
+      >
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <DialogTitle>同步掘金专栏</DialogTitle>
+            {bindTarget && (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-[#1C1C1E]">
+                  合集「{bindTarget.name}」
+                </p>
+
+                {bindTarget.juejinColumnId ? (
+                  <div className="flex flex-col gap-3">
+                    <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-green-600/10 px-2 py-0.5 text-xs text-green-700">
+                      <Link className="size-3" />
+                      已同步掘金专栏
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={bindBusy}
+                      onClick={() => handleBind(bindTarget.id, null)}
+                      className="w-fit gap-1.5 text-red-500"
+                    >
+                      {bindBusy ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Unlink className="size-3.5" />
+                      )}
+                      解绑
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    <p className="text-xs text-[#6B7280]">
+                      绑定一个掘金专栏：之后该合集下文章发布/更新到掘金时，会自动同步进对应专栏
+                    </p>
+                    {juejinColumns.length === 0 ? (
+                      <p className="text-xs text-[#B08900]">
+                        掘金暂无可用专栏，可先在新合集弹窗勾选「推送到掘金」创建
+                      </p>
+                    ) : (
+                      <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-lg border border-black/[0.06] bg-white p-1.5">
+                        {juejinColumns.map((col) => {
+                          const isBound =
+                            col.columnId === bindTarget.juejinColumnId
+                          return (
+                            <button
+                              key={col.columnId}
+                              type="button"
+                              disabled={bindBusy || isBound}
+                              onClick={() => handleBind(bindTarget.id, col.columnId)}
+                              className="flex items-center justify-between rounded-md px-2 py-1.5 text-left text-sm text-[#1C1C1E] hover:bg-[#F5F4F1] disabled:cursor-default disabled:text-[#B3B3B3]"
+                            >
+                              <span className="truncate">{col.title}</span>
+                              {isBound && (
+                                <span className="shrink-0 text-xs text-green-600">
+                                  已绑定
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </DialogContent>
         </DialogPortal>
       </Dialog>

@@ -141,14 +141,15 @@ model ArticleTag {
 }
 
 model Collection {
-  id          String               @id @default(uuid())
-  name        String               @unique
-  slug        String               @unique
-  description String?
-  coverImage  String?              @map("cover_image")
-  articles    ArticleCollection[]
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
+  id             String               @id @default(uuid())
+  name           String               @unique
+  slug           String               @unique
+  description    String?
+  coverImage     String?              @map("cover_image")
+  juejinColumnId String?              @map("juejin_column_id")
+  articles       ArticleCollection[]
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
 
   @@map("collections")
 }

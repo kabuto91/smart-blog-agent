@@ -46,13 +46,14 @@ const DEFAULT_TIMEOUT = 180000
 // ---------- 工具 ----------
 
 function parseArgs(argv) {
-  const args = { tags: [], headless: false, timeout: DEFAULT_TIMEOUT }
+  const args = { tags: [], columnNames: [], headless: false, timeout: DEFAULT_TIMEOUT }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const next = () => argv[++i]
     if (a === "--file") args.file = next()
     else if (a === "--title") args.title = next()
     else if (a === "--tags") args.tags = (next() ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+    else if (a === "--column-names") args.columnNames = (next() ?? "").split(",").map((s) => s.trim()).filter(Boolean)
     else if (a === "--category") args.category = next()
     else if (a === "--cookie") args.cookie = next()
     else if (a === "--article-id") args.articleId = next()
@@ -464,7 +465,42 @@ async function main() {
       }
     }
 
-    // 9. 点击「确定并发布」
+    // 9. 选择专栏（可选，best-effort）：掘金发布弹窗的「收录至专栏」字段为 byte-select 搜索下拉，
+    //    占位符真实内容为「请搜索添加专栏，同一篇文章最多添加三个专栏」（实测确认）。
+    //    选中失败不阻断发布，仅记录。
+    let selectedColumns = []
+    if (args.columnNames.length) {
+      for (const colName of args.columnNames) {
+        const colSelect = await firstVisible(page, [
+          '.byte-select__placeholder:has-text("请搜索添加专栏")',
+          'div[class*="byte-select"]:has-text("请搜索添加专栏")',
+          'text=请搜索添加专栏',
+        ], 8000)
+        if (!colSelect) {
+          console.log(`专栏：未能定位「添加专栏」下拉，跳过「${colName}」`)
+          continue
+        }
+        await colSelect.click()
+        await page.keyboard.insertText(colName)
+        await delay(1200)
+        const colOpt = await firstVisible(page, [
+          `.byte-select-dropdown div.byte-select-option:has-text("${colName}")`,
+          `div.byte-select-option:has-text("${colName}")`,
+          `li.byte-select-option:has-text("${colName}")`,
+          `[class*="byte-select-option"]:has-text("${colName}")`,
+        ], 6000)
+        if (colOpt) {
+          await colOpt.click()
+          selectedColumns.push(colName)
+          console.log(`专栏：已选择「${colName}」`)
+        } else {
+          console.log(`专栏：搜索「${colName}」未找到匹配项，跳过`)
+        }
+        await delay(500)
+      }
+    }
+
+    // 10. 点击「确定并发布」
     if (!confirmBtnWait) {
       const shot = await saveFailureScreenshot(page, "confirm-not-found")
       console.log(JSON.stringify({ ok: false, message: `未能定位「确定并发布」按钮${shot ? `，截图：${shot}` : ""}` }))
@@ -482,7 +518,8 @@ async function main() {
         dryRun: true,
         mode: isUpdate ? "update" : "new",
         category: selectedCategory || (category || "未选择"),
-        message: `试跑成功（${isUpdate ? "更新流程" : "新增流程"}）：标题/正文/分类/标签均已填充，发布弹窗已就绪，未执行最终发布${shot ? `，截图：${shot}` : ""}`,
+        columns: selectedColumns,
+        message: `试跑成功（${isUpdate ? "更新流程" : "新增流程"}）：标题/正文/分类/标签均已填充，发布弹窗已就绪，未执行最终发布${selectedColumns.length ? `，选中专栏：${selectedColumns.join("、")}` : ""}${shot ? `，截图：${shot}` : ""}`,
       }))
       return
     }
@@ -539,7 +576,8 @@ async function main() {
         postId,
         status: auditing ? "auditing" : "published",
         category: selectedCategory || (category || ""),
-        message: `${isUpdate ? "更新成功" : "发布成功"}${auditing ? "（审核中）" : ""}：${url}`,
+        columns: selectedColumns,
+        message: `${isUpdate ? "更新成功" : "发布成功"}${auditing ? "（审核中）" : ""}：${url}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}`,
       }))
     } else if (/\/published/.test(finalUrl)) {
       // 跳转到已发布列表页：从页面中提取刚发布文章的文章链接
@@ -564,7 +602,8 @@ async function main() {
         url: postUrl || finalUrl,
         postId: pid,
         status: "published",
-        message: `${isUpdate ? "更新成功" : "发布成功"}${pid ? `：${postUrl}` : "（已跳转到发布列表页，但未能提取文章链接）"}`,
+        columns: selectedColumns,
+        message: `${isUpdate ? "更新成功" : "发布成功"}${pid ? `：${postUrl}` : "（已跳转到发布列表页，但未能提取文章链接）"}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}`,
       }))
     } else {
       const shot = await saveFailureScreenshot(page, "no-redirect")

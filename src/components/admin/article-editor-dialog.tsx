@@ -207,8 +207,8 @@ export function ArticleEditorDialog({
   const [generateOpen, setGenerateOpen] = useState(false)
 
   const previewHtml = useMemo(
-    () => (open ? (marked.parse(content, { async: false }) as string) : ""),
-    [content, open]
+    () => (inline || open ? (marked.parse(content, { async: false }) as string) : ""),
+    [content, open, inline]
   )
 
   // 标签下拉过滤结果：排除已选，按输入匹配，最多展示 50 条

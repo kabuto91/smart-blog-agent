@@ -17,6 +17,7 @@ export interface CollectionListItem {
   description: string | null
   coverImage: string | null
   articleCount: number
+  juejinColumnId: string | null
   createdAt: Date
 }
 
@@ -64,6 +65,7 @@ function mapCollection(
     description: c.description,
     coverImage: c.coverImage,
     articleCount: list.length,
+    juejinColumnId: c.juejinColumnId,
     createdAt: c.createdAt,
     articles: list,
   }
@@ -91,6 +93,7 @@ export async function getCollections(
     description: c.description,
     coverImage: c.coverImage,
     articleCount: c._count.articles,
+    juejinColumnId: c.juejinColumnId,
     createdAt: c.createdAt,
   }))
 }
@@ -119,10 +122,10 @@ export async function getCollectionById(
   return mapCollection(row, opts.publishedOnly ?? false)
 }
 
-/** 文章所属的全部合集元信息（含在该合集内的 position）。 */
+/** 文章所属的全部合集元信息（含在该合集内的 position 及掘金专栏绑定）。 */
 export async function getCollectionsForArticle(
   articleId: string
-): Promise<Array<CollectionMeta & { position: number }>> {
+): Promise<Array<CollectionMeta & { position: number; juejinColumnId: string | null }>> {
   const rows = await prisma.articleCollection.findMany({
     where: { articleId },
     include: { collection: true },
@@ -133,6 +136,7 @@ export async function getCollectionsForArticle(
     name: ac.collection.name,
     slug: ac.collection.slug,
     position: ac.position,
+    juejinColumnId: ac.collection.juejinColumnId,
   }))
 }
 
@@ -193,6 +197,7 @@ export async function updateCollection(
     slug?: string
     description?: string | null
     coverImage?: string | null
+    juejinColumnId?: string | null
   }
 ) {
   return prisma.collection.update({ where: { id }, data })
@@ -272,4 +277,31 @@ export async function setArticleCollections(
       },
     })
   }
+}
+
+/**
+ * 把掘金专栏绑定到本地合集（先 findFirst 判断合集存在，再 update 写入 juejinColumnId）。
+ * 返回更新后的合集 juejinColumnId；合集不存在返回 null。
+ */
+export async function bindCollectionJuejinColumn(
+  collectionId: string,
+  juejinColumnId: string
+): Promise<string | null> {
+  const existing = await prisma.collection.findFirst({ where: { id: collectionId } })
+  if (!existing) return null
+  await prisma.collection.update({
+    where: { id: collectionId },
+    data: { juejinColumnId },
+  })
+  return juejinColumnId
+}
+
+/** 按掘金专栏 id 查找已绑定的本地合集（可能不存在）。 */
+export async function findCollectionByJuejinColumnId(
+  columnId: string
+): Promise<{ id: string; name: string } | null> {
+  return prisma.collection.findFirst({
+    where: { juejinColumnId: columnId },
+    select: { id: true, name: true },
+  })
 }

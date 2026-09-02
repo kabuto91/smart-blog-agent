@@ -3,6 +3,8 @@ import { promises as fs } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { getArticleById, updateJuejinArticleId } from "@/lib/articles"
+import { getCollectionsForArticle } from "@/lib/collections"
+import { fetchOwnColumns } from "@/lib/juejin-columns"
 import { getJuejinToken } from "@/lib/site-config"
 
 export const runtime = "nodejs"
@@ -25,6 +27,7 @@ interface PublishResult {
   url?: string
   postId?: string
   status?: string
+  columns?: string[]
   message: string
 }
 
@@ -113,6 +116,29 @@ export async function POST(request: Request) {
       scriptArgs.push("--tags", tags.join(","))
     }
 
+    // 文章→掘金专栏同步：收集文章所属「已绑定掘金专栏」的合集，取前 3 个，
+    // 把 columnId 映射为掘金专栏标题传入 --column-names（best-effort，失败不阻断发布）。
+    let syncedColumns: string[] = []
+    try {
+      const cols = await getCollectionsForArticle(article.id)
+      const bound = cols
+        .map((c) => c.juejinColumnId)
+        .filter((id): id is string => !!id)
+      if (bound.length > 0) {
+        const ownColumns = await fetchOwnColumns(cookie)
+        const byId = new Map(ownColumns.map((c) => [c.columnId, c.title]))
+        syncedColumns = bound.slice(0, 3)
+          .map((id) => byId.get(id))
+          .filter((t): t is string => !!t)
+        if (syncedColumns.length > 0) {
+          scriptArgs.push("--column-names", syncedColumns.join(","))
+        }
+      }
+    } catch {
+      // 专栏拉取失败不影响文章发布
+      syncedColumns = []
+    }
+
     try {
       const { stdout } = await runScript(scriptArgs)
       const result = parseResult(stdout)
@@ -132,6 +158,7 @@ export async function POST(request: Request) {
           postId: result.postId ?? juejinArticleId,
           status: result.status,
           juejinArticleId,
+          columns: result.columns?.length ? result.columns : syncedColumns,
           message: result.message,
         })
       }
