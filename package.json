@@ -2,6 +2,7 @@
   "name": "smart-blog-agent",
   "version": "0.1.0",
   "private": true,
+  "description": "AI 驱动的博客 CMS：LangGraph 多节点 Agent 端到端生成整套博客主题（流式预览/迭代修改/质量自校验），内置 AI 文章生成、用户画像注入与掘金自动发布（Playwright）",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
