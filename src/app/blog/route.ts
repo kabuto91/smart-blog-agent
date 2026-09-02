@@ -6,6 +6,7 @@ import {
   toTagData,
   renderBlogTheme,
   HOME_PAGE_ARTICLE_LIMIT,
+  HOME_PAGE_TAG_LIMIT,
 } from "@/lib/blog"
 
 export const runtime = "nodejs"
@@ -26,6 +27,9 @@ export async function GET() {
     articles: result.items.map(toArticleData),
     featuredArticles: featured.map(toArticleData),
     categories: categories.map(toCategoryData),
-    tags: tags.map(toTagData),
+    tags: [...tags]
+      .sort((a, b) => b.articleCount - a.articleCount)
+      .slice(0, HOME_PAGE_TAG_LIMIT)
+      .map(toTagData),
   })
 }

@@ -9,6 +9,7 @@ import {
   renderCustomThemePage,
   blogNotFoundHtml,
   blogNotConfiguredHtml,
+  HOME_PAGE_TAG_LIMIT,
 } from "@/lib/blog"
 import { buildCollectionNavHtml } from "@/lib/collections-render"
 
@@ -45,7 +46,10 @@ export async function GET(
   const dynamicData = {
     articles: [toArticleDetailData(article)],
     categories: categories.map(toCategoryData),
-    tags: tags.map(toTagData),
+    tags: [...tags]
+      .sort((a, b) => b.articleCount - a.articleCount)
+      .slice(0, HOME_PAGE_TAG_LIMIT)
+      .map(toTagData),
   }
 
   // 文章属于合集时，在正文后注入合集进度导航

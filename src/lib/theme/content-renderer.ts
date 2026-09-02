@@ -996,7 +996,9 @@ function renderListField(
     for (const [mapKey, dataKey] of mappings) {
       const targets = mappedElements(clone, mapKey)
       if (targets.length === 0) continue
-      const value = item[dataKey]
+      // 标签芯片模板若用 data-map="tag" 而非 "name"（如详情页文章标签区），
+      // 其 data-key 与动态数据键不一致，回退到 item.name 避免芯片保留样例文本。
+      const value = item[dataKey] ?? (dataKey === "tag" ? item.name : undefined)
       if (value === undefined) continue
       if (mapKey === "link") {
         linkApplied = true

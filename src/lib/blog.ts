@@ -28,6 +28,9 @@ export const BLOG_PAGE_SIZE = 10
 
 export const HOME_PAGE_ARTICLE_LIMIT = 6
 
+/** 首页标签云只展示文章数最多的前 N 个标签，避免标签过多导致首页过长。 */
+export const HOME_PAGE_TAG_LIMIT = 10
+
 export function formatDate(date: Date): string {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, "0")

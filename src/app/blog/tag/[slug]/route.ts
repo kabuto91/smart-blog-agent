@@ -6,6 +6,7 @@ import {
   renderBlogTheme,
   renderCustomThemePage,
   BLOG_PAGE_SIZE,
+  HOME_PAGE_TAG_LIMIT,
   blogNotFoundHtml,
 } from "@/lib/blog"
 
@@ -44,7 +45,10 @@ export async function GET(
   return renderBlogTheme({
     articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
-    tags: tags.map(toTagData),
+    tags: [...tags]
+      .sort((a, b) => b.articleCount - a.articleCount)
+      .slice(0, HOME_PAGE_TAG_LIMIT)
+      .map(toTagData),
     pagination: {
       page: result.page,
       totalPages: result.totalPages,
