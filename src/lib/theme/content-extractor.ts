@@ -436,6 +436,20 @@ function findRepeatableItemTemplate(root: Element): Element | null {
   if (sameTag && sameMaps) {
     return items[0]
   }
+  // 唯一一个 grid/list/row/feed 包装（如 .post-grid 内含单个卡片样本）时：
+  // 它是承载列表项的宿主，应向下钻取到真正的列表项（卡片），
+  // 避免把父级面板（含标题的 .container）整块记录为 itemTemplate。
+  if (items.length === 1) {
+    const wrapper = items[0]
+    const isGridList =
+      wrapper.matches("ul, ol") || /grid|list|row|feed/i.test(wrapper.className || "")
+    if (isGridList) {
+      const first = wrapper.firstElementChild
+      if (first && (first.matches("[data-map]") || first.querySelector("[data-map]"))) {
+        return first
+      }
+    }
+  }
   return null
 }
 

@@ -1201,11 +1201,17 @@ function findDynamicListHost(container: Element): Element | null {
     }
     return list
   }
-  // 支持更多容器类型（div/section/article）
+  // 支持更多容器类型（div/section/article）。优先选择类名含 grid/list/row/feed
+  // 的包装宿主（如 .post-grid / .magazine-grid），避免误把上层 .container 这类
+  // 含标题的面板当成列表宿主——否则会把整块面板逐条克隆，导致重复区块。
+  let firstDataMap: Element | null = null
+  let gridHost: Element | null = null
   for (const list of Array.from(container.querySelectorAll("div, section, article"))) {
-    if (list.querySelector("[data-map]")) return list
+    if (!list.querySelector("[data-map]")) continue
+    if (!firstDataMap) firstDataMap = list
+    if (/grid|list|row|feed/i.test(list.className || "")) gridHost = list
   }
-  return null
+  return gridHost ?? firstDataMap
 }
 
 /** 判断 ul 是否嵌在容器内的卡片形祖先里（li 字段是祖先字段的真子集）。 */
@@ -1274,6 +1280,14 @@ function resolveListItemTemplate(
   if (looksLikeItemTemplate(field.itemTemplate)) {
     const dom = new JSDOM(field.itemTemplate).window.document
     template = dom.body.firstElementChild
+  }
+
+  // 配置 itemTemplate 若含有区块级 data-content 字段（如「最新文章」标题/描述），
+  // 说明它被记录为整块面板（标题 + 列表容器 + 卡片）而非单个列表项。保留它会被
+  // 逐条克隆复制，导致同一批文章渲染成多个重复区块。此时弃用配置模板，改按宿主
+  // 结构推导真实列表项。动态列表集类型（如导航/自定义列表）除外，避免误伤品牌模板。
+  if (field.type !== "dynamic-list" && template && /data-content\s*=/.test(field.itemTemplate)) {
+    template = null
   }
 
   let host = findDynamicListHost(container) ?? container

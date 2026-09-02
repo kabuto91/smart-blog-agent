@@ -477,6 +477,61 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(out).not.toContain("占位模板")
   })
 
+  it("itemTemplate 为整块面板（含 data-content 标题）时不逐条复制面板，仅渲染一个标题/一个网格", () => {
+    // 复现首页 bug：配置记录的 itemTemplate 是 <div class="container">（含
+    // section 标题「最新文章」+ 网格 + 单卡片），渲染时若保留会被逐条克隆，
+    // 导致同一批文章显示成多个重复区块。应弃用面板模板、按网格宿主重推真实卡片，
+    // 使标题只出现一次、6 张卡片平铺进同一个网格。
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: `<div class="container">
+          <h2 class="section-title" data-content="latest-title" data-content-type="text">最新文章</h2>
+          <div class="post-grid">
+            <article class="post-card">
+              <div class="meta"><span data-map="date">2024-12-18</span><span data-map="category">Frontend</span></div>
+              <h3 class="post-title"><a href="#" data-map="link"><span data-map="title">模板标题</span></a></h3>
+              <p class="excerpt" data-map="excerpt">模板摘要</p>
+            </article>
+          </div>
+        </div>`,
+        fieldMapping: {
+          date: "date",
+          category: "category",
+          link: "link",
+          title: "title",
+          excerpt: "excerpt",
+        },
+      },
+    }
+    const html = `<section class="section" data-content="article-list" data-content-type="dynamic-articles">
+      <div class="container">
+        <h2 class="section-title" data-content="latest-title">最新文章</h2>
+        <div class="post-grid">
+          <article class="post-card">
+            <div class="meta"><span data-map="date">2024-12-18</span><span data-map="category">Frontend</span></div>
+            <h3 class="post-title"><a href="#" data-map="link"><span data-map="title">模板标题</span></a></h3>
+            <p class="excerpt" data-map="excerpt">模板摘要</p>
+          </article>
+        </div>
+      </div>
+    </section>`
+    const items = dynamicData.articles!.map((a, i) => ({
+      title: `文章${i}`, excerpt: "摘要", date: "2026-01-01", category: "前端", slug: a.slug, tags: [],
+    }))
+    const out = renderContent(html, config, { ...dynamicData, articles: items }, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const section = doc.querySelector('[data-content="article-list"]')
+    // 「最新文章」标题只出现一次
+    expect(doc.querySelectorAll('[data-content="latest-title"]').length).toBe(1)
+    // 只有一个网格宿主，所有卡片全部平铺其中，而非逐条复制整块面板
+    expect(section!.querySelectorAll(".post-grid").length).toBe(1)
+    expect(section!.querySelectorAll(".post-grid .post-card").length).toBe(2)
+  })
+
   it("容器直接含单个样本项且与 itemTemplate 同构时，克隆项平铺不嵌套", () => {
     // 复现列表页 bug：section 直接含唯一样本 <article class="post-list-item">，
     // itemTemplate 与样本同构（同标签同类名），宿主应回退为 section 自身

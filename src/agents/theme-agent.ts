@@ -161,6 +161,7 @@ const DYNAMIC_CONTENT_RULE = `【动态内容识别规则】生成页面时，�
    </section>
    切勿给每个文章项的标题/摘要/日期单独打 data-content="text"——整块就是一个动态列表。
    其中，「精选文章/编辑推荐」这类由后台手动挑选的区块，请改用 data-content="featured-articles"（同样 data-content-type="dynamic-articles"），其余文章列表/网格都用 data-content="article-list"。
+   ⚠️【同一页只允许一个文章流】：同一页面最多只能有一个绑定「最新文章/全部文章」的动态文章区块（data-content="article-list"）。不要把同一批文章在同一页重复展示成多个区块（例如既放「最新文章」又放「归档/时间线/热门」，或放了 featured-articles 又放 article-list，结果都渲染成同一批文章）。一个页面只允许：要么一个 article-list（推荐），要么一个精选类 featured-articles，二者不并存；也不要在同一个页面上再做一个展示相同文章的归档/时间线列表。归档/时间线列表应放到归档页 /blog/archive。
 2. 标签/分类列表：标签云、标签/分类导航、筛选行 → 分别用 data-content-type="dynamic-tags" / "dynamic-categories"（模板项内 data-map="name" 标记名称、data-map="link" 标记链接）。
 3. 导航/页脚链接列表 → data-content-type="nav-list"。
 
@@ -216,13 +217,14 @@ const PAGE_SPEC: Record<
 > = {
   home: {
     context: "博客首页 /blog",
-    bodyPrompt: `根据用户描述的风格和需求，自由组织首页区块布局。首页是博客的门面，可以包含任意区块组合（如文章展示、作者介绍、统计、时间线等），由你根据设计方向决定。
+    bodyPrompt: `根据用户描述的风格和需求，自由组织首页区块布局。首页是博客的门面，可以包含任意区块组合（如文章展示、作者介绍、统计、特色卡片等），由你根据设计方向决定。
 
 【数据绑定规则】
 ${DYNAMIC_CONTENT_RULE}
 ${DYNAMIC_ARTICLES_RULE}
 ${DYNAMIC_TAG_RULE}
-- 首页自由组织的区块（作者介绍、统计、时间线、特色卡片组合等）内的所有标题（h2/h3/h4）与段落文本（p）都必须标记 data-content + data-content-type="text"，key 用语义化英文命名（如 core-modules-title、feature-card-desc）。
+- ⚠️ 首页通常只需要一个「最新文章」文章流区块（data-content="article-list"，且只出现一次）。仅在用户明确要「手动精选文章」时才额外考虑 featured-articles，但文章流区块整体全页只能有一个——不要把同一批文章用「最新文章」「精选」「归档/时间线」等多个区块重复呈现。
+- 首页自由组织的区块（作者介绍、统计、特色卡片组合等）内的所有标题（h2/h3/h4）与段落文本（p）都必须标记 data-content + data-content-type="text"，key 用语义化英文命名（如 core-modules-title、feature-card-desc）。
 
 【头像占位】
 如需在正文展示作者信息，可放一个作者头像占位：${AVATAR_PLACEHOLDER}（渲染期会确保全局只有 1 个；该区域不要标记 data-page-type）。`,
