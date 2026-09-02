@@ -1,4 +1,5 @@
 import { prisma } from "./db/client"
+import { encrypt, decrypt } from "./crypto"
 import { EDITABLE_KEYS, STAT_KEYS, STAT_FIELDS } from "./field-registry"
 
 export async function getSiteConfig(): Promise<Record<string, string>> {
@@ -125,3 +126,43 @@ export async function saveUserProfile(
 }
 
 export { EDITABLE_KEYS }
+
+/** site_config.config 中掘金登录 Cookie 字符串的键。刻意不进 EDITABLE_KEYS，避免污染站点设置文本表单。 */
+export const JUJIN_TOKEN_KEY = "juejinToken"
+
+/** 读取掘金登录 Cookie 字符串（解密）。 */
+export async function getJuejinToken(): Promise<string> {
+  try {
+    const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
+    const raw = row?.config
+      ? (JSON.parse(row.config) as Record<string, unknown>)
+      : {}
+    const stored = raw[JUJIN_TOKEN_KEY]
+    if (typeof stored === "string" && stored) {
+      try {
+        return decrypt(stored)
+      } catch {
+        return ""
+      }
+    }
+  } catch {
+    // table may not exist yet
+  }
+  return ""
+}
+
+/** 保存掘金登录 Cookie 字符串（加密写入 site_config.config，不影响其它字段）。传空串则清除。 */
+export async function saveJuejinToken(token: string): Promise<void> {
+  const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
+  const current = row?.config ? (JSON.parse(row.config) as Record<string, unknown>) : {}
+  if (token) {
+    current[JUJIN_TOKEN_KEY] = encrypt(token)
+  } else {
+    delete current[JUJIN_TOKEN_KEY]
+  }
+  await prisma.siteConfig.upsert({
+    where: { id: 1 },
+    create: { id: 1, config: JSON.stringify(current) },
+    update: { config: JSON.stringify(current) },
+  })
+}

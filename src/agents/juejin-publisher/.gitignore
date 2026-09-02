@@ -1,0 +1,8 @@
+# 登录态（cookie + localStorage），严禁提交
+.auth/
+
+# 依赖
+node_modules/
+
+# 失败截图等临时产物
+.tmp/

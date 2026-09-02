@@ -28,6 +28,7 @@ export interface ArticleListItem {
   coverImage: string | null
   content: string
   published: boolean
+  juejinArticleId: string | null
   category: CategoryMeta | null
   tags: TagMeta[]
   collections: CollectionMeta[]
@@ -56,6 +57,7 @@ export interface ArticleInput {
   excerpt?: string
   coverImage?: string | null
   published?: boolean
+  juejinArticleId?: string | null
   categoryId?: string | null
   tagIds?: string[]
   collectionIds?: string[]
@@ -116,6 +118,7 @@ export function mapArticle(row: ArticleRow): ArticleListItem {
     coverImage: row.coverImage,
     content: row.content,
     published: row.published,
+    juejinArticleId: row.juejinArticleId,
     category: mapCategory(row.category),
     tags: row.tags.map((at) => ({
       id: at.tag.id,
@@ -257,6 +260,7 @@ export async function createArticle(input: ArticleInput): Promise<ArticleListIte
       excerpt: deriveExcerpt(input.excerpt, input.content),
       coverImage: input.coverImage ?? null,
       published: input.published ?? false,
+      juejinArticleId: input.juejinArticleId ?? null,
       categoryId: input.categoryId ?? null,
       tags: input.tagIds?.length
         ? { create: input.tagIds.map((tagId) => ({ tagId })) }
@@ -299,6 +303,9 @@ export async function updateArticle(
       }),
       ...(input.coverImage !== undefined && { coverImage: input.coverImage }),
       ...(input.published !== undefined && { published: input.published }),
+      ...(input.juejinArticleId !== undefined && {
+        juejinArticleId: input.juejinArticleId,
+      }),
       ...(input.categoryId !== undefined && {
         category: input.categoryId
           ? { connect: { id: input.categoryId } }
@@ -334,6 +341,23 @@ export async function updateArticle(
     include: ARTICLE_INCLUDE,
   })
   return row ? mapArticle(row) : null
+}
+
+/**
+ * 单独维护掘金文章 ID（发布后回写 / 解除绑定置空）。
+ * 使用 findFirst + update 而非 upsert，避免 route=null 之类的唯一约束问题。
+ */
+export async function updateJuejinArticleId(
+  id: string,
+  juejinArticleId: string | null
+): Promise<boolean> {
+  const existing = await prisma.article.findFirst({ where: { id } })
+  if (!existing) return false
+  await prisma.article.update({
+    where: { id },
+    data: { juejinArticleId },
+  })
+  return true
 }
 
 export async function deleteArticle(id: string): Promise<void> {
@@ -407,4 +431,37 @@ export async function updateTag(
 
 export async function deleteTag(id: string): Promise<void> {
   await prisma.tag.delete({ where: { id } })
+}
+
+/**
+ * 用指定名称集合整体重建本地标签库：
+ * 清除所有标签及其与文章的关联（ArticleTag），再按名称批量新建标签。
+ * 用于「从掘金导入标签」——以掘金官方标签库替换本地全部标签。
+ */
+export async function replaceAllTagsWith(
+  names: string[]
+): Promise<{ imported: number; deleted: number }> {
+  const uniqueNames = [...new Set(names.map((n) => n.trim()).filter(Boolean))]
+
+  // 掘金标签存在同义异构（如 "TypeScript" 与 "typescript"），slugify 后会撞唯一约束，
+  // 这里在冲突时追加数字后缀，保证每个 slug 唯一。
+  const used = new Map<string, number>()
+  const rows = uniqueNames.map((name) => {
+    const base = slugify(name)
+    const count = used.get(base) ?? 0
+    used.set(base, count + 1)
+    const slug = count === 0 ? base : `${base}-${count + 1}`
+    return { name, slug }
+  })
+
+  const result = await prisma.$transaction(async (tx) => {
+    const deleted = await tx.articleTag.deleteMany()
+    await tx.tag.deleteMany({})
+    if (rows.length > 0) {
+      await tx.tag.createMany({ data: rows })
+    }
+    return deleted.count
+  })
+
+  return { imported: rows.length, deleted: result }
 }

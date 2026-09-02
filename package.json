@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "juejin:login": "node src/agents/juejin-publisher/scripts/login.mjs",
+    "juejin:publish": "node src/agents/juejin-publisher/scripts/publish.mjs",
+    "juejin:test-cookie": "node src/agents/juejin-publisher/scripts/test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -30,6 +33,7 @@
     "pngjs": "^7.0.0",
     "prisma": "^7.9.1",
     "prismjs": "^1.30.0",
+    "playwright": "^1.49.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-simple-code-editor": "^0.14.1",

@@ -112,19 +112,20 @@ model Tag {
 }
 
 model Article {
-  id          String              @id @default(uuid())
-  title       String
-  slug        String              @unique
-  content     String
-  excerpt     String?
-  coverImage  String?             @map("cover_image")
-  published   Boolean             @default(false)
-  categoryId  String?             @map("category_id")
-  category    Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  tags        ArticleTag[]
-  collections ArticleCollection[]
-  createdAt   DateTime            @default(now()) @map("created_at")
-  updatedAt   DateTime            @updatedAt @map("updated_at")
+  id              String              @id @default(uuid())
+  title           String
+  slug            String              @unique
+  content         String
+  excerpt         String?
+  coverImage      String?             @map("cover_image")
+  published       Boolean             @default(false)
+  categoryId      String?             @map("category_id")
+  juejinArticleId String?             @map("juejin_article_id")
+  category        Category?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tags            ArticleTag[]
+  collections     ArticleCollection[]
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
 
   @@map("articles")
 }

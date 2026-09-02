@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Loader2, Pencil, Trash2, Plus, X, Check } from "lucide-react"
+import { Loader2, Pencil, Trash2, Plus, X, Check, Download } from "lucide-react"
 import type { CategoryListItem, TagListItem } from "@/lib/articles"
 
 interface MetaManagerDialogProps {
@@ -38,6 +38,7 @@ export function MetaManagerDialog({
   const [error, setError] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState("")
+  const [importing, setImporting] = useState(false)
 
   function handleTabChange(next: TabKey) {
     setTab(next)
@@ -105,6 +106,32 @@ export function MetaManagerDialog({
       setEditingId(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : "重命名失败")
+    }
+  }
+
+  async function handleImportFromJuejin() {
+    if (
+      !window.confirm(
+        "将从掘金导入其全部官方标签，并删除当前所有标签及文章与标签的关联（不可恢复）。确定继续？"
+      )
+    ) {
+      return
+    }
+    setImporting(true)
+    setError("")
+    try {
+      const res = await fetch("/api/tags/import-from-juejin", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "导入失败")
+      const reload = await fetch("/api/tags")
+      if (reload.ok) {
+        onTagsChanged(await reload.json())
+      }
+      setError(`导入完成：${data.message}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "导入失败")
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -189,6 +216,22 @@ export function MetaManagerDialog({
           </div>
 
           {error && <p className="text-sm text-red-500">{error}</p>}
+
+          {tab === "tags" && (
+            <Button
+              variant="outline"
+              onClick={handleImportFromJuejin}
+              disabled={importing}
+              className="w-full gap-1.5 text-sm"
+            >
+              {importing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              {importing ? "正在从掘金导入…" : "从掘金导入全部官方标签"}
+            </Button>
+          )}
 
           {/* List */}
           <div className="max-h-80 overflow-y-auto rounded-lg border border-black/[0.06]">

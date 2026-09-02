@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ChevronRight,
   Sparkles,
+  Send,
 } from "lucide-react"
 import { ArticleGenerateDialog } from "./article-generate-dialog"
 import type {
@@ -123,9 +124,24 @@ export function ArticleEditorDialog({
   const [uploading, setUploading] = useState(false)
   const [coverUploading, setCoverUploading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [publishing, setPublishing] = useState(false)
+  const [unbinding, setUnbinding] = useState(false)
+  const [juejinArticleId, setJuejinArticleId] = useState<string | null>(
+    article?.juejinArticleId ?? null
+  )
+  const [bindInput, setBindInput] = useState("")
+  const [binding, setBinding] = useState(false)
+  const [publishResult, setPublishResult] = useState<{
+    url?: string
+    status?: string
+    message?: string
+    error?: string
+  } | null>(null)
   const [error, setError] = useState("")
   const [newTagName, setNewTagName] = useState("")
   const [addingTag, setAddingTag] = useState(false)
+  const [tagQuery, setTagQuery] = useState("")
+  const [tagOpen, setTagOpen] = useState(true)
   const [newCollectionName, setNewCollectionName] = useState("")
   const [addingCollection, setAddingCollection] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -140,6 +156,15 @@ export function ArticleEditorDialog({
     () => (open ? (marked.parse(content, { async: false }) as string) : ""),
     [content, open]
   )
+
+  // 标签下拉过滤结果：排除已选，按输入匹配，最多展示 50 条
+  const filteredTags = useMemo(() => {
+    const q = tagQuery.trim().toLowerCase()
+    return tags
+      .filter((t) => !tagIds.includes(t.id))
+      .filter((t) => !q || t.name.toLowerCase().includes(q))
+      .slice(0, 50)
+  }, [tags, tagIds, tagQuery])
 
   function handleTitleChange(value: string) {
     setTitle(value)
@@ -316,6 +341,118 @@ export function ArticleEditorDialog({
     }
   }
 
+  async function handlePublishToJuejin(forceNew = false) {
+    if (!article?.id) {
+      setError("请先保存文章后再发布到掘金")
+      return
+    }
+    if (!title.trim()) {
+      setError("请填写文章标题")
+      return
+    }
+    setPublishing(true)
+    setPublishResult(null)
+    setError("")
+    try {
+      const res = await fetch("/api/juejin/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          articleId: article.id,
+          forceNew,
+          category: categoryId
+            ? categories.find((c) => c.id === categoryId)?.name
+            : undefined,
+          tags: tagIds
+            .map((id) => tags.find((t) => t.id === id)?.name)
+            .filter((n): n is string => Boolean(n)),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setPublishResult({ error: data.error || "发布到掘金失败" })
+      } else {
+        setJuejinArticleId(data.juejinArticleId ?? null)
+        // 同步到父级列表，避免关闭重开后回退到旧绑定状态
+        if (article) {
+          onSaved({ ...article, juejinArticleId: data.juejinArticleId ?? null })
+        }
+        setPublishResult({
+          url: data.url,
+          status: data.status,
+          message: data.message,
+        })
+      }
+    } catch (e) {
+      setPublishResult({
+        error: e instanceof Error ? e.message : "发布到掘金失败",
+      })
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  function handleForceNewPublish() {
+    if (
+      !window.confirm(
+        "将强制新增一篇掘金文章（原绑定将被新文章覆盖）。确定继续？"
+      )
+    ) {
+      return
+    }
+    handlePublishToJuejin(true)
+  }
+
+  async function handleUnbindJuejin() {
+    if (!article?.id) return
+    setUnbinding(true)
+    setError("")
+    try {
+      const res = await fetch("/api/juejin/unbind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ articleId: article.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "解除绑定失败")
+      setJuejinArticleId(null)
+      if (article) onSaved({ ...article, juejinArticleId: null })
+      setPublishResult({ message: "已解除掘金绑定，下次发布将走新增流程" })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "解除绑定失败")
+    } finally {
+      setUnbinding(false)
+    }
+  }
+
+  async function handleBindJuejin() {
+    if (!article?.id || !bindInput.trim()) return
+    setBinding(true)
+    setError("")
+    try {
+      const res = await fetch("/api/juejin/bind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          articleId: article.id,
+          juejinArticleId: bindInput.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "绑定失败")
+      setJuejinArticleId(data.juejinArticleId)
+      setBindInput("")
+      if (article) onSaved({ ...article, juejinArticleId: data.juejinArticleId })
+      setPublishResult({
+        message: `已绑定掘金文章 #${data.juejinArticleId}，再次发布将自动更新该文章`,
+      })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "绑定失败")
+    } finally {
+      setBinding(false)
+    }
+  }
+
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -465,7 +602,7 @@ export function ArticleEditorDialog({
               <div className="sm:col-span-2">
                 <div className="mb-1 flex items-center justify-between">
                   <label className="text-xs font-medium text-[#6B7280]">
-                    标签（点击切换）
+                    标签（输入搜索并选择，可多选）
                   </label>
                   {!addingTag ? (
                     <Button
@@ -518,29 +655,71 @@ export function ArticleEditorDialog({
                     </div>
                   )}
                 </div>
-                {tags.length > 0 || tagIds.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {tags.map((t) => {
-                      const selected = tagIds.includes(t.id)
-                      return (
-                        <button
+
+                {tags.some((t) => tagIds.includes(t.id)) && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {tags
+                      .filter((t) => tagIds.includes(t.id))
+                      .map((t) => (
+                        <span
                           key={t.id}
-                          type="button"
-                          onClick={() => toggleTag(t.id)}
-                          className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
-                            selected
-                              ? "border-[#E5A83D] bg-[#E5A83D] text-[#181A1E]"
-                              : "border-black/[0.08] bg-white text-[#6B7280] hover:border-[#E5A83D]/40"
-                          }`}
+                          className="flex items-center gap-1 rounded-full border border-[#E5A83D] bg-[#E5A83D] px-2.5 py-0.5 text-xs text-[#181A1E]"
                         >
                           {t.name}
-                        </button>
-                      )
-                    })}
+                          <button
+                            type="button"
+                            onClick={() => toggleTag(t.id)}
+                            className="text-[#181A1E]/60 hover:text-[#181A1E]"
+                            aria-label={`移除标签 ${t.name}`}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        </span>
+                      ))}
                   </div>
-                ) : (
-                  <p className="text-xs text-[#6B7280]/60">暂无标签，可点击右上角新建</p>
                 )}
+
+                <div
+                  className="relative"
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node))
+                      setTagOpen(false)
+                  }}
+                >
+                  <Input
+                    value={tagQuery}
+                    onChange={(e) => setTagQuery(e.target.value)}
+                    onFocus={() => setTagOpen(true)}
+                    placeholder={
+                      tagIds.length
+                        ? `已选 ${tagIds.length} 个，输入标签名筛选…`
+                        : "输入标签名搜索选择…"
+                    }
+                    className="h-8 w-full"
+                  />
+                  {tagOpen && (
+                    <div className="absolute z-10 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-black/[0.06] bg-white shadow-lg">
+                      {filteredTags.length > 0 ? (
+                        filteredTags.map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => toggleTag(t.id)}
+                            className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-sm text-[#1C1C1E] hover:bg-[#F5F4F1]"
+                          >
+                            <span>{t.name}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-2.5 py-1.5 text-xs text-[#6B7280]/60">
+                          {tagQuery.trim()
+                            ? "无匹配标签，可点击右上角新建"
+                            : "无更多可选的标签"}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="sm:col-span-2">
                 <div className="mb-1 flex items-center justify-between">
@@ -718,17 +897,141 @@ export function ArticleEditorDialog({
 
             {error && <p className="text-sm text-red-500">{error}</p>}
 
+            {publishResult && (
+              <div className="rounded-lg border border-black/[0.06] bg-white p-3 text-sm">
+                {publishResult.error ? (
+                  <p className="text-red-500">{publishResult.error}</p>
+                ) : (
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[#1C1C1E]">
+                      {publishResult.message || (
+                        <>
+                          掘金发布成功
+                          {publishResult.status === "auditing" && "（审核中）"}
+                        </>
+                      )}
+                    </p>
+                    {publishResult.url && (
+                      <a
+                        href={publishResult.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[#E5A83D] underline"
+                      >
+                        {publishResult.url}
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Footer */}
             <div className="flex justify-end gap-2 border-t border-black/[0.06] pt-4">
-              <label className="mr-auto flex cursor-pointer items-center gap-2 text-sm text-[#6B7280]">
-                <input
-                  type="checkbox"
-                  checked={published}
-                  onChange={(e) => setPublished(e.target.checked)}
-                  className="size-4 accent-[#E5A83D]"
-                />
-                发布（勾选后博客前台可见）
-              </label>
+              <div className="mr-auto flex flex-col gap-1.5">
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-[#6B7280]">
+                  <input
+                    type="checkbox"
+                    checked={published}
+                    onChange={(e) => setPublished(e.target.checked)}
+                    className="size-4 accent-[#E5A83D]"
+                  />
+                  发布（勾选后博客前台可见）
+                </label>
+                {article?.id && (
+                  <div className="flex items-center gap-2 text-xs">
+                    {juejinArticleId ? (
+                      <>
+                        <span className="text-[#6B7280]">掘金已绑定：</span>
+                        <a
+                          href={`https://juejin.cn/post/${juejinArticleId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[#E5A83D] underline"
+                        >
+                          #{juejinArticleId}
+                        </a>
+                        <span className="text-[#6B7280]/60">
+                          （再次发布将自动更新该文章）
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleUnbindJuejin}
+                          disabled={unbinding || publishing}
+                          className="text-red-400 underline-offset-2 hover:text-red-500 hover:underline"
+                        >
+                          {unbinding ? "解除中…" : "解除绑定"}
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[#6B7280]/60">
+                          尚未发布到掘金
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <Input
+                            value={bindInput}
+                            onChange={(e) => setBindInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault()
+                                handleBindJuejin()
+                              }
+                            }}
+                            placeholder="粘贴掘金文章链接或 ID 手动绑定"
+                            className="h-6 w-56 px-2 text-xs"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleBindJuejin}
+                            disabled={binding || !bindInput.trim()}
+                            className="h-6 px-2 text-xs text-[#E5A83D] hover:text-[#D4A035]"
+                          >
+                            {binding ? "绑定中…" : "绑定"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {juejinArticleId && (
+                <Button
+                  variant="outline"
+                  onClick={handleForceNewPublish}
+                  disabled={publishing || unbinding || !article?.id}
+                  className="gap-1.5"
+                  title="忽略现有绑定，强制新增一篇掘金文章"
+                >
+                  强制新增
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => handlePublishToJuejin(false)}
+                disabled={publishing || unbinding || !article?.id}
+                title={
+                  juejinArticleId
+                    ? "自动更新已绑定的掘金文章（不存在则自动新增）"
+                    : article?.id
+                      ? "自动发布到掘金"
+                      : "请先保存文章"
+                }
+                className="gap-1.5"
+              >
+                {publishing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Send className="size-4" />
+                )}
+                {publishing
+                  ? "发布中…"
+                  : juejinArticleId
+                    ? "更新到掘金"
+                    : "发布到掘金"}
+              </Button>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 取消
               </Button>
