@@ -53,6 +53,40 @@ const PAGE_TABS = [
   { type: "detail", label: "文章详情页" },
 ]
 
+/** 断点续生：持久化未完成 run 的 localStorage 键。 */
+const PENDING_RUN_KEY = "theme-generate-pending-run"
+
+interface PendingRun {
+  runId: string
+  conversationId: string
+  fastMode: boolean
+}
+
+function loadPendingRun(): PendingRun | null {
+  try {
+    const raw = localStorage.getItem(PENDING_RUN_KEY)
+    return raw ? (JSON.parse(raw) as PendingRun) : null
+  } catch {
+    return null
+  }
+}
+
+function savePendingRun(run: PendingRun) {
+  try {
+    localStorage.setItem(PENDING_RUN_KEY, JSON.stringify(run))
+  } catch {
+    // ignore quota / privacy mode
+  }
+}
+
+function clearPendingRun() {
+  try {
+    localStorage.removeItem(PENDING_RUN_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 interface ThemeMetrics {
   stages: Record<string, number>
   totalMs: number
@@ -124,6 +158,8 @@ export function ThemeGenerateDialog({
   const [fastMode, setFastMode] = useState(false)
   const [selectedImage, setSelectedImage] = useState<{ id: string; url: string } | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
+  /** 有可恢复的断点（runId 已持久化且上次运行失败）。 */
+  const [canResume, setCanResume] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -146,34 +182,22 @@ export function ThemeGenerateDialog({
     }
   }, [open])
 
-  async function handleSend() {
-    const message = inputValue.trim()
-    if (!message || loading) return
-
+  /** 消费 /api/themes/generate 的 SSE 流；新生成与断点续生共用。 */
+  async function runGenerateStream(body: Record<string, unknown>) {
     setLoading(true)
     setError("")
-    setInputValue("")
+    setCanResume(false)
     setCurrentThinking([])
     setToolStatus("")
     setWarnings([])
     setStageState({})
     setStageDetail({})
-    setSelectedImage(null)
-
-    const userMsgId = crypto.randomUUID()
-    setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: message, imageId: selectedImage?.id, imageUrl: selectedImage?.url }])
 
     try {
       const res = await fetch("/api/themes/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conversationId,
-          message,
-          targetPage,
-          imageId: selectedImage?.id,
-          fastMode,
-        }),
+        body: JSON.stringify(body),
       })
 
       if (!res.ok) {
@@ -218,7 +242,14 @@ export function ThemeGenerateDialog({
         try {
           const event = JSON.parse(data)
 
-          if (event.type === "text") {
+          if (event.type === "run") {
+            // 持久化 runId：断线/刷新后可从失败处继续生成。
+            savePendingRun({
+              runId: event.runId,
+              conversationId: event.conversationId,
+              fastMode: Boolean(body.fastMode),
+            })
+          } else if (event.type === "text") {
             const page = (event.page as string) ?? "skeleton"
             pageContents = {
               ...pageContents,
@@ -232,6 +263,7 @@ export function ThemeGenerateDialog({
             }
           } else if (event.type === "done") {
             setConversationId(event.conversationId)
+            clearPendingRun()
             const pages: GeneratedPage[] = PAGE_TABS.map((t) => {
               const pending = pendingPages[t.type]
               if (pending) return pending
@@ -270,6 +302,13 @@ export function ThemeGenerateDialog({
             updateMsg({ metrics: event.metrics as ThemeMetrics })
           } else if (event.type === "error") {
             setError(event.error)
+            if (event.fatal) {
+              // 检查点已失效，无法续生
+              clearPendingRun()
+              setCanResume(false)
+            } else {
+              setCanResume(Boolean(loadPendingRun()))
+            }
           } else if (event.type === "warn") {
             if (event.message) {
               setWarnings((prev) =>
@@ -305,10 +344,47 @@ export function ThemeGenerateDialog({
         handleEvent(data)
       }
     } catch {
-      setError("网络错误，请重试")
+      setError("网络中断，已完成的步骤不会重跑，可点击「继续生成」从断点续生")
+      setCanResume(Boolean(loadPendingRun()))
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleSend() {
+    const message = inputValue.trim()
+    if (!message || loading) return
+
+    setInputValue("")
+    setSelectedImage(null)
+
+    const userMsgId = crypto.randomUUID()
+    setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: message, imageId: selectedImage?.id, imageUrl: selectedImage?.url }])
+
+    await runGenerateStream({
+      conversationId,
+      message,
+      targetPage,
+      imageId: selectedImage?.id,
+      fastMode,
+    })
+  }
+
+  /** 断点续生：携带 runId 从服务端检查点继续，只重跑失败/未执行的节点。 */
+  async function handleResume() {
+    if (loading) return
+    const pending = loadPendingRun()
+    if (!pending) {
+      setCanResume(false)
+      return
+    }
+    await runGenerateStream({
+      conversationId: pending.conversationId,
+      message: "",
+      runId: pending.runId,
+      resume: true,
+      fastMode: pending.fastMode,
+    })
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -382,7 +458,7 @@ export function ThemeGenerateDialog({
     reset()
   }
 
-  function reset() {
+  function reset(clearRun = true) {
     const id = conversationId
     setConversationId(null)
     setMessages([])
@@ -391,6 +467,8 @@ export function ThemeGenerateDialog({
     setCurrentThinking([])
     setWarnings([])
     setTargetPage("skeleton")
+    setCanResume(false)
+    if (clearRun) clearPendingRun()
     if (id) {
       fetch(`/api/themes/sessions/${id}`, { method: "DELETE" }).catch(() => {})
     }
@@ -398,7 +476,9 @@ export function ThemeGenerateDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     onOpenChange(nextOpen)
-    if (!nextOpen) reset()
+    // 关闭时保留 pendingRun（不清检查点引用），重开对话框仍可"继续生成"。
+    if (!nextOpen) reset(false)
+    else setCanResume(Boolean(loadPendingRun()))
   }
 
   const latestMsg = [...messages].reverse().find((m) => m.layoutHtml)
@@ -666,6 +746,22 @@ export function ThemeGenerateDialog({
             <div className="mt-4 border-t border-black/[0.06] pt-4">
               {error && <p className="mb-2 break-words text-sm text-red-500">{error}</p>}
 
+              {canResume && !loading && (
+                <div className="mb-2 flex items-center gap-2">
+                  <Button
+                    onClick={handleResume}
+                    size="sm"
+                    className="h-7 gap-1 bg-[#E5A83D] text-xs text-[#181A1E] hover:bg-[#D4A035]"
+                  >
+                    <Send className="size-3" />
+                    继续生成
+                  </Button>
+                  <span className="text-xs text-[#6B7280]">
+                    从断点继续，已完成的步骤不会重跑
+                  </span>
+                </div>
+              )}
+
               {warnings.map((w) => (
                 <p
                   key={w}
@@ -841,7 +937,7 @@ export function ThemeGenerateDialog({
 
             {/* Footer */}
             <div className="mt-4 flex justify-end gap-2">
-              <DialogClose render={<Button variant="outline" onClick={reset} />}>
+              <DialogClose render={<Button variant="outline" onClick={() => reset(false)} />}>
                 取消
               </DialogClose>
               {latestLayoutHtml && (

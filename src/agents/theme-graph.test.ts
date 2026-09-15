@@ -13,6 +13,7 @@ vi.mock("@/lib/theme/theme-session", async (importOriginal) => {
 import { AIMessage } from "@langchain/core/messages"
 import type { BaseMessage } from "@langchain/core/messages"
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
+import { MemorySaver } from "@langchain/langgraph"
 import { addMessage } from "@/lib/theme/theme-session"
 import { createThemeGraph, type ThemeGraphEmitter } from "./theme-graph"
 
@@ -213,5 +214,68 @@ describe("createThemeGraph", () => {
     expect(res.pages.detail).toBe(DETAIL)
     expect(stages).not.toContain("skeleton")
     expect(stages).not.toContain("planner")
+  })
+
+  it("断点续生：list 首次失败后，用同一 thread_id resume 只重跑 list，home/detail 不重生成", async () => {
+    let failList = true
+    const calls: string[] = []
+    const model = (): BaseChatModel => {
+      const invoke = async (messages: BaseMessage[]): Promise<AIMessage> => {
+        const sys = String(messages[0]?.content ?? "")
+        let text = ""
+        if (sys.includes("任务分为两阶段")) {
+          calls.push("skeleton")
+          text = SKELETON
+        } else if (sys.includes("博客首页")) {
+          calls.push("home")
+          text = HOME
+        } else if (sys.includes("文章列表页")) {
+          calls.push("list")
+          if (failList) throw new Error("模拟 list 页 LLM 超时")
+          text = LIST
+        } else if (sys.includes("文章详情页")) {
+          calls.push("detail")
+          text = DETAIL
+        }
+        return new AIMessage({ content: text })
+      }
+      return { invoke, bindTools: () => ({ invoke }) } as unknown as BaseChatModel
+    }
+
+    const checkpointer = new MemorySaver()
+    const config = { configurable: { thread_id: "t-resume" } }
+
+    // 首次运行：list 抛错，整轮中断（retryPolicy 会重试，但始终失败）。
+    const g1 = await createThemeGraph({
+      llm: model(),
+      emitter,
+      judgeEnabled: false,
+      checkpointer,
+    })
+    await expect(
+      g1.invoke(input({ iteration: false }), config)
+    ).rejects.toThrow()
+    expect(calls).toContain("home")
+    expect(calls).toContain("detail")
+    const callsAfterFirst = [...calls]
+
+    // 修复后 resume：input 传 null，从检查点继续。
+    failList = false
+    calls.length = 0
+    const g2 = await createThemeGraph({
+      llm: model(),
+      emitter,
+      judgeEnabled: false,
+      checkpointer,
+    })
+    const res = await g2.invoke(null, config)
+
+    // 只重跑了 list，home/detail/skeleton 命中检查点未重生成。
+    expect(calls).toEqual(["list"])
+    expect(callsAfterFirst).toContain("list")
+    expect(res.pages.list).toContain("page-title")
+    expect(res.pages.home).toContain("hero")
+    expect(res.pages.detail).toContain("article-body")
+    expect(res.layoutHtml).toContain("data-page-host")
   })
 })

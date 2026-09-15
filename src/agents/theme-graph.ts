@@ -6,6 +6,7 @@ import {
   Send,
   Command,
   MemorySaver,
+  type BaseCheckpointSaver,
 } from "@langchain/langgraph"
 import { SystemMessage, HumanMessage } from "@langchain/core/messages"
 import type { BaseMessage } from "@langchain/core/messages"
@@ -92,6 +93,11 @@ export interface ThemeGraphOptions {
   scoreThreshold?: number
   /** 最多修订轮数（默认 1）。 */
   maxAttempts?: number
+  /**
+   * 检查点存储。生产传入持久化 SqliteSaver 以支持断点续生；
+   * 默认 MemorySaver（仅进程内，测试用）。
+   */
+  checkpointer?: BaseCheckpointSaver
 }
 
 export interface ThemeGraphInput {
@@ -893,15 +899,19 @@ export async function createThemeGraph(
     return "commit"
   }
 
+  // LLM 调用节点的重试策略：瞬时网络抖动/超时在节点内自动重试，
+  // 避免直接失败走到需要 resume 的程度（指数退避，最多 3 次尝试）。
+  const llmRetry = { maxAttempts: 3, initialInterval: 500 } as const
+
   const graph = new StateGraph(ThemeStateAnnotation)
     .addNode("planner", makePlannerNode(ctx))
-    .addNode("skeleton", makeSkeletonNode(ctx))
+    .addNode("skeleton", makeSkeletonNode(ctx), { retryPolicy: llmRetry })
     .addNode("dispatch_pages", makeDispatchNode(ctx), {
       ends: ["page_home", "page_list", "page_detail"],
     })
-    .addNode("page_home", makePageNode("home", ctx))
-    .addNode("page_list", makePageNode("list", ctx))
-    .addNode("page_detail", makePageNode("detail", ctx))
+    .addNode("page_home", makePageNode("home", ctx), { retryPolicy: llmRetry })
+    .addNode("page_list", makePageNode("list", ctx), { retryPolicy: llmRetry })
+    .addNode("page_detail", makePageNode("detail", ctx), { retryPolicy: llmRetry })
     .addNode("validator", makeValidatorNode(ctx))
     .addNode("audit", makeAuditNode(ctx))
     .addNode("judge", makeJudgeNode(ctx))
@@ -932,7 +942,9 @@ export async function createThemeGraph(
     })
     .addEdge("commit", END)
 
-  return graph.compile({ checkpointer: new MemorySaver() })
+  return graph.compile({
+    checkpointer: options.checkpointer ?? new MemorySaver(),
+  })
 }
 
 export type ThemeGraph = Awaited<ReturnType<typeof createThemeGraph>>
