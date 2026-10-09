@@ -94,6 +94,11 @@ export interface ThemeGraphOptions {
   /** 最多修订轮数（默认 1）。 */
   maxAttempts?: number
   /**
+   * 中止信号：客户端断线时中止图执行（与"服务端断线"一致——停在当前 superstep，
+   * 已完成的步骤保留在检查点里，可后续续生）。
+   */
+  signal?: AbortSignal
+  /**
    * 检查点存储。生产传入持久化 SqliteSaver 以支持断点续生；
    * 默认 MemorySaver（仅进程内，测试用）。
    */
@@ -217,6 +222,8 @@ function messageText(msg: BaseMessage | undefined): string {
 interface NodeContext {
   llm: BaseChatModel
   emitter?: ThemeGraphEmitter
+  /** 中止信号：透传给各节点的 LLM 调用，断线时立即取消在途请求。 */
+  signal?: AbortSignal
   judgeEnabled: boolean
   scoreThreshold: number
   maxAttempts: number
@@ -238,7 +245,8 @@ function makePlannerNode(ctx: NodeContext) {
       ctx.llm,
       state.userRequest,
       seeds,
-      state.userProfile
+      state.userProfile,
+      ctx.signal
     )
     ctx.emitter?.stage("planner", "规划设计方向", "done", brief)
     return { designBrief: brief }
@@ -249,7 +257,8 @@ async function generateDesignBrief(
   llm: BaseChatModel,
   userRequest: string,
   seeds: DesignSeeds,
-  userProfile = ""
+  userProfile = "",
+  signal?: AbortSignal
 ): Promise<string> {
   const profileSection = userProfile.trim()
     ? `\n\n【作者画像（博客内容方向与写作风格，供设计取向参考）】\n${userProfile.trim()}`
@@ -279,7 +288,7 @@ async function generateDesignBrief(
     ),
   ]
   try {
-    const response = await llm.invoke(messages)
+    const response = await llm.invoke(messages, { signal })
     const text = messageText(response).trim()
     const fenced = text.match(/\{[\s\S]*\}/)
     const raw = fenced ? fenced[0] : text
@@ -318,10 +327,13 @@ function makeSkeletonNode(ctx: NodeContext) {
       userContent += `\n\n【上一轮样式审计/评审反馈，必须修复】\n${state.skeletonFeedback}`
     }
 
-    const response = await ctx.llm.invoke([
-      new SystemMessage(SKELETON_SYSTEM_PROMPT),
-      new HumanMessage(userContent),
-    ])
+    const response = await ctx.llm.invoke(
+      [
+        new SystemMessage(SKELETON_SYSTEM_PROMPT),
+        new HumanMessage(userContent),
+      ],
+      { signal: ctx.signal }
+    )
     const html = extractHtmlFromContent(messageText(response))
     if (!html) throw new Error("骨架生成失败：未能提取 HTML")
     const layoutHtml = ensureAvatarOverflow(ensureLayoutContract(html))
@@ -410,10 +422,13 @@ function makePageNode(pageType: ThemePageType, ctx: NodeContext) {
       userContent += `\n\n【上一轮校验反馈，必须修复】\n${feedback}`
     }
 
-    const response = await ctx.llm.invoke([
-      new SystemMessage(buildPageSystemPrompt(pageType, context)),
-      new HumanMessage(userContent),
-    ])
+    const response = await ctx.llm.invoke(
+      [
+        new SystemMessage(buildPageSystemPrompt(pageType, context)),
+        new HumanMessage(userContent),
+      ],
+      { signal: ctx.signal }
+    )
 
     const rawText = messageText(response)
     let html = extractHtmlFromContent(rawText)
@@ -531,7 +546,7 @@ function makeJudgeNode(ctx: NodeContext) {
   return async function judgeNode(state: GraphState) {
     if (!ctx.judgeEnabled) return {}
     ctx.emitter?.stage("judge", "评估设计质量", "start")
-    const result = await judgeQuality(ctx.llm, state)
+    const result = await judgeQuality(ctx.llm, state, ctx.signal)
     if (!result) {
       ctx.emitter?.warn("质量评估未能解析结果，本轮跳过评分")
       ctx.emitter?.stage("judge", "评估设计质量", "done", "未评分")
@@ -614,14 +629,15 @@ function clampScore(n: number): number {
 
 async function judgeQuality(
   llm: BaseChatModel,
-  state: GraphState
+  state: GraphState,
+  signal?: AbortSignal
 ): Promise<JudgeResult | null> {
   const messages = [
     new SystemMessage(JUDGE_SYSTEM_PROMPT),
     new HumanMessage(buildJudgeInput(state)),
   ]
   try {
-    const response = await llm.invoke(messages)
+    const response = await llm.invoke(messages, { signal })
     const text = messageText(response).trim()
     const fenced = text.match(/\{[\s\S]*\}/)
     const raw = fenced ? fenced[0] : text
@@ -874,6 +890,7 @@ export async function createThemeGraph(
   const ctx: NodeContext = {
     llm,
     emitter,
+    signal: options.signal,
     judgeEnabled: options.judgeEnabled ?? true,
     scoreThreshold: options.scoreThreshold ?? 70,
     maxAttempts: options.maxAttempts ?? 2,

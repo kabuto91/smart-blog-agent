@@ -14,27 +14,54 @@ export interface SseHandle {
 /**
  * 创建统一的 SSE ReadableStream：内部统一处理 error 帧与关闭逻辑，
  * 路由只需在 run 里调用 send/close。
+ *
+ * 客户端断开（刷新/关页/网络中断）时触发 onClientGone，
+ * 调用方据此中止正在执行的任务（保留检查点供续生）。
  */
 export function createSSEStream(
-  run: (handle: SseHandle) => Promise<void>
+  run: (handle: SseHandle) => Promise<void>,
+  onClientGone?: () => void
 ): ReadableStream {
+  let closed = false
+  const markClientGone = () => {
+    if (closed) return
+    closed = true
+    onClientGone?.()
+  }
+
   return new ReadableStream({
     async start(controller) {
       const encoder = new TextEncoder()
-      const send = (data: unknown) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+      const send = (data: unknown) => {
+        if (closed) return
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`))
+        } catch {
+          // 写入失败说明连接已断开
+          markClientGone()
+        }
+      }
+      const close = () => {
+        if (closed) return
+        closed = true
+        try {
+          controller.close()
+        } catch {
+          // 已关闭
+        }
+      }
       try {
-        await run({ send, close: () => controller.close() })
+        await run({ send, close })
       } catch (error) {
         const message = error instanceof Error ? error.message : "未知错误"
         send({ type: "error", error: message })
       } finally {
-        try {
-          controller.close()
-        } catch {
-          // 已关闭（正常路径里 run 已 close）
-        }
+        close()
       }
+    },
+    cancel() {
+      // 客户端主动断开（刷新/关页/网络中断）
+      markClientGone()
     },
   })
 }

@@ -55,11 +55,15 @@ const PAGE_TABS = [
 
 /** 断点续生：持久化未完成 run 的 localStorage 键。 */
 const PENDING_RUN_KEY = "theme-generate-pending-run"
+/** 当前会话 id：刷新后据此恢复已落库的历史快照。 */
+const CONVERSATION_KEY = "theme-generate-conversation"
 
 interface PendingRun {
   runId: string
   conversationId: string
   fastMode: boolean
+  /** 本次 run 开始时间，用于判断会话快照是否已由本次 run 落库。 */
+  startedAt?: number
 }
 
 function loadPendingRun(): PendingRun | null {
@@ -87,6 +91,30 @@ function clearPendingRun() {
   }
 }
 
+function loadConversationId(): string | null {
+  try {
+    return localStorage.getItem(CONVERSATION_KEY)
+  } catch {
+    return null
+  }
+}
+
+function saveConversationId(id: string) {
+  try {
+    localStorage.setItem(CONVERSATION_KEY, id)
+  } catch {
+    // ignore
+  }
+}
+
+function clearConversationId() {
+  try {
+    localStorage.removeItem(CONVERSATION_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 interface ThemeMetrics {
   stages: Record<string, number>
   totalMs: number
@@ -94,6 +122,21 @@ interface ThemeMetrics {
   pageCount: number
   qualityScore: number
   iteration: boolean
+}
+
+/** GET /api/themes/sessions/[id] 的响应。 */
+interface HistoryResponse {
+  conversationId: string
+  messages: {
+    id: number
+    role: string
+    content: string
+    layoutHtml?: string
+    contentConfig?: string
+    pages?: GeneratedPage[]
+    metrics?: ThemeMetrics
+    createdAt?: string
+  }[]
 }
 
 /** Agent 各阶段的中文名与展示顺序。 */
@@ -160,6 +203,8 @@ export function ThemeGenerateDialog({
   const [uploadingImage, setUploadingImage] = useState(false)
   /** 有可恢复的断点（runId 已持久化且上次运行失败）。 */
   const [canResume, setCanResume] = useState(false)
+  /** 已恢复过历史的会话 id，避免重复请求。 */
+  const historyLoadedRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -181,6 +226,72 @@ export function ThemeGenerateDialog({
       textareaRef.current.focus()
     }
   }, [open])
+
+  // 打开对话框时恢复上次会话（刷新/断线后无需重新生成即可看到已落库结果）
+  useEffect(() => {
+    if (!open || loading || messages.length > 0) return
+    void loadHistory()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  /** 从会话历史恢复已落库的主题骨架与页面。 */
+  async function loadHistory() {
+    const id = loadConversationId()
+    if (!id || historyLoadedRef.current === id) return
+    historyLoadedRef.current = id
+    try {
+      const res = await fetch(`/api/themes/sessions/${id}`)
+      if (!res.ok) {
+        if (res.status === 404) clearConversationId()
+        historyLoadedRef.current = null
+        return
+      }
+      const data = (await res.json()) as HistoryResponse
+      const rows = data.messages ?? []
+      if (rows.length === 0) return
+
+      let latestSnapshotAt = 0
+      for (const row of rows) {
+        if (!row.layoutHtml || !row.createdAt) continue
+        const at = Date.parse(row.createdAt)
+        if (Number.isFinite(at)) latestSnapshotAt = Math.max(latestSnapshotAt, at)
+      }
+
+      setConversationId(data.conversationId ?? id)
+      setMessages(
+        rows.map((row) => ({
+          id: `history-${row.id}`,
+          role: row.role === "user" ? "user" : "assistant",
+          content: row.content ?? "",
+          layoutHtml: row.layoutHtml,
+          pages: row.pages,
+          contentConfig: row.contentConfig,
+          metrics: row.metrics,
+          pageContents: (row.pages ?? []).reduce(
+            (acc: Record<string, string>, p) => {
+              acc[p.type] = p.html
+              return acc
+            },
+            {}
+          ),
+          pagesDone: row.pages?.map((p) => p.type),
+        }))
+      )
+
+      // 会话里已有本次 run 落库的快照 → 服务端已跑完，无需再续生
+      const pending = loadPendingRun()
+      if (
+        pending?.startedAt &&
+        pending.conversationId === id &&
+        latestSnapshotAt > pending.startedAt + 1000
+      ) {
+        clearPendingRun()
+      }
+      setCanResume(Boolean(loadPendingRun()))
+    } catch {
+      historyLoadedRef.current = null
+    }
+  }
 
   /** 消费 /api/themes/generate 的 SSE 流；新生成与断点续生共用。 */
   async function runGenerateStream(body: Record<string, unknown>) {
@@ -248,7 +359,9 @@ export function ThemeGenerateDialog({
               runId: event.runId,
               conversationId: event.conversationId,
               fastMode: Boolean(body.fastMode),
+              startedAt: Date.now(),
             })
+            saveConversationId(event.conversationId)
           } else if (event.type === "text") {
             const page = (event.page as string) ?? "skeleton"
             pageContents = {
@@ -263,6 +376,7 @@ export function ThemeGenerateDialog({
             }
           } else if (event.type === "done") {
             setConversationId(event.conversationId)
+            saveConversationId(event.conversationId)
             clearPendingRun()
             const pages: GeneratedPage[] = PAGE_TABS.map((t) => {
               const pending = pendingPages[t.type]
@@ -468,7 +582,11 @@ export function ThemeGenerateDialog({
     setWarnings([])
     setTargetPage("skeleton")
     setCanResume(false)
-    if (clearRun) clearPendingRun()
+    historyLoadedRef.current = null
+    if (clearRun) {
+      clearPendingRun()
+      clearConversationId()
+    }
     if (id) {
       fetch(`/api/themes/sessions/${id}`, { method: "DELETE" }).catch(() => {})
     }

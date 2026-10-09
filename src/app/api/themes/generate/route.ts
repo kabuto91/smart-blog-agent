@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
 import { addMessage, getLatestSnapshot } from "@/lib/theme/theme-session"
-import { getThemeCheckpointer } from "@/lib/theme/checkpoint"
+import { getThemeCheckpointer, pruneThemeCheckpoints } from "@/lib/theme/checkpoint"
 import { getSiteConfig, getUserProfile } from "@/lib/site-config"
 import { getUpload } from "@/lib/uploads"
 import { analyzeImage } from "@/lib/llm/vision-analyze"
@@ -113,6 +113,12 @@ export async function POST(request: Request) {
       }
     }
 
+    // 客户端断线（刷新/关页/网络中断）→ 中止图执行，与服务端断线一致：
+    // 停在当前 superstep，已完成的步骤留在检查点里，可供"继续生成"续跑。
+    const runAbort = new AbortController()
+    if (request.signal.aborted) runAbort.abort()
+    else request.signal.addEventListener("abort", () => runAbort.abort(), { once: true })
+
     const stream = createSSEStream(async ({ send, close }) => {
       if (visionSkipped) {
         send({
@@ -122,6 +128,8 @@ export async function POST(request: Request) {
       }
       // 检查点持久化到 SQLite：进程重启/断线后仍可按 thread_id 恢复。
       const checkpointer = getThemeCheckpointer()
+      // 旧线程按数量回收（完成态线程需保留，供断线后"继续生成"重放结果）
+      pruneThemeCheckpoints()
       const graph = await createThemeGraph({
         checkpointer,
         emitter: {
@@ -136,6 +144,8 @@ export async function POST(request: Request) {
         // resume 时前端需回传与首次生成一致的 fastMode（影响图路由结构）。
         judgeEnabled: !fastMode,
         maxAttempts: fastMode ? 1 : 2,
+        // 断线时中止在途 LLM 请求，让图尽快停在当前 superstep
+        signal: runAbort.signal,
       })
 
       // 新生成用新 runId 并下发给前端持久化；resume 复用原 runId 作为 thread_id。
@@ -156,12 +166,15 @@ export async function POST(request: Request) {
       try {
         if (resumeRun) {
           let hasProgress = false
+          let finished = false
           try {
             const st = await graph.getState({
               configurable: { thread_id: threadId },
             })
             hasProgress =
               (st?.next?.length ?? 0) > 0 || Boolean(st?.values?.layoutHtml)
+            // next 为空且已有结果：图已跑完（断线期间服务端已完成），直接重放结果
+            finished = hasProgress && (st?.next?.length ?? 0) === 0
           } catch {
             hasProgress = false
           }
@@ -174,7 +187,12 @@ export async function POST(request: Request) {
             close()
             return
           }
-          send({ type: "warn", message: "从断点继续生成，已完成的步骤不会重跑" })
+          send({
+            type: "warn",
+            message: finished
+              ? "本次生成已完成，直接恢复结果"
+              : "从断点继续生成，已完成的步骤不会重跑",
+          })
         }
 
         // resume：input 传 null，LangGraph 从最后检查点继续（只重跑失败/未执行的节点）。
@@ -184,38 +202,46 @@ export async function POST(request: Request) {
           {
             streamMode: "messages",
             durability: "sync",
+            // 客户端断线时中止执行：图停在当前 superstep，已完成步骤留在检查点
+            signal: runAbort.signal,
             configurable: { thread_id: threadId },
           }
         )
 
-        for await (const event of iterable) {
-          const [chunk, metadata] = event as [
-            BaseMessage,
-            { langgraph_node?: string },
-          ]
-          if (chunk._getType() !== "ai") continue
-          const page = NODE_TO_PAGE[metadata?.langgraph_node ?? ""]
-          if (!page) continue
+        try {
+          for await (const event of iterable) {
+            const [chunk, metadata] = event as [
+              BaseMessage,
+              { langgraph_node?: string },
+            ]
+            if (chunk._getType() !== "ai") continue
+            const page = NODE_TO_PAGE[metadata?.langgraph_node ?? ""]
+            if (!page) continue
 
-          const aiChunk = chunk as AIMessageChunk
-          const content = aiChunk.content
+            const aiChunk = chunk as AIMessageChunk
+            const content = aiChunk.content
 
-          const sendText = (text: string) =>
-            send({ type: "text", page, content: text })
+            const sendText = (text: string) =>
+              send({ type: "text", page, content: text })
 
-          if (typeof content === "string" && content) {
-            sendText(content)
-          } else if (Array.isArray(content)) {
-            for (const block of content as { type?: string; text?: string }[]) {
-              if (block.type === "text" && block.text) sendText(block.text)
+            if (typeof content === "string" && content) {
+              sendText(content)
+            } else if (Array.isArray(content)) {
+              for (const block of content as { type?: string; text?: string }[]) {
+                if (block.type === "text" && block.text) sendText(block.text)
+              }
+            }
+
+            if (aiChunk.tool_calls?.length) {
+              for (const tc of aiChunk.tool_calls) {
+                send({ type: "tool_call", page, name: tc.name, args: tc.args })
+              }
             }
           }
-
-          if (aiChunk.tool_calls?.length) {
-            for (const tc of aiChunk.tool_calls) {
-              send({ type: "tool_call", page, name: tc.name, args: tc.args })
-            }
-          }
+        } catch (error) {
+          // 客户端断线触发的主动中止：检查点已保留，等待用户"继续生成"
+          if (runAbort.signal.aborted) return
+          throw error
         }
 
         const finalState = await graph.getState({
@@ -250,13 +276,13 @@ export async function POST(request: Request) {
           contentConfig: values.contentConfig ?? "{}",
         })
 
-        // 成功收尾后检查点不再需要，清理避免膨胀；失败路径保留供 resume。
-        await checkpointer.deleteThread(threadId).catch(() => {})
+        // 检查点不在此删除：保留完成态线程，客户端断线后点"继续生成"
+        // 可从这里直接重放结果（不重跑节点）；体积由 pruneThemeCheckpoints 回收。
         close()
       } finally {
         activeRuns.delete(threadId)
       }
-    })
+    }, () => runAbort.abort())
 
     return new Response(stream, { headers: SSE_HEADERS })
   } catch (error) {
