@@ -27,6 +27,7 @@ import {
   Send,
 } from "lucide-react"
 import { ArticleGenerateDialog } from "./article-generate-dialog"
+import { generateArticleSlug } from "@smart-blog/core/lib/article-slug"
 import type {
   ArticleListItem,
   CategoryListItem,
@@ -53,17 +54,6 @@ interface ArticleEditorDialogProps {
 
 function highlightMarkdown(code: string) {
   return Prism.highlight(code, Prism.languages.markdown, "markdown")
-}
-
-function localSlugify(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^\w\u4e00-\u9fa5-]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "") || ""
-  )
 }
 
 const prismStyles = `
@@ -165,7 +155,7 @@ export function ArticleEditorDialog({
   onConfirmClose,
 }: ArticleEditorDialogProps) {
   const [title, setTitle] = useState(article?.title ?? "")
-  const [slug, setSlug] = useState(article?.slug ?? "")
+  const [slug, setSlug] = useState(article?.slug ?? generateArticleSlug())
   const [excerpt, setExcerpt] = useState(article?.excerpt ?? "")
   const [coverImage, setCoverImage] = useState(article?.coverImage ?? "")
   const [content, setContent] = useState(article?.content ?? "")
@@ -222,7 +212,6 @@ export function ArticleEditorDialog({
 
   function handleTitleChange(value: string) {
     setTitle(value)
-    if (!slug) setSlug(localSlugify(value))
   }
 
   function toggleTag(id: string) {
@@ -555,12 +544,12 @@ export function ArticleEditorDialog({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-[#6B7280]">
-                  Slug（博客链接，需唯一）
+                  Slug（博客链接，自动生成随机 id，需唯一）
                 </label>
                 <Input
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
-                  placeholder="my-article"
+                  placeholder="1760000000-a1b2c"
                 />
               </div>
               <div>
@@ -1117,7 +1106,6 @@ export function ArticleEditorDialog({
         setContent(nextContent)
         if (nextTitle) {
           setTitle(nextTitle)
-          if (!slug) setSlug(localSlugify(nextTitle))
         }
         if (nextExcerpt) setExcerpt(nextExcerpt)
       }}

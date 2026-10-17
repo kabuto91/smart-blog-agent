@@ -1065,6 +1065,14 @@ function renderListField(
       }
     }
 
+    // 芯片式列表项（标签/分类）整体未声明任何 data-map 时字段无处映射，
+    // 克隆项会一直保留模板样例文本（同一文本被复制成多条）。此时把名称
+    // 直接写进叶子克隆项自身；含子元素的克隆项不动，避免破坏卡片结构。
+    if (mappings.length === 0 && clone.childElementCount === 0) {
+      const label = item[labelKey]
+      if (label) clone.textContent = label
+    }
+
     if (!linkApplied && item.link) {
       if (clone.tagName.toLowerCase() === "a") {
         clone.setAttribute("href", item.link)

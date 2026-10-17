@@ -11,7 +11,8 @@
     "test": "vitest run",
     "juejin:login": "node src/agents/juejin-publisher/scripts/login.mjs",
     "juejin:publish": "node src/agents/juejin-publisher/scripts/publish.mjs",
-    "juejin:test-cookie": "node src/agents/juejin-publisher/scripts/test.mjs"
+    "juejin:test-cookie": "node src/agents/juejin-publisher/scripts/test.mjs",
+    "migrate:article-slugs": "node scripts/randomize-article-slugs.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
