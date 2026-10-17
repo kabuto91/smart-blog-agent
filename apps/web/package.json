@@ -1,0 +1,23 @@
+{
+  "name": "@smart-blog/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "前台博客站点（部署 Vercel）：主题渲染 + 公开 API",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@smart-blog/core": "workspace:*",
+    "next": "16.2.12",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

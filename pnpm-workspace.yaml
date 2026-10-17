@@ -1,0 +1,18 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 11：允许运行原生构建脚本的依赖（否则 install 会以 ERR_PNPM_IGNORED_BUILDS 退出）
+allowBuilds:
+  "@prisma/client": true
+  "@prisma/engines": true
+  "@tailwindcss/oxide": true
+  esbuild: true
+  prisma: true
+  playwright: true
+  sharp: true
+  unrs-resolver: true
+
+# 统一 TypeScript 版本（npmmirror 对 ^5 解析到了过旧的 5.0.2，其类型收窄更弱会误报）
+overrides:
+  typescript: "5.9.3"

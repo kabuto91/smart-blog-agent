@@ -1,0 +1,37 @@
+import { getArticlesPage, getCategories, getTags } from "@smart-blog/core/lib/articles"
+import {
+  toArticleData,
+  toCategoryData,
+  toTagData,
+  renderBlogTheme,
+  BLOG_PAGE_SIZE,
+  HOME_PAGE_TAG_LIMIT,
+} from "@smart-blog/core/lib/blog"
+
+export const runtime = "nodejs"
+
+export const dynamic = "force-dynamic"
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const page = Number(searchParams.get("page")) || 1
+
+  const [result, categories, tags] = await Promise.all([
+    getArticlesPage({ publishedOnly: true }, page, BLOG_PAGE_SIZE),
+    getCategories(true),
+    getTags(),
+  ])
+
+  return renderBlogTheme({
+    articles: result.items.map(toArticleData),
+    categories: categories.map(toCategoryData),
+    tags: [...tags]
+      .sort((a, b) => b.articleCount - a.articleCount)
+      .slice(0, HOME_PAGE_TAG_LIMIT)
+      .map(toTagData),
+    pagination: {
+      page: result.page,
+      totalPages: result.totalPages,
+      basePath: "/blog/archive",
+    },
+  })
+}
