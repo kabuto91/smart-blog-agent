@@ -1,0 +1,35 @@
+# Vercel CLI 本地部署忽略清单（monorepo：仅需构建 apps/web）
+# 说明：本地 CLI 上传整个仓库，用本文件排除体积大/与构建无关的目录，
+#       否则会连同 node_modules、Playwright 浏览器、构建产物一起上传。
+
+# 依赖与构建产物
+node_modules
+**/node_modules
+.next
+**/.next
+*.tsbuildinfo
+
+# Playwright 与本地工具缓存
+.browsers
+.playwright-mcp
+.codegraph
+.claude
+.windsurf
+.trae
+
+# 版本库与本地数据
+.git
+data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 环境变量与日志（密钥通过 Vercel 项目设置注入，切勿上传）
+.env*
+.vercel
+*.log
+
+# 文档与临时文件
+docs
+test.md

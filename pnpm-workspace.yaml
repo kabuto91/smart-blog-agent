@@ -14,5 +14,8 @@ allowBuilds:
   unrs-resolver: true
 
 # 统一 TypeScript 版本（npmmirror 对 ^5 解析到了过旧的 5.0.2，其类型收窄更弱会误报）
+# 同时把 jsdom 26 依赖的 cssstyle 提到 4.6.0：4.2.1 会丢弃内联样式里的 var() 值
+# （表现为 host 的 padding-top:var(--nav-h) 失效），4.6.0 仍在 ^4.2.1 范围内且依赖链为 CJS。
 overrides:
   typescript: "5.9.3"
+  "jsdom@26.1.0>cssstyle": "4.6.0"

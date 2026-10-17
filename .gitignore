@@ -54,3 +54,6 @@ next-env.d.ts
 
 # playwright 项目内浏览器目录（沙箱/CI 本地安装）
 .browsers
+
+.vercel
+.env*
