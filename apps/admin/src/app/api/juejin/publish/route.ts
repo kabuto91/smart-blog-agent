@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { getArticleById, updateJuejinArticleId } from "@smart-blog/core/lib/articles"
 import { getCollectionsForArticle } from "@smart-blog/core/lib/collections"
+import { getUpload, MAX_UPLOAD_SIZE } from "@smart-blog/core/lib/uploads"
 import { fetchOwnColumns } from "@/lib/juejin-columns"
 import { getJuejinToken } from "@smart-blog/core/lib/site-config"
 
@@ -12,6 +13,7 @@ export const runtime = "nodejs"
 const SKILL_DIR = path.join(process.cwd(), "src", "agents", "juejin-publisher")
 const PUBLISH_SCRIPT = path.join(SKILL_DIR, "scripts", "publish.mjs")
 const PUBLISH_TIMEOUT = 5 * 60 * 1000
+const COVER_FETCH_TIMEOUT = 15 * 1000
 
 interface PublishRequest {
   articleId: string
@@ -28,15 +30,78 @@ interface PublishResult {
   postId?: string
   status?: string
   columns?: string[]
+  coverUploaded?: boolean | null
   message: string
 }
 
-function runScript(args: string[]): Promise<{ stdout: string; stderr: string }> {
+/** 传给发布脚本的封面数据：base64 原文 + 原始文件名/类型 */
+interface CoverPayload {
+  name: string
+  mimeType: string
+  data: string
+}
+
+const EXT_BY_MIME: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/svg+xml": "svg",
+}
+
+/**
+ * 把文章封面解析成可直接交给掘金文件上传的 base64 数据。
+ * - 站内上传：封面形如 /api/uploads/<id>，直接取 uploads 表里存好的 base64，无需公网可访问。
+ * - 外链封面（http/https）：服务端抓取字节后转 base64。
+ * 解析失败返回 null（封面属可选，不影响发布主流程）。
+ */
+async function resolveCoverPayload(coverImage: string | null | undefined): Promise<CoverPayload | null> {
+  if (!coverImage) return null
+  try {
+    const uploadMatch = coverImage.match(/\/api\/uploads\/([^/?#]+)/)
+    if (uploadMatch) {
+      const upload = await getUpload(decodeURIComponent(uploadMatch[1]))
+      if (!upload?.data) return null
+      return {
+        name: upload.filename || `cover.${EXT_BY_MIME[upload.mimeType] ?? "jpg"}`,
+        mimeType: upload.mimeType || "image/jpeg",
+        data: upload.data,
+      }
+    }
+
+    if (/^https?:\/\//i.test(coverImage)) {
+      const res = await fetch(coverImage, { signal: AbortSignal.timeout(COVER_FETCH_TIMEOUT) })
+      if (!res.ok) return null
+      const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase()
+      const mimeType = contentType.startsWith("image/") ? contentType : "image/jpeg"
+      const buffer = Buffer.from(await res.arrayBuffer())
+      if (buffer.byteLength === 0 || buffer.byteLength > MAX_UPLOAD_SIZE) return null
+      return {
+        name: `cover.${EXT_BY_MIME[mimeType] ?? "jpg"}`,
+        mimeType,
+        data: buffer.toString("base64"),
+      }
+    }
+  } catch {
+    // 封面获取失败不阻断发布
+    return null
+  }
+  return null
+}
+
+function runScript(
+  args: string[],
+  stdinPayload?: string
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    // 有封面数据时通过 stdin 传递（base64 体积可能达数 MB，不能走命令行参数）
+    const stdio: ["pipe" | "ignore", "pipe", "pipe"] = stdinPayload
+      ? ["pipe", "pipe", "pipe"]
+      : ["ignore", "pipe", "pipe"]
     const child = spawn("node", [PUBLISH_SCRIPT, ...args], {
       cwd: SKILL_DIR,
       env: { ...process.env },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio,
     })
     let stdout = ""
     let stderr = ""
@@ -44,8 +109,18 @@ function runScript(args: string[]): Promise<{ stdout: string; stderr: string }> 
       child.kill("SIGKILL")
       reject(new Error("发布超时（5 分钟）"))
     }, PUBLISH_TIMEOUT)
-    child.stdout.on("data", (d) => (stdout += d))
-    child.stderr.on("data", (d) => (stderr += d))
+    const out = child.stdout
+    const err = child.stderr
+    if (out) out.on("data", (d) => (stdout += d))
+    if (err) err.on("data", (d) => (stderr += d))
+    if (stdinPayload) {
+      const stdin = child.stdin
+      if (stdin) {
+        stdin.on("error", () => {})
+        stdin.write(stdinPayload)
+        stdin.end()
+      }
+    }
     child.on("error", (err) => {
       clearTimeout(timer)
       reject(err)
@@ -139,8 +214,15 @@ export async function POST(request: Request) {
       syncedColumns = []
     }
 
+    // 封面处理：把文章封面解析成 base64（站内 /api/uploads/<id> 直接取库里的 base64），
+    // 通过 stdin 交给脚本，由脚本用 Chromium 上传控件提交给掘金，无需封面公网可访问。
+    const cover = await resolveCoverPayload(article.coverImage)
+    if (cover) {
+      scriptArgs.push("--cover-stdin")
+    }
+
     try {
-      const { stdout } = await runScript(scriptArgs)
+      const { stdout } = await runScript(scriptArgs, cover ? JSON.stringify(cover) : undefined)
       const result = parseResult(stdout)
       if (result?.ok) {
         // 发布成功：回写掘金文章 ID（新增或更新均覆盖本地绑定）
@@ -159,6 +241,7 @@ export async function POST(request: Request) {
           status: result.status,
           juejinArticleId,
           columns: result.columns?.length ? result.columns : syncedColumns,
+          coverUploaded: result.coverUploaded ?? null,
           message: result.message,
         })
       }

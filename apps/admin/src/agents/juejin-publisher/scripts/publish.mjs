@@ -57,6 +57,8 @@ function parseArgs(argv) {
     else if (a === "--category") args.category = next()
     else if (a === "--cookie") args.cookie = next()
     else if (a === "--article-id") args.articleId = next()
+    else if (a === "--cover-file") args.coverFile = next()
+    else if (a === "--cover-stdin") args.coverStdin = true
     else if (a === "--force-new") args.forceNew = true
     else if (a === "--headless") args.headless = true
     else if (a === "--dry-run") args.dryRun = true
@@ -112,6 +114,128 @@ function stripTitleLine(body) {
 
 function delay(ms) {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+const MIME_BY_EXT = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+}
+
+// 读取 stdin 全部内容（后台调用时封面 base64 从这里传入）
+async function readStdin() {
+  if (process.stdin.isTTY) return ""
+  const chunks = []
+  for await (const chunk of process.stdin) chunks.push(chunk)
+  return Buffer.concat(chunks).toString("utf8")
+}
+
+// 解析封面数据，统一还原成 Chromium 文件上传所需的 Buffer
+// 支持两种来源：--cover-file <本地图片路径> 或 --cover-stdin（stdin 传 JSON：{name,mimeType,data(base64)}）
+async function resolveCover(args) {
+  if (args.coverFile) {
+    const buffer = await fs.readFile(args.coverFile)
+    const ext = path.extname(args.coverFile).slice(1).toLowerCase()
+    return {
+      name: path.basename(args.coverFile),
+      mimeType: MIME_BY_EXT[ext] || "image/jpeg",
+      buffer,
+    }
+  }
+  if (args.coverStdin) {
+    const raw = (await readStdin()).trim()
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed?.data) return null
+    return {
+      name: parsed.name || "cover.jpg",
+      mimeType: parsed.mimeType || "image/jpeg",
+      buffer: Buffer.from(parsed.data, "base64"),
+    }
+  }
+  return null
+}
+
+// 在发布弹窗中定位「文章封面」的 file input。
+// 按祖先节点的文案/类名打分，避免误选中编辑器工具栏里的正文图片上传 input。
+// 返回按 DOM 顺序排列的候选数组（只含打分 > 0 的项），用于排查选择器变化。
+async function findCoverInputCandidates(page) {
+  return page.evaluate(() => {
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+    return inputs.map((el, index) => {
+      let ctx = ""
+      let node = el
+      for (let depth = 0; depth < 4 && node; depth++) {
+        ctx += " " + (node.textContent || "") + " " + String(node.className || "")
+        node = node.parentElement
+      }
+      const inDialog = !!el.closest('[class*="dialog"], [class*="modal"], [class*="byte-modal"]')
+      let score = 0
+      if (/上传封面|文章封面/.test(ctx)) score += 4
+      else if (/封面/.test(ctx)) score += 2
+      if (/cover/i.test(String(el.className || "") + ctx)) score += 1
+      if (inDialog) score += 1
+      return { index, score }
+    })
+  })
+}
+
+// 上传封面：把封面字节以 Buffer 形式喂给掘金的 file input（无需临时文件 / 公网 URL）
+// 返回 { uploaded: boolean|null, reason?: string }
+async function uploadCover(page, cover) {
+  const scored = await findCoverInputCandidates(page)
+  const hit = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score)[0]
+  const fallback = scored.length === 1 ? scored[0] : null
+  const target = hit || fallback
+  if (!target) {
+    return {
+      uploaded: null,
+      reason: `未能定位「文章封面」上传控件（页面共 ${scored.length} 个 file input）`,
+    }
+  }
+  try {
+    await page
+      .locator('input[type="file"]')
+      .nth(target.index)
+      .setInputFiles({ name: cover.name, mimeType: cover.mimeType, buffer: cover.buffer })
+  } catch (error) {
+    return {
+      uploaded: false,
+      reason: `封面注入失败：${error instanceof Error ? error.message : String(error)}`,
+    }
+  }
+
+  // 上传为异步过程，轮询封面区域是否出现掘金 CDN 图片预览
+  const deadline = Date.now() + 25000
+  while (Date.now() < deadline) {
+    const src = await readCoverPreviewSrc(page)
+    if (src) return { uploaded: true, previewUrl: src }
+    await delay(1000)
+  }
+  // 注入动作成功但未观测到预览：标记为未知（不阻断发布）
+  return { uploaded: null, reason: "已注入封面文件，但未在 25 秒内观测到封面预览图" }
+}
+
+// 读取封面区域内的预览图地址（用于确认掘金已接管并上传完成）
+async function readCoverPreviewSrc(page) {
+  return page.evaluate(() => {
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+    for (const el of inputs) {
+      let node = el
+      for (let depth = 0; depth < 4 && node; depth++) {
+        if (/上传封面|文章封面|封面/.test(node.textContent || "")) {
+          const img = node.querySelector("img[src]")
+          const src = img?.getAttribute("src") || ""
+          if (/^https?:\/\//.test(src)) return src
+        }
+        node = node.parentElement
+      }
+    }
+    return ""
+  })
 }
 
 async function saveFailureScreenshot(page, label) {
@@ -262,6 +386,13 @@ async function main() {
     return
   }
 
+  // 2.2 解析封面（可选）：站内封面由后台以 base64 经 stdin 传入，命令行可用 --cover-file
+  const cover = await resolveCover(args).catch((error) => {
+    console.log(`封面数据解析失败，跳过封面上传：${error instanceof Error ? error.message : String(error)}`)
+    return null
+  })
+  let coverResult = cover ? null : { uploaded: null, reason: "本次未提供封面" }
+
   // 2.5 发布模式在浏览器启动后决定（见下方，依赖登录态页面渲染探测）
 
   const browser = await chromium.launch({ headless: args.headless, executablePath: resolveLocalChrome() ?? undefined })
@@ -374,6 +505,20 @@ async function main() {
       'button:has-text("确定并更新")',
       '[class*="dialog"] button:has-text("确定并更新")',
     ], 15000)
+
+    // 6.5 上传封面（可选，best-effort）：把封面字节直接喂给发布弹窗的「上传封面」file input，
+    // 由掘金自己完成上传，失败不阻断发布（仅记录，结果里以 coverUploaded 体现）。
+    if (cover && confirmBtnWait) {
+      coverResult = await uploadCover(page, cover).catch((error) => ({
+        uploaded: false,
+        reason: `封面上传异常：${error instanceof Error ? error.message : String(error)}`,
+      }))
+      if (coverResult.uploaded === true) {
+        console.log(`封面：已上传（${coverResult.previewUrl}）`)
+      } else {
+        console.log(`封面：${coverResult.reason || "上传结果未知"}`)
+      }
+    }
 
     // 7. 选择分类
     // 先等分类面板渲染完成再做匹配，避免面板渲染慢导致指定分类匹配不到而误选第一个分类。
@@ -519,7 +664,8 @@ async function main() {
         mode: isUpdate ? "update" : "new",
         category: selectedCategory || (category || "未选择"),
         columns: selectedColumns,
-        message: `试跑成功（${isUpdate ? "更新流程" : "新增流程"}）：标题/正文/分类/标签均已填充，发布弹窗已就绪，未执行最终发布${selectedColumns.length ? `，选中专栏：${selectedColumns.join("、")}` : ""}${shot ? `，截图：${shot}` : ""}`,
+        coverUploaded: coverResult?.uploaded ?? null,
+        message: `试跑成功（${isUpdate ? "更新流程" : "新增流程"}）：标题/正文/分类/标签均已填充，发布弹窗已就绪，未执行最终发布${selectedColumns.length ? `，选中专栏：${selectedColumns.join("、")}` : ""}${coverResult?.uploaded === true ? "，封面已上传" : cover ? `，封面未确认（${coverResult?.reason || "未知"}）` : ""}${shot ? `，截图：${shot}` : ""}`,
       }))
       return
     }
@@ -577,7 +723,8 @@ async function main() {
         status: auditing ? "auditing" : "published",
         category: selectedCategory || (category || ""),
         columns: selectedColumns,
-        message: `${isUpdate ? "更新成功" : "发布成功"}${auditing ? "（审核中）" : ""}：${url}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}`,
+        coverUploaded: coverResult?.uploaded ?? null,
+        message: `${isUpdate ? "更新成功" : "发布成功"}${auditing ? "（审核中）" : ""}：${url}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}${coverResult?.uploaded === true ? "\n封面已上传" : cover ? `\n封面未确认：${coverResult?.reason || "未知"}` : ""}`,
       }))
     } else if (/\/published/.test(finalUrl)) {
       // 跳转到已发布列表页：从页面中提取刚发布文章的文章链接
@@ -603,7 +750,8 @@ async function main() {
         postId: pid,
         status: "published",
         columns: selectedColumns,
-        message: `${isUpdate ? "更新成功" : "发布成功"}${pid ? `：${postUrl}` : "（已跳转到发布列表页，但未能提取文章链接）"}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}`,
+        coverUploaded: coverResult?.uploaded ?? null,
+        message: `${isUpdate ? "更新成功" : "发布成功"}${pid ? `：${postUrl}` : "（已跳转到发布列表页，但未能提取文章链接）"}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}${coverResult?.uploaded === true ? "\n封面已上传" : cover ? `\n封面未确认：${coverResult?.reason || "未知"}` : ""}`,
       }))
     } else {
       const shot = await saveFailureScreenshot(page, "no-redirect")
