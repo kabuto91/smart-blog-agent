@@ -1,4 +1,6 @@
 import { renderContent } from "@smart-blog/core/lib/theme/content-renderer"
+import type { PageType } from "@smart-blog/core/lib/theme/content-renderer"
+import { buildPreviewDynamicData } from "@smart-blog/core/lib/theme/preview-data"
 import { mergeThemePage } from "@smart-blog/core/lib/theme/theme-splitter"
 import { getSiteConfig } from "@smart-blog/core/lib/site-config"
 import { getReusableTexts } from "@smart-blog/core/lib/reusable-text"
@@ -16,6 +18,11 @@ interface RenderRequest {
   contentConfig?: ContentConfig
   /** 拆分式主题：跳过启发式剪枝（默认随调用方式自动推断） */
   pageSpecific?: boolean
+  /**
+   * 预览的页面类型：传值时按线上口径注入真实的文章/标签/分类数据，
+   * 避免动态区块渲染为空导致预览布局塌陷（生成的主题片段常不含示例文案）。
+   */
+  pageType?: PageType
 }
 
 export async function POST(request: Request) {
@@ -43,10 +50,13 @@ export async function POST(request: Request) {
 
     const siteConfig = await getSiteConfig()
     const reusableTexts = await getReusableTexts()
+    const dynamicData = body.pageType
+      ? await buildPreviewDynamicData(body.pageType)
+      : undefined
     const renderedHtml = renderContent(
       template,
       body.contentConfig ?? {},
-      undefined,
+      dynamicData,
       siteConfig,
       { pageSpecific: !!isSplit },
       reusableTexts

@@ -518,6 +518,7 @@ describe("renderContent 动态列表不重复整块面板", () => {
       </div>
     </section>`
     const items = dynamicData.articles!.map((a, i) => ({
+      id: a.id,
       title: `文章${i}`, excerpt: "摘要", date: "2026-01-01", category: "前端", slug: a.slug, tags: [],
     }))
     const out = renderContent(html, config, { ...dynamicData, articles: items }, undefined, {
@@ -576,6 +577,99 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(directItems[0].parentElement!.tagName).toBe("A")
     expect(directItems[0].parentElement!.getAttribute("href")).toBe("/blog/real-a")
     expect(directItems[0].querySelector(".date")!.textContent).toBe("2026-01-01")
+  })
+
+  it("列表项模板同时带 data-map 与 data-content 时不被误弃，卡片按条克隆且每卡一个封面", () => {
+    // 复现真实 bug：抽取器按硬约束给列表项内的文本单位补了 data-content，
+    // 旧逻辑仅凭「模板含 data-content」就弃用配置模板，随后 findDynamicListHost
+    // 把唯一的样本卡片当成列表宿主，findItemTemplate 又从卡片内部挑出封面 <img>
+    // 当模板——封面被逐条复制进同一张样例卡片、真实文章永不替换，表现为「样式乱掉」。
+    const CARD = `<article class="post-card">
+      <img data-map="cover" src="" alt="封面">
+      <h3 class="post-title"><a href="#" data-map="link" data-content="post-link" data-content-type="text">模板标题</a></h3>
+      <time class="post-meta" data-map="date" data-content="post-date" data-content-type="text">2024.01.01</time>
+      <p class="post-excerpt" data-map="excerpt" data-content="post-excerpt" data-content-type="text">模板摘要</p>
+    </article>`
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: CARD,
+        fieldMapping: {
+          cover: "cover",
+          link: "link",
+          title: "title",
+          date: "date",
+          excerpt: "excerpt",
+        },
+      },
+    }
+    const html = `<section class="section" data-content="article-list" data-content-type="dynamic-articles">
+      <div class="article-grid">
+        ${CARD}
+      </div>
+    </section>`
+    const items = dynamicData.articles!.map((a, i) => ({
+      ...a,
+      title: `真实文章${i}`,
+      cover: `/covers/${i}.png`,
+    }))
+    const out = renderContent(html, config, { articles: items }, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const grid = doc.querySelector(".article-grid")!
+    expect(grid.querySelectorAll(".post-card").length).toBe(2)
+    // 每张卡片各带自己的封面，而非把封面逐条复制进同一张样例卡片
+    expect(grid.querySelectorAll(".post-card img[data-map='cover']").length).toBe(2)
+    expect(
+      Array.from(grid.querySelectorAll("img[data-map='cover']")).map((el) =>
+        el.getAttribute("src")
+      )
+    ).toEqual(["/covers/0.png", "/covers/1.png"])
+    expect(out).toContain("真实文章0")
+    expect(out).toContain("真实文章1")
+    expect(out).not.toContain("模板标题")
+    expect(out).not.toContain("模板摘要")
+  })
+
+  it("无配置模板时容器内唯一 <article> 样本卡片按条克隆，不从卡片内部取子元素当模板", () => {
+    // 覆盖 resolveListItemTemplate 的 DOM 回退分支：itemTemplate 缺失/被弃用时，
+    // 若 findDynamicListHost 返回的是唯一样本项，应把它当模板、容器当宿主。
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: "",
+        fieldMapping: {
+          cover: "cover",
+          link: "link",
+          title: "title",
+        },
+      },
+    }
+    const html = `<div class="article-grid" data-content="article-list" data-content-type="dynamic-articles">
+      <article class="post-card">
+        <img data-map="cover" src="" alt="封面">
+        <h3 class="post-title"><a href="#" data-map="link">样例标题</a></h3>
+      </article>
+    </div>`
+    const items = dynamicData.articles!.map((a, i) => ({
+      ...a,
+      title: `真实文章${i}`,
+      cover: `/covers/${i}.png`,
+    }))
+    const out = renderContent(html, config, { articles: items }, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const grid = doc.querySelector(".article-grid")!
+    // 克隆项被 display:contents 的整卡 <a> 包裹，平铺为网格直接子级
+    expect(grid.querySelectorAll(":scope > a > article.post-card").length).toBe(2)
+    expect(grid.querySelectorAll(".post-card img[data-map='cover']").length).toBe(2)
+    expect(out).toContain("真实文章0")
+    expect(out).toContain("真实文章1")
+    expect(out).not.toContain("样例标题")
   })
 
   it("卡片模板内嵌分类标签组 ul 时仍是合法模板，克隆卡片平铺且字段齐全", () => {

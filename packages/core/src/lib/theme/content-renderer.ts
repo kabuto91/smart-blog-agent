@@ -1219,7 +1219,7 @@ function findDynamicListHost(container: Element): Element | null {
   for (const list of Array.from(container.querySelectorAll("div, section, article"))) {
     if (!list.querySelector("[data-map]")) continue
     if (!firstDataMap) firstDataMap = list
-    if (/grid|list|row|feed/i.test(list.className || "")) gridHost = list
+    if (LIST_HOST_CLASS_RE.test(list.className || "")) gridHost = list
   }
   return gridHost ?? firstDataMap
 }
@@ -1292,11 +1292,17 @@ function resolveListItemTemplate(
     template = dom.body.firstElementChild
   }
 
-  // 配置 itemTemplate 若含有区块级 data-content 字段（如「最新文章」标题/描述），
-  // 说明它被记录为整块面板（标题 + 列表容器 + 卡片）而非单个列表项。保留它会被
-  // 逐条克隆复制，导致同一批文章渲染成多个重复区块。此时弃用配置模板，改按宿主
-  // 结构推导真实列表项。动态列表集类型（如导航/自定义列表）除外，避免误伤品牌模板。
-  if (field.type !== "dynamic-list" && template && /data-content\s*=/.test(field.itemTemplate)) {
+  // 配置 itemTemplate 若含有"区块级" data-content 字段（自身没有 data-map 的纯文本
+  // 单位，如「最新文章」标题/描述），说明它被记录为整块面板（标题 + 列表容器 + 卡片）
+  // 而非单个列表项。保留它会被逐条克隆复制，导致同一批文章渲染成多个重复区块。
+  // 注意：列表项内部的字段通常同时带 data-map（如 <a data-map="link" data-content=…>），
+  // 不能仅因出现 data-content 就弃用合法模板（否则模板被误弃后只能从样本卡片内部
+  // 推导，会挑出封面 img 之类子元素当模板）。动态列表集类型除外，避免误伤品牌模板。
+  if (
+    field.type !== "dynamic-list" &&
+    template &&
+    hasPanelLevelContentField(field.itemTemplate)
+  ) {
     template = null
   }
 
@@ -1310,7 +1316,19 @@ function resolveListItemTemplate(
     host = findRepeatedItemWrapper(container, host) ?? container
   }
 
-  if (!template) template = findItemTemplate(host)
+  if (!template) {
+    // 无可用的配置模板（未记录 / 被判为整块面板）时从宿主推导。宿主本身即容器内
+    // 唯一样本项（如只含一张 <article class="post-card">）时，它就是要克隆的列表项：
+    // 把它当模板、宿主退回容器，避免 findItemTemplate 从样本卡片内部挑出子元素
+    // （如封面 <img data-map="cover">）当模板，导致封面被逐条复制进同一张卡片、
+    // 样例文章永不替换。
+    if (isSampleItemHost(host, container)) {
+      template = host
+      host = findRepeatedItemWrapper(container, host) ?? container
+    } else {
+      template = findItemTemplate(host)
+    }
+  }
   if (!template) return null
 
   return { host, template }
@@ -1324,6 +1342,43 @@ function isSameElementShape(a: Element, b: Element): boolean {
     Array.from(a.classList).sort().join(" ") ===
     Array.from(b.classList).sort().join(" ")
   )
+}
+
+/** 列表包装容器的类名特征（与 findDynamicListHost 选用 gridHost 的判定保持一致）。 */
+const LIST_HOST_CLASS_RE = /grid|list|row|feed/i
+
+/**
+ * 判定配置 itemTemplate 是否为"整块面板"：内部存在带 data-content 但没有 data-map
+ * 的纯文本单位（如区块标题「最新文章」）。列表项内部字段一般同时带 data-map，
+ * 因此只有这类"只归属全局/区块字段"的元素才能证明记录到的是面板而非列表项。
+ */
+function hasPanelLevelContentField(html: string): boolean {
+  const doc = new JSDOM(html).window.document
+  return Array.from(doc.querySelectorAll("[data-content]")).some(
+    (el) => !el.hasAttribute("data-map")
+  )
+}
+
+/**
+ * 判定 findDynamicListHost 返回的宿主其实是容器里的"唯一样本项"（而非列表宿主）。
+ * 典型场景：列表容器只含一张 <article class="post-card"> 样本卡片时，
+ * findDynamicListHost 会把它当作宿主，若再从它内部挑模板就会挑出封面等子元素。
+ * 判据：非容器自身、非 ul/ol、类名不形似列表包装、内部不存在 ≥2 个同构子项。
+ */
+function isSampleItemHost(host: Element, container: Element): boolean {
+  if (host === container) return false
+  if (host.matches("ul, ol")) return false
+  if (LIST_HOST_CLASS_RE.test(host.getAttribute("class") ?? "")) return false
+  if (!(host.matches("[data-map]") || host.querySelector("[data-map]"))) {
+    return false
+  }
+  const kids = Array.from(host.children)
+  for (let i = 0; i < kids.length; i++) {
+    for (let j = i + 1; j < kids.length; j++) {
+      if (isSameElementShape(kids[i], kids[j])) return false
+    }
+  }
+  return true
 }
 
 const TAG_LIKE_CLASS_RE = /(^|[\s_-])(tags?|chips?|badges?)([\s_-]|$)/i

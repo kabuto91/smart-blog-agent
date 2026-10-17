@@ -102,15 +102,18 @@ export default function ThemesPage() {
     try {
       const merged: ContentConfig = { ...(theme.contentConfig ?? {}) }
       if (page.contentConfig) Object.assign(merged, page.contentConfig)
+      // 预览按线上口径渲染：走 mergeThemePage + 注入真实动态数据，
+      // 保证文章列表/标签云不为空，所见即线上效果。
+      const previewPageType = (["home", "list", "detail"] as const).find(
+        (t) => t === page.type
+      )
       const res = await fetch("/api/themes/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          htmlTemplate: injectPageIntoLayout(
-            theme.layoutHtml,
-            page.html,
-            { navClearance: page.type !== "home" }
-          ),
+          layoutHtml: theme.layoutHtml,
+          pageHtml: page.html,
+          pageType: previewPageType,
           contentConfig: merged,
         }),
       })

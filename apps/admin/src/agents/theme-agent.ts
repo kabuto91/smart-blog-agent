@@ -143,21 +143,22 @@ const IMAGE_RULE = `【图片规则】
 /** 动态文章列表的数据绑定规则（首页/列表页共用）。 */
 const DYNAMIC_ARTICLES_RULE = `- 文章列表区域用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹；
 - 动态区的首个子元素是单个列表项模板（<li> 或 <article>），模板内用 data-map 标记 title、excerpt、date、category、link 等字段；
+- 模板项内的每个字段必须填一句完整的示例文案（标题、摘要、日期各写一句），用于主题预览时完整呈现；渲染时会被真实文章数据整条替换，不会出现在线上页面；
 - 模板外的静态结构（标题、容器、按钮等）放在模板项同级位置，不要包在模板项里面；
-- 模板之外的示例项会被清除并替换为真实数据。`
+- 除模板项外不要再手写其它示例条目，那些都会被清除并替换为真实数据。`
 
 /** 动态标签/分类列表的数据绑定规则（首页/列表页若有标签云或分类侧栏时使用）。 */
-const DYNAMIC_TAG_RULE = `- 标签云区域用 <div data-content="tag-cloud" data-content-type="dynamic-tags"> 包裹，容器内首个子元素作为单个标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接（href 写占位 # 即可）；
+const DYNAMIC_TAG_RULE = `- 标签云区域用 <div data-content="tag-cloud" data-content-type="dynamic-tags"> 包裹，容器内首个子元素作为单个标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接（href 写占位 # 即可），并填一个示例标签名（渲染时会被真实标签替换）；
 - 若设计了分类列表区域，用 data-content-type="dynamic-categories" 同理标记（模板内 data-map="name" 标记分类名）。
 - 请勿用静态链接硬编码标签/分类列表——运行时会用后台维护的真实标签/分类自动替换（即便列表内同时混有标签与分类链接、或仅为分类链接，也会被替换）。`
 
 /** 动态内容识别规则：统一指导 LLM 判断区块属于动态列表还是静态文本。 */
 const DYNAMIC_CONTENT_RULE = `【动态内容识别规则】生成页面时，先判断每个区块属于「动态列表」还是「静态文本」：
 
-一、动态列表（运行时会自动填充真实数据，禁止手写占位条目、禁止硬编码链接）：
+一、动态列表（运行时会自动填充真实数据，禁止硬编码真实链接、禁止手写多条示例条目）：
 1. 文章类列表：任何「展示多篇文章 / 多个卡片 / 网格 / 日期+标题条目」的区块（如 热门文章、近期/最新文章、推荐阅读、文章卡片、文章网格、侧边栏「时间锚点/归档」日期列表）都归为此类，整块只用一个外层容器标记：
    <section data-content="article-list" data-content-type="dynamic-articles">
-     首个子元素是单个文章项模板（<article> 或 <li>），模板内用 data-map 标记 title、excerpt、date、category、link；封面用 <img data-map="cover">（仅限网格/多列卡片容器内）；若卡片展示标签，用 <div data-map="tags"> 包裹标签芯片（内嵌的 <span class="tag"> 作为单个标签样式模板，渲染时会逐个填入真实标签）。
+     首个子元素是单个文章项模板（<article> 或 <li>），模板内用 data-map 标记 title、excerpt、date、category、link；封面用 <img data-map="cover">（仅限网格/多列卡片容器内）；若卡片展示标签，用 <div data-map="tags"> 包裹标签芯片（内嵌的 <span class="tag"> 作为单个标签样式模板，渲染时会逐个填入真实标签）；模板项内各字段都要填一句示例文案（渲染时整条替换为真实数据，仅为预览完整）。
    </section>
    切勿给每个文章项的标题/摘要/日期单独打 data-content="text"——整块就是一个动态列表。
    其中，「精选文章/编辑推荐」这类由后台手动挑选的区块，请改用 data-content="featured-articles"（同样 data-content-type="dynamic-articles"），其余文章列表/网格都用 data-content="article-list"。
