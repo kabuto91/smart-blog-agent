@@ -2,17 +2,20 @@ import { prisma } from "./db/client"
 import { incrementViews, incrementLikes } from "./db/stats"
 
 /**
- * 文章阅读量 +1，返回最新的阅读数（含本次）。
- * 每打开一次详情页调用一次；同时累加站点总阅读量 SiteStats.totalViews。
+ * 文章阅读量 +1，返回最新的阅读数与点赞数（含本次）。
+ * 由前台详情页的客户端脚本调用（不再在服务端渲染路径中执行，渲染只读不写）；
+ * 同时累加站点总阅读量 SiteStats.totalViews。
  */
-export async function bumpArticleRead(id: string): Promise<number> {
+export async function bumpArticleRead(
+  id: string
+): Promise<{ readCount: number; likeCount: number }> {
   const updated = await prisma.article.update({
     where: { id },
     data: { readCount: { increment: 1 } },
-    select: { readCount: true },
+    select: { readCount: true, likeCount: true },
   })
   await incrementViews(1)
-  return updated.readCount
+  return { readCount: updated.readCount, likeCount: updated.likeCount }
 }
 
 /**
@@ -54,8 +57,10 @@ export interface ArticleStatsBarOptions {
 
 /**
  * 构建自包含的「阅读数 + 点赞按钮」统计条，用于注入到详情页正文之后。
- * 内联脚本通过 document.currentScript.parentElement 定位自身区块，
- * 用 localStorage（key 形如 sa-like-{id}）记住点赞状态，点击时调用点赞 API 同步。
+ * 内联脚本通过 document.currentScript.parentElement 定位自身区块：
+ * 加载后调用阅读 API 累加本次阅读并同步最新的阅读/点赞数（页面 HTML 可能命中缓存，
+ * 内嵌数值是渲染时刻的快照，需运行时刷新）；用 localStorage（key 形如 sa-like-{id}）
+ * 记住点赞状态，点击时调用点赞 API 同步。
  */
 export function buildArticleStatsBar(options: ArticleStatsBarOptions): string {
   const { id, readCount, likeCount } = options
@@ -101,6 +106,7 @@ export function buildArticleStatsBar(options: ArticleStatsBarOptions): string {
     var btn = bar.querySelector('[data-like-btn]');
     if(!btn) return;
     var countText = bar.querySelector('[data-like-count-text]');
+    var readNum = bar.querySelector('[data-read-count]');
     var id = btn.getAttribute('data-article-id');
     var key = 'sa-like-' + id;
     var liked = false;
@@ -109,6 +115,19 @@ export function buildArticleStatsBar(options: ArticleStatsBarOptions): string {
       if(liked) btn.classList.add('sa-float-stats__like--active');
       else btn.classList.remove('sa-float-stats__like--active');
     }
+    function applyCounts(s){
+      if(!s) return;
+      if(s.readCount != null && readNum) readNum.textContent = String(s.readCount);
+      if(s.likeCount != null && countText){
+        countText.textContent = String(s.likeCount);
+        btn.setAttribute('data-like-count', String(s.likeCount));
+      }
+    }
+    // HTML 可能命中缓存，加载后向服务端累加本次阅读并同步最新阅读/点赞数
+    fetch('/api/articles/' + id + '/read', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(applyCounts)
+      .catch(function(){});
     btn.addEventListener('click', function(){
       var action = liked ? 'unlike' : 'like';
       fetch('/api/articles/' + id + '/like', {
@@ -119,8 +138,7 @@ export function buildArticleStatsBar(options: ArticleStatsBarOptions): string {
         liked = !liked;
         try { localStorage.setItem(key, liked ? '1' : '0'); } catch(e){}
         countText.textContent = String(data.likeCount);
-        var c = btn.getAttribute('data-like-count');
-        if(String(data.likeCount) !== c) btn.setAttribute('data-like-count', String(data.likeCount));
+        if(String(data.likeCount) !== btn.getAttribute('data-like-count')) btn.setAttribute('data-like-count', String(data.likeCount));
         render();
         if(liked){
           btn.classList.remove('sa-float-stats__like--bump');

@@ -1,26 +1,12 @@
 import { prisma } from "./db/client"
+import { getSiteConfigBundle, normalizeLib } from "./site-config"
 
 /** 站点级可复用文本库：key → 文本内容。 */
 export type ReusableTextLibrary = Record<string, string>
 
 /** 读取站点级可复用文本库。 */
 export async function getReusableTexts(): Promise<ReusableTextLibrary> {
-  try {
-    const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
-    if (!row?.textLibrary) return {}
-    return normalizeLib(JSON.parse(row.textLibrary))
-  } catch {
-    return {}
-  }
-}
-
-function normalizeLib(raw: unknown): ReusableTextLibrary {
-  const lib: ReusableTextLibrary = {}
-  if (!raw || typeof raw !== "object") return lib
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof value === "string") lib[key] = value
-  }
-  return lib
+  return (await getSiteConfigBundle()).reusableTexts
 }
 
 async function saveLib(lib: ReusableTextLibrary): Promise<ReusableTextLibrary> {

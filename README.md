@@ -145,8 +145,8 @@ apps/web/                       # 前台（部署 Vercel）
     [...path]/route.ts          # 兜底：无匹配路由时按主题自定义页面渲染
     blog/route.ts|archive|category/[slug]|tag/[slug]|[slug]  # 列表/归档/分类/标签/文章详情
     collections/route.ts|collections/[slug]                  # 合集列表/详情
-    api/stats|articles/[id]/like|uploads/[id]                # 公开 API
-  src/lib/home-page.ts          # 首页数据聚合
+    api/stats|articles/[id]/like|articles/[id]/read|uploads/[id]  # 公开 API
+  src/lib/blog-cache.ts         # 前台页面渲染 + HTML 缓存层（unstable_cache）
   next.config.ts                # outputFileTracingRoot 指向仓库根
 
 apps/admin/                     # 后台（本地运行）

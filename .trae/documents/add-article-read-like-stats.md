@@ -29,7 +29,7 @@ likeCount  Int @default(0) @map("like_count")
 
 ### 2. 新增模块：`src/lib/article-stats.ts`
 集中放置阅读/赞相关逻辑与详情页注入片段：
-- `bumpArticleRead(id: string): Promise<number>` —— 对 `prisma.article.update({ where:{id}, data:{ readCount: { increment: 1 } } })` 返回最新 `readCount`。
+- `bumpArticleRead(id: string): Promise<{ readCount: number; likeCount: number }>` —— 对 `prisma.article.update({ where:{id}, data:{ readCount: { increment: 1 } } })` 返回最新 `readCount` 与 `likeCount`（同时累加 `SiteStats.totalViews`）。**由客户端脚本调用的 `POST /api/articles/[id]/read` 触发，不在服务端渲染路径中执行**（渲染只读，便于 SSR/缓存复用）。
 - `adjustArticleLike(id: string, action: "like" | "unlike"): Promise<number>` —— 读取当前 `likeCount`，`next = Math.max(0, likeCount + (action==="unlike" ? -1 : 1))`，更新并返回 `next`（避免负数）。可选同步 `SiteStats.totalLikes` 按差值增减。
 - `buildArticleStatsBar(opts: { id: string; readCount: number; likeCount: number }): string` —— 返回自包含的 HTML 块（含内联 `<style>`/`<script>`）：
   - 显示「阅读 {readCount}」；
@@ -37,26 +37,24 @@ likeCount  Int @default(0) @map("like_count")
   - 内联脚本：从 `localStorage`(`key: sa-like-{id}`) 读取/写入点赞状态，用 `fetch` 调用 `POST /api/articles/{id}/like` 同步到服务端并更新计数，用内联样式切换「已赞」高亮。用 `document.currentScript.parentElement` 定位自身区块，避免污染全局脚本。
 - `injectArticleStatsBar(html: string, opts): string`（可选）—— 若路线统一改用 `renderThemePage`，则不需要此项；此处仅作为 `afterBodyHtml` 传入，无需额外 JSDOM 后处理。
 
-### 3. 阅读量自增 + 点赞注入：`src/app/blog/[slug]/route.ts`
-在 `GET` 中，确认文章存在且已发布后：
+### 3. 统计条注入：`apps/web/src/lib/blog-cache.ts`（`renderDetail`）
+渲染路径**只读**，不再在服务端自增阅读量；只用渲染时刻的快照值构造统计条：
 ```ts
-const readCount = await bumpArticleRead(article.id)
-const likeCount = article.likeCount
-const dynamicData = { ... /* 现构造逻辑不变 */ }
-const statsBar = buildArticleStatsBar({ id: article.id, readCount, likeCount })
-const afterBody = nav.length > 0 ? buildCollectionNavHtml(nav) + statsBar : statsBar
-const html = await renderThemePage("detail", dynamicData, { afterBodyHtml: afterBody })
-if (html === null) { return blogNotConfiguredHtml... }
-return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } })
+const statsBar = buildArticleStatsBar({
+  id: article.id,
+  readCount: article.readCount,
+  likeCount: article.likeCount,
+})
+const afterBodyHtml =
+  nav.length > 0 ? buildCollectionNavHtml(nav) + statsBar : statsBar
+const html = await renderThemePage("detail", { articles: [toArticleDetailData(article)], ... }, { afterBodyHtml })
 ```
-- **为什么**：`renderThemePage` 的 `afterBodyHtml` 天然把统计条插到正文之后，且两种分支（有合集导航/无导航）可统一走此路径。
-- **怎么做**：移除默认分支里对 `renderBlogTheme(dynamicData)` 的直接返回，统一改为 `renderThemePage("detail", ...)`。
+- **为什么**：`renderThemePage` 的 `afterBodyHtml` 天然把统计条插到正文之后；渲染只读使详情页 HTML 可被 `unstable_cache` 缓存并跨请求复用。
+- **快照刷新**：统计条内联脚本在加载后 `POST /api/articles/{id}/read` 累加本次阅读，并用返回的最新 `readCount`/`likeCount` 回填显示，解决缓存 HTML 数值滞后的问题。
 
-### 4. 点赞 API：`src/app/api/articles/[id]/like/route.ts`
-`POST` 处理：
-- 解析 `{ action: "like" | "unlike" }`（缺省视为 `like`）。
-- 调用 `adjustArticleLike(id, action)`；文章不存在返回 `404`。
-- 返回 JSON：`{ id, likeCount }`。
+### 4. 阅读/点赞 API
+- `POST /api/articles/[id]/like`（`apps/web/src/app/api/articles/[id]/like/route.ts`）：解析 `{ action: "like" | "unlike" }`（缺省视为 `like`），调用 `adjustArticleLike`，返回 `{ id, likeCount }`。
+- `POST /api/articles/[id]/read`（`apps/web/src/app/api/articles/[id]/read/route.ts`）：调用 `bumpArticleRead` 累加阅读量并返回 `{ id, readCount, likeCount }`，由详情页客户端脚本触发。
 
 ### 5. 生成客户端 + 重启
 - 迁移后 `npx prisma generate`（`migrate dev` 已含）；

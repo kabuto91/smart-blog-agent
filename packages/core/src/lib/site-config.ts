@@ -1,12 +1,36 @@
 import { prisma } from "./db/client"
 import { encrypt, decrypt } from "./crypto"
+import { readSiteStats } from "./db/stats"
 import { EDITABLE_KEYS, STAT_KEYS, STAT_FIELDS } from "./field-registry"
 
-export async function getSiteConfig(): Promise<Record<string, string>> {
+/** 归一化可复用文本库（仅保留字符串值）。 */
+export function normalizeLib(raw: unknown): Record<string, string> {
+  const lib: Record<string, string> = {}
+  if (!raw || typeof raw !== "object") return lib
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === "string") lib[key] = value
+  }
+  return lib
+}
+
+export interface SiteConfigBundle {
+  /** 全局可编辑字段 + 统计字段 */
+  config: Record<string, string>
+  /** 站点级可复用文本库 */
+  reusableTexts: Record<string, string>
+}
+
+/**
+ * 一次性读取前台渲染所需的站点配置：`site_config` 行（全局字段 + 可复用文本库）
+ * 与 `site_stats` 行（统计字段）。只读、不写库，供渲染路径复用，
+ * 避免 getSiteConfig 与 getReusableTexts 分别重复查询同一行。
+ */
+export async function getSiteConfigBundle(): Promise<SiteConfigBundle> {
   const config: Record<string, string> = {}
   for (const key of EDITABLE_KEYS) {
     config[key] = ""
   }
+  let reusableTexts: Record<string, string> = {}
 
   try {
     const row = await prisma.siteConfig.findUnique({ where: { id: 1 } })
@@ -18,24 +42,23 @@ export async function getSiteConfig(): Promise<Record<string, string>> {
         }
       }
     }
-  } catch {
-    // table may not exist yet
-  }
-
-  try {
-    const stats = await prisma.siteStats.upsert({
-      where: { id: 1 },
-      create: { id: 1 },
-      update: {},
-    })
-    for (const key of STAT_KEYS) {
-      config[key] = String(stats[STAT_FIELDS[key].statKey])
+    if (row?.textLibrary) {
+      reusableTexts = normalizeLib(JSON.parse(row.textLibrary))
     }
   } catch {
     // table may not exist yet
   }
 
-  return config
+  const stats = await readSiteStats()
+  for (const key of STAT_KEYS) {
+    config[key] = String(stats[STAT_FIELDS[key].statKey])
+  }
+
+  return { config, reusableTexts }
+}
+
+export async function getSiteConfig(): Promise<Record<string, string>> {
+  return (await getSiteConfigBundle()).config
 }
 
 export async function updateSiteConfig(

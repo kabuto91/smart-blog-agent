@@ -1,8 +1,7 @@
 import { JSDOM } from "jsdom"
 import { renderMarkdown } from "./markdown"
 import { getActiveTheme, pageContentConfig } from "./theme/theme"
-import { getSiteConfig } from "./site-config"
-import { getReusableTexts } from "./reusable-text"
+import { getSiteConfigBundle } from "./site-config"
 import {
   renderContent,
   resolvePageType,
@@ -182,8 +181,7 @@ export async function renderThemePage(
   const page = activeTheme.pages.find((p) => p.type === pageType)
   if (!page) return null
 
-  const siteConfig = await getSiteConfig()
-  const reusableTexts = await getReusableTexts()
+  const { config: siteConfig, reusableTexts } = await getSiteConfigBundle()
   const contentConfig: ContentConfig =
     pageContentConfig(activeTheme, pageType) ?? {}
 
@@ -274,8 +272,7 @@ export async function renderCustomThemePage(
   )
   if (!page) return null
 
-  const siteConfig = await getSiteConfig()
-  const reusableTexts = await getReusableTexts()
+  const { config: siteConfig, reusableTexts } = await getSiteConfigBundle()
   const contentConfig: ContentConfig =
     pageContentConfig(activeTheme, "custom") ?? {}
 

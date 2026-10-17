@@ -1,9 +1,9 @@
-import { getActiveTheme } from "@smart-blog/core/lib/theme/theme"
-import { renderCustomThemePage, blogNotFoundHtml, blogNotConfiguredHtml } from "@smart-blog/core/lib/blog"
+import { getCustomPageHtml, renderResponse } from "@/lib/blog-cache"
 
 export const runtime = "nodejs"
-
 export const dynamic = "force-dynamic"
+
+/** 兜底路由：命中主题自定义页则渲染，否则 404。 */
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ path: string[] }> }
@@ -11,22 +11,5 @@ export async function GET(
   const { path } = await params
   const route = `/${(path ?? []).join("/")}`
 
-  const theme = await getActiveTheme()
-  if (!theme) {
-    return new Response(blogNotConfiguredHtml, {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    })
-  }
-
-  const html = await renderCustomThemePage(route)
-  if (!html) {
-    return new Response(blogNotFoundHtml, {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-      status: 404,
-    })
-  }
-
-  return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  })
+  return renderResponse(getCustomPageHtml(route))
 }
