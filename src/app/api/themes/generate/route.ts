@@ -126,10 +126,10 @@ export async function POST(request: Request) {
           message: "未配置视觉模型，已忽略所选参考图片的视觉分析",
         })
       }
-      // 检查点持久化到 SQLite：进程重启/断线后仍可按 thread_id 恢复。
-      const checkpointer = getThemeCheckpointer()
+      // 检查点持久化到 Supabase(Postgres)：进程重启/断线后仍可按 thread_id 恢复。
+      const checkpointer = await getThemeCheckpointer()
       // 旧线程按数量回收（完成态线程需保留，供断线后"继续生成"重放结果）
-      pruneThemeCheckpoints()
+      await pruneThemeCheckpoints()
       const graph = await createThemeGraph({
         checkpointer,
         emitter: {

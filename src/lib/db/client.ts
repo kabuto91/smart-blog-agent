@@ -1,10 +1,12 @@
-import { PrismaLibSql } from "@prisma/adapter-libsql"
+import { PrismaPg } from "@prisma/adapter-pg"
 import { PrismaClient } from "@/generated/prisma/client"
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
 
 function createPrismaClient(): PrismaClient {
-  const adapter = new PrismaLibSql({ url: process.env.DATABASE_URL! })
+  // Supabase：应用运行时走 DATABASE_URL（事务模式池化端口 6543），
+  // 迁移/建表走 DIRECT_URL（会话模式 5432），见 prisma.config.ts
+  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
   return new PrismaClient({ adapter })
 }
 

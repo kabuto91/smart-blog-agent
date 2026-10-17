@@ -2,13 +2,13 @@
 // 浏览器自动化：在掘金「专栏管理」页新建一个专栏。
 // 说明：新建专栏的 create POST 无法稳定捕获（抓包时点击「确定」不触发可识别的 create 接口），
 // 因此本脚本采用「提交后刷新本人专栏列表，按标题反查 column_id」的方式确认创建成功。
-// 入参：--name 专栏名称，--summary 专栏简介，--cookie 掘金 Cookie（缺省从本地 DB/auth 文件读取）。
+// 入参：--name 专栏名称，--summary 专栏简介，--cookie 掘金 Cookie（缺省从 auth 文件或数据库读取）。
 // 输出：{ ok, columnId?, title?, message }
 import { chromium } from "playwright"
 import { promises as fs, existsSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { createClient } from "@libsql/client"
+import pg from "pg"
 import { createRequire } from "node:module"
 
 const require = createRequire(import.meta.url)
@@ -96,23 +96,40 @@ async function readAuthFileCookies() {
   }
 }
 
-async function readAuthDbCookies() {
-  try {
-    const dbUrl = `file:${path.join(__dirname, "..", "..", "..", "..", "data", "theme-sessions.db")}`
-    const client = createClient({ url: dbUrl })
-    const rows = await client.execute({ sql: "SELECT config FROM site_config WHERE id = 1", args: [] })
-    client.close()
-    const raw = rows.rows?.[0]?.config
-    if (raw) {
-      const config = JSON.parse(raw)
-      const stored = config?.juejinToken
-      const key = process.env.LLM_ENCRYPTION_KEY || "kabuto"
-      return stored ? CryptoJS.AES.decrypt(stored, key).toString(CryptoJS.enc.Utf8) : ""
+const PROJECT_ROOT = path.resolve(__dirname, "..", "..", "..", "..")
+
+/** 独立运行时按需加载项目 env；被 Next 进程 spawn 时变量已注入，不覆盖。 */
+function loadProjectEnv() {
+  for (const file of [".env.local", ".env"]) {
+    try {
+      process.loadEnvFile(path.join(PROJECT_ROOT, file))
+      return
+    } catch {
+      // 文件不存在则试下一个
     }
-  } catch {
-    // ignore
   }
-  return ""
+}
+
+async function readAuthDbCookies() {
+  let client
+  try {
+    if (!process.env.DATABASE_URL) loadProjectEnv()
+    const conn = process.env.DATABASE_URL || process.env.DIRECT_URL
+    if (!conn) return ""
+    client = new pg.Client({ connectionString: conn })
+    await client.connect()
+    const { rows } = await client.query("SELECT config FROM site_config WHERE id = 1")
+    const raw = rows?.[0]?.config
+    if (!raw) return ""
+    const stored = JSON.parse(raw)?.juejinToken
+    const key = process.env.LLM_ENCRYPTION_KEY || "kabuto"
+    return stored ? CryptoJS.AES.decrypt(stored, key).toString(CryptoJS.enc.Utf8) : ""
+  } catch {
+    // 读不到则回退到 auth 文件
+    return ""
+  } finally {
+    if (client) await client.end().catch(() => {})
+  }
 }
 
 function delay(ms) {
