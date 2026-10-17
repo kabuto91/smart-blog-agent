@@ -31,14 +31,27 @@ interface PublishResult {
   status?: string
   columns?: string[]
   coverUploaded?: boolean | null
+  bodyImagesUploaded?: number
+  bodyImagesFailed?: { id: string; reason: string }[]
   message: string
 }
 
-/** 传给发布脚本的封面数据：base64 原文 + 原始文件名/类型 */
-interface CoverPayload {
+/** 传给发布脚本的图片数据：base64 原文 + 原始文件名/类型 */
+interface ImagePayload {
   name: string
   mimeType: string
   data: string
+}
+
+/** 正文图片：额外带上正文里出现的站内地址 id，供脚本替换正文中的相对地址 */
+interface BodyImagePayload extends ImagePayload {
+  id: string
+}
+
+/** 经 stdin 交给脚本的图片素材集合 */
+interface AssetsPayload {
+  cover: ImagePayload | null
+  images: BodyImagePayload[]
 }
 
 const EXT_BY_MIME: Record<string, string> = {
@@ -49,44 +62,65 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/svg+xml": "svg",
 }
 
+/** 从 uploads 表取站内图片，还原成掘金文件上传所需的 base64 */
+async function resolveUploadImage(uploadId: string, fallbackName: string): Promise<ImagePayload | null> {
+  const upload = await getUpload(uploadId)
+  if (!upload?.data) return null
+  return {
+    name: upload.filename || `${fallbackName}.${EXT_BY_MIME[upload.mimeType] ?? "jpg"}`,
+    mimeType: upload.mimeType || "image/jpeg",
+    data: upload.data,
+  }
+}
+
 /**
- * 把文章封面解析成可直接交给掘金文件上传的 base64 数据。
- * - 站内上传：封面形如 /api/uploads/<id>，直接取 uploads 表里存好的 base64，无需公网可访问。
- * - 外链封面（http/https）：服务端抓取字节后转 base64。
- * 解析失败返回 null（封面属可选，不影响发布主流程）。
+ * 把图片地址解析成可直接交给掘金文件上传的 base64 数据。
+ * - 站内上传：形如 /api/uploads/<id>，直接取 uploads 表里存好的 base64，无需公网可访问。
+ * - 外链图片（http/https）：服务端抓取字节后转 base64。
+ * 解析失败返回 null（图片可选，不影响发布主流程）。
  */
-async function resolveCoverPayload(coverImage: string | null | undefined): Promise<CoverPayload | null> {
-  if (!coverImage) return null
+async function resolveImagePayload(
+  imageUrl: string | null | undefined,
+  fallbackName = "image"
+): Promise<ImagePayload | null> {
+  if (!imageUrl) return null
   try {
-    const uploadMatch = coverImage.match(/\/api\/uploads\/([^/?#]+)/)
+    const uploadMatch = imageUrl.match(/\/api\/uploads\/([^/?#]+)/)
     if (uploadMatch) {
-      const upload = await getUpload(decodeURIComponent(uploadMatch[1]))
-      if (!upload?.data) return null
-      return {
-        name: upload.filename || `cover.${EXT_BY_MIME[upload.mimeType] ?? "jpg"}`,
-        mimeType: upload.mimeType || "image/jpeg",
-        data: upload.data,
-      }
+      return await resolveUploadImage(decodeURIComponent(uploadMatch[1]), fallbackName)
     }
 
-    if (/^https?:\/\//i.test(coverImage)) {
-      const res = await fetch(coverImage, { signal: AbortSignal.timeout(COVER_FETCH_TIMEOUT) })
+    if (/^https?:\/\//i.test(imageUrl)) {
+      const res = await fetch(imageUrl, { signal: AbortSignal.timeout(COVER_FETCH_TIMEOUT) })
       if (!res.ok) return null
       const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase()
       const mimeType = contentType.startsWith("image/") ? contentType : "image/jpeg"
       const buffer = Buffer.from(await res.arrayBuffer())
       if (buffer.byteLength === 0 || buffer.byteLength > MAX_UPLOAD_SIZE) return null
       return {
-        name: `cover.${EXT_BY_MIME[mimeType] ?? "jpg"}`,
+        name: `${fallbackName}.${EXT_BY_MIME[mimeType] ?? "jpg"}`,
         mimeType,
         data: buffer.toString("base64"),
       }
     }
   } catch {
-    // 封面获取失败不阻断发布
+    // 图片获取失败不阻断发布
     return null
   }
   return null
+}
+
+/** 提取正文中所有站内图片的 upload id（按出现顺序去重） */
+function extractBodyUploadIds(content: string | null | undefined): string[] {
+  if (!content) return []
+  const ids: string[] = []
+  const re = /\/api\/uploads\/([A-Za-z0-9._-]+)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(content)) !== null) {
+    const id = decodeURIComponent(match[1])
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids
 }
 
 function runScript(
@@ -214,15 +248,23 @@ export async function POST(request: Request) {
       syncedColumns = []
     }
 
-    // 封面处理：把文章封面解析成 base64（站内 /api/uploads/<id> 直接取库里的 base64），
-    // 通过 stdin 交给脚本，由脚本用 Chromium 上传控件提交给掘金，无需封面公网可访问。
-    const cover = await resolveCoverPayload(article.coverImage)
-    if (cover) {
-      scriptArgs.push("--cover-stdin")
+    // 图片素材处理：封面 + 正文内联图片统一解析成 base64（站内 /api/uploads/<id> 直接取库里的
+    // base64），通过 stdin 交给脚本，由脚本用 Chromium 上传控件逐张提交给掘金，
+    // 拿到掘金图床地址后替换正文里的相对地址，无需图片公网可访问。
+    const cover = await resolveImagePayload(article.coverImage, "cover")
+    const bodyImages: BodyImagePayload[] = []
+    for (const id of extractBodyUploadIds(article.content)) {
+      const payload = await resolveUploadImage(id, "body")
+      if (payload) bodyImages.push({ id, ...payload })
+    }
+    const assets: AssetsPayload = { cover, images: bodyImages }
+    const hasAssets = !!cover || bodyImages.length > 0
+    if (hasAssets) {
+      scriptArgs.push("--assets-stdin")
     }
 
     try {
-      const { stdout } = await runScript(scriptArgs, cover ? JSON.stringify(cover) : undefined)
+      const { stdout } = await runScript(scriptArgs, hasAssets ? JSON.stringify(assets) : undefined)
       const result = parseResult(stdout)
       if (result?.ok) {
         // 发布成功：回写掘金文章 ID（新增或更新均覆盖本地绑定）
@@ -242,6 +284,8 @@ export async function POST(request: Request) {
           juejinArticleId,
           columns: result.columns?.length ? result.columns : syncedColumns,
           coverUploaded: result.coverUploaded ?? null,
+          bodyImagesUploaded: result.bodyImagesUploaded ?? 0,
+          bodyImagesFailed: result.bodyImagesFailed ?? [],
           message: result.message,
         })
       }

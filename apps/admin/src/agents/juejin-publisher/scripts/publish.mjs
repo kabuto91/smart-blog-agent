@@ -58,7 +58,7 @@ function parseArgs(argv) {
     else if (a === "--cookie") args.cookie = next()
     else if (a === "--article-id") args.articleId = next()
     else if (a === "--cover-file") args.coverFile = next()
-    else if (a === "--cover-stdin") args.coverStdin = true
+    else if (a === "--assets-stdin") args.assetsStdin = true
     else if (a === "--force-new") args.forceNew = true
     else if (a === "--headless") args.headless = true
     else if (a === "--dry-run") args.dryRun = true
@@ -125,7 +125,7 @@ const MIME_BY_EXT = {
   svg: "image/svg+xml",
 }
 
-// 读取 stdin 全部内容（后台调用时封面 base64 从这里传入）
+// 读取 stdin 全部内容（后台调用时封面/正文图片 base64 从这里传入）
 async function readStdin() {
   if (process.stdin.isTTY) return ""
   const chunks = []
@@ -133,30 +133,146 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8")
 }
 
-// 解析封面数据，统一还原成 Chromium 文件上传所需的 Buffer
-// 支持两种来源：--cover-file <本地图片路径> 或 --cover-stdin（stdin 传 JSON：{name,mimeType,data(base64)}）
-async function resolveCover(args) {
+function toBufferImage(item, fallbackName = "image") {
+  if (!item?.data) return null
+  return {
+    id: item.id,
+    name: item.name || `${fallbackName}.jpg`,
+    mimeType: item.mimeType || "image/jpeg",
+    buffer: Buffer.from(item.data, "base64"),
+  }
+}
+
+// 解析图片素材，统一还原成 Chromium 文件上传所需的 Buffer。
+// 支持两种来源：
+//   --cover-file <本地图片路径>：仅封面（命令行手动调用）
+//   --assets-stdin：stdin 传 JSON {cover:{name,mimeType,data}, images:[{id,name,mimeType,data}]}
+// 返回 { cover, images }
+async function resolveAssets(args) {
+  let cover = null
   if (args.coverFile) {
     const buffer = await fs.readFile(args.coverFile)
     const ext = path.extname(args.coverFile).slice(1).toLowerCase()
-    return {
+    cover = {
       name: path.basename(args.coverFile),
       mimeType: MIME_BY_EXT[ext] || "image/jpeg",
       buffer,
     }
   }
-  if (args.coverStdin) {
+
+  const images = []
+  if (args.assetsStdin) {
     const raw = (await readStdin()).trim()
-    if (!raw) return null
-    const parsed = JSON.parse(raw)
-    if (!parsed?.data) return null
-    return {
-      name: parsed.name || "cover.jpg",
-      mimeType: parsed.mimeType || "image/jpeg",
-      buffer: Buffer.from(parsed.data, "base64"),
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      // 兼容只传封面本身的旧格式 {name,mimeType,data}
+      if (parsed?.data && !parsed.cover && !parsed.images) {
+        cover = toBufferImage(parsed, "cover")
+      } else {
+        if (!cover) cover = toBufferImage(parsed?.cover, "cover")
+        for (const item of parsed?.images || []) {
+          const img = toBufferImage(item, "body")
+          if (img?.id) images.push(img)
+        }
+      }
     }
   }
-  return null
+  return { cover, images }
+}
+
+/**
+ * 把正文里的站内图片先上传到掘金图床，再把正文中的相对地址替换成掘金地址。
+ * 掘金对粘贴进正文的图片只会走 juejin.cn/image/urlSave「转存」，实测对站内相对地址与
+ * 第三方公网地址一律返回“网址不合法”，图片会变成空图；因此改为主动上传。
+ * 返回 { content, uploaded, failed: [{id, reason}] }
+ */
+async function uploadBodyImages(page, images, content) {
+  let rewritten = content
+  let uploaded = 0
+  const failed = []
+  for (const image of images) {
+    const before = await snapshotEditorImageSrcs(page)
+    if (!(await setEditorImageFile(page, image))) {
+      failed.push({ id: image.id, reason: "未找到正文图片上传控件" })
+      continue
+    }
+    const url = await waitForNewEditorImage(page, before, 30000)
+    if (!url) {
+      failed.push({ id: image.id, reason: "上传后未在 30 秒内取得掘金图片地址" })
+      continue
+    }
+    const pattern = `/api/uploads/${image.id}`
+    if (!rewritten.includes(pattern)) {
+      failed.push({ id: image.id, reason: "正文中未找到该图片地址" })
+      continue
+    }
+    rewritten = rewritten.split(pattern).join(url)
+    uploaded++
+  }
+  return { content: rewritten, uploaded, failed }
+}
+
+// 当前编辑器里已存在的掘金图床地址（用于识别新上传的那张）
+async function snapshotEditorImageSrcs(page) {
+  return page
+    .evaluate(() =>
+      Array.from(document.querySelectorAll("img"))
+        .map((el) => el.getAttribute("src") || "")
+        .filter((s) => /xtjj-private\.juejin\.cn|tos-cn-/.test(s))
+    )
+    .catch(() => [])
+}
+
+// 轮询直到出现新的掘金图床地址（上传为异步过程）；同时兜底从编辑器源码文本里提取
+async function waitForNewEditorImage(page, before, timeout) {
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    const latest = await page
+      .evaluate(() => {
+        const srcs = Array.from(document.querySelectorAll("img"))
+          .map((el) => el.getAttribute("src") || "")
+          .filter((s) => /xtjj-private\.juejin\.cn|tos-cn-/.test(s))
+        if (srcs.length) return { srcs, text: "" }
+        const editor = document.querySelector(".CodeMirror")
+        return { srcs: [], text: (editor?.textContent || "").slice(0, 20000) }
+      })
+      .catch(() => ({ srcs: [], text: "" }))
+    const fresh = latest.srcs.find((s) => !before.includes(s))
+    if (fresh) return fresh
+    // 兜底：CodeMirror 未渲染 img 时，从文本里找掘金图床地址
+    const m = (latest.text || "").match(/https:\/\/[a-z0-9-]+\.juejin\.cn\/tos-cn-i-[^\s")]+/)
+    if (m && !before.includes(m[0])) return m[0]
+    await delay(1000)
+  }
+  return ""
+}
+
+// 把图片字节喂给编辑器工具栏的图片上传控件（发布弹窗尚未打开，故跳过弹窗内的 file input）
+async function setEditorImageFile(page, image) {
+  for (const selector of ['input[type="file"][accept*="image"]', 'input[type="file"]']) {
+    const loc = page.locator(selector)
+    const count = await loc.count().catch(() => 0)
+    for (let i = 0; i < count; i++) {
+      const item = loc.nth(i)
+      const inDialog = await item
+        .evaluate((el) =>
+          !!el.closest('[class*="dialog"], [class*="modal"], [class*="byte-modal"]')
+        )
+        .catch(() => true)
+      if (inDialog) continue
+      try {
+        await item.setInputFiles({
+          name: image.name,
+          mimeType: image.mimeType,
+          buffer: image.buffer,
+        })
+        return true
+      } catch {
+        // 换下一个候选
+      }
+    }
+  }
+  return false
 }
 
 // 在发布弹窗中定位「文章封面」的 file input。
@@ -236,6 +352,26 @@ async function readCoverPreviewSrc(page) {
     }
     return ""
   })
+}
+
+// 图片上传结果的文案（封面 + 正文图片），供各结果消息拼接
+function imageSummary(cover, coverResult, body) {
+  const parts = []
+  if (cover) {
+    parts.push(
+      coverResult?.uploaded === true ? "封面已上传" : `封面未确认：${coverResult?.reason || "未知"}`
+    )
+  }
+  if (body.uploaded > 0 || body.failed.length > 0) {
+    parts.push(
+      body.failed.length
+        ? `正文图片已上传 ${body.uploaded} 张，${body.failed.length} 张失败（${body.failed
+            .map((f) => `${f.id}：${f.reason}`)
+            .join("；")}）`
+        : `正文图片 ${body.uploaded} 张已全部上传`
+    )
+  }
+  return parts
 }
 
 async function saveFailureScreenshot(page, label) {
@@ -386,12 +522,15 @@ async function main() {
     return
   }
 
-  // 2.2 解析封面（可选）：站内封面由后台以 base64 经 stdin 传入，命令行可用 --cover-file
-  const cover = await resolveCover(args).catch((error) => {
-    console.log(`封面数据解析失败，跳过封面上传：${error instanceof Error ? error.message : String(error)}`)
-    return null
+  // 2.2 解析图片素材（可选）：封面 + 正文内联图片，站内图片由后台以 base64 经 stdin 传入，
+  // 命令行可用 --cover-file 单独指定封面
+  const assets = await resolveAssets(args).catch((error) => {
+    console.log(`图片素材解析失败，跳过图片上传：${error instanceof Error ? error.message : String(error)}`)
+    return { cover: null, images: [] }
   })
+  const cover = assets.cover
   let coverResult = cover ? null : { uploaded: null, reason: "本次未提供封面" }
+  let bodyImagesResult = { uploaded: 0, failed: [] }
 
   // 2.5 发布模式在浏览器启动后决定（见下方，依赖登录态页面渲染探测）
 
@@ -478,7 +617,26 @@ async function main() {
       await page.keyboard.press("Control+A")
       await page.keyboard.press("Delete")
     }
-    await pasteText(page, context, content)
+
+    // 5.1 正文图片：先逐张上传到掘金图床，拿到掘金地址后替换正文里的站内相对地址。
+    // 掘金对粘贴进正文的图片只会走 urlSave「转存」，实测站内相对地址与第三方公网地址
+    // 一律被判定“网址不合法”，图片会变成空图；所以必须主动上传。
+    let finalContent = content
+    if (assets.images.length > 0) {
+      const bodyResult = await uploadBodyImages(page, assets.images, content)
+      bodyImagesResult = { uploaded: bodyResult.uploaded, failed: bodyResult.failed }
+      finalContent = bodyResult.content
+      console.log(
+        `正文图片：已上传 ${bodyResult.uploaded}/${assets.images.length} 张${
+          bodyResult.failed.length ? `，失败 ${bodyResult.failed.map((f) => f.id).join("、")}` : ""
+        }`
+      )
+      // 清空上传过程中插入编辑器正文的图片内容，再粘贴替换后的正文
+      await editor.click({ force: true }).catch(() => {})
+      await page.keyboard.press("Control+A")
+      await page.keyboard.press("Delete")
+    }
+    await pasteText(page, context, finalContent)
     // 等待掘金解析 markdown 并上传图片（图片较多时耗时较长）
     await delay(12000)
 
@@ -665,7 +823,9 @@ async function main() {
         category: selectedCategory || (category || "未选择"),
         columns: selectedColumns,
         coverUploaded: coverResult?.uploaded ?? null,
-        message: `试跑成功（${isUpdate ? "更新流程" : "新增流程"}）：标题/正文/分类/标签均已填充，发布弹窗已就绪，未执行最终发布${selectedColumns.length ? `，选中专栏：${selectedColumns.join("、")}` : ""}${coverResult?.uploaded === true ? "，封面已上传" : cover ? `，封面未确认（${coverResult?.reason || "未知"}）` : ""}${shot ? `，截图：${shot}` : ""}`,
+        bodyImagesUploaded: bodyImagesResult.uploaded,
+        bodyImagesFailed: bodyImagesResult.failed,
+        message: `试跑成功（${isUpdate ? "更新流程" : "新增流程"}）：标题/正文/分类/标签均已填充，发布弹窗已就绪，未执行最终发布${selectedColumns.length ? `，选中专栏：${selectedColumns.join("、")}` : ""}${imageSummary(cover, coverResult, bodyImagesResult).map((s) => `，${s}`).join("")}${shot ? `，截图：${shot}` : ""}`,
       }))
       return
     }
@@ -724,7 +884,9 @@ async function main() {
         category: selectedCategory || (category || ""),
         columns: selectedColumns,
         coverUploaded: coverResult?.uploaded ?? null,
-        message: `${isUpdate ? "更新成功" : "发布成功"}${auditing ? "（审核中）" : ""}：${url}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}${coverResult?.uploaded === true ? "\n封面已上传" : cover ? `\n封面未确认：${coverResult?.reason || "未知"}` : ""}`,
+        bodyImagesUploaded: bodyImagesResult.uploaded,
+        bodyImagesFailed: bodyImagesResult.failed,
+        message: `${isUpdate ? "更新成功" : "发布成功"}${auditing ? "（审核中）" : ""}：${url}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}${imageSummary(cover, coverResult, bodyImagesResult).map((s) => `\n${s}`).join("")}`,
       }))
     } else if (/\/published/.test(finalUrl)) {
       // 跳转到已发布列表页：从页面中提取刚发布文章的文章链接
@@ -751,7 +913,9 @@ async function main() {
         status: "published",
         columns: selectedColumns,
         coverUploaded: coverResult?.uploaded ?? null,
-        message: `${isUpdate ? "更新成功" : "发布成功"}${pid ? `：${postUrl}` : "（已跳转到发布列表页，但未能提取文章链接）"}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}${coverResult?.uploaded === true ? "\n封面已上传" : cover ? `\n封面未确认：${coverResult?.reason || "未知"}` : ""}`,
+        bodyImagesUploaded: bodyImagesResult.uploaded,
+        bodyImagesFailed: bodyImagesResult.failed,
+        message: `${isUpdate ? "更新成功" : "发布成功"}${pid ? `：${postUrl}` : "（已跳转到发布列表页，但未能提取文章链接）"}${selectedColumns.length ? `\n已加入专栏：${selectedColumns.join("、")}` : ""}${imageSummary(cover, coverResult, bodyImagesResult).map((s) => `\n${s}`).join("")}`,
       }))
     } else {
       const shot = await saveFailureScreenshot(page, "no-redirect")

@@ -64,7 +64,7 @@ node scripts/publish.mjs --file ./article.md [--title 标题] [--tags 前端,后
 | `--article-id` | 可选。本地维护的掘金文章 post id。提供后脚本先探测该文章在掘金是否仍存在：存在 → 走**更新流程**（打开草稿编辑器，清空旧正文后重新填写并发布）；不存在 → 自动回退**新增流程**并提示。 |
 | `--force-new` | 可选。即使提供了 `--article-id` 也强制走新增流程（发布成功后得到的新 post id 会覆盖旧绑定）。 |
 | `--cover-file` | 可选。封面图片本地路径。命令行手动调用时用；脚本会把该文件字节直接喂给掘金发布弹窗的「上传封面」控件。 |
-| `--cover-stdin` | 可选。封面数据从 stdin 读取（一行 JSON：`{"name","mimeType","data"}`，`data` 为 base64）。后台「发布到掘金」走此通道：封面在服务端解析成 base64 传入，避免大体积数据走命令行参数。 |
+| `--assets-stdin` | 可选。图片素材从 stdin 读取（一行 JSON：`{"cover":{"name","mimeType","data"},"images":[{"id","name","mimeType","data"}]}`，`data` 为 base64）。后台「发布到掘金」走此通道：封面与正文内联图片在服务端解析成 base64 传入，避免大体积数据走命令行参数。`images[].id` 是正文里出现的站内地址 `/api/uploads/<id>` 中的 id，脚本上传后用掘金地址替换正文中的该地址。 |
 | `--cookie` | 可选。掘金登录 Cookie 字符串；不传时回退到 `.auth/juejin.json` 或 `JUEJIN_COOKIE` 环境变量。 |
 | `--headless` | 可选。无头模式运行（不推荐：遇到验证码/滑块无法人工处理）。 |
 | `--dry-run` | 可选。试跑模式：填充标题/正文/分类/标签并在发布弹窗就绪后停住，不执行最终发布，用于验证流程。 |
@@ -107,8 +107,9 @@ node scripts/publish.mjs --file ./article.md [--title 标题] [--tags 前端,后
 
 ## 注意事项
 
-- **正文输入方式**：掘金编辑器基于 CodeMirror，不能直接 `fill()` 正文，脚本使用「复制到剪贴板 + Ctrl+V 粘贴」的方式，粘贴后掘金会自动解析 Markdown 并重新上传其中的图片。
-- **文章封面自动上传**：提供封面数据（`--cover-file` 或 `--cover-stdin`）时，脚本在发布弹窗就绪后自动把封面字节注入「文章封面 → 上传封面」的 file input（`setInputFiles` 支持 Buffer，无需临时文件，也不要求封面公网可访问），由掘金自行上传。该步骤是 best-effort：失败只记录不阻断发布，结果 JSON 中 `coverUploaded` 取值 `true`（已观测到掘金 CDN 预览）/ `null`（未提供或未能确认）/ `false`（注入失败）。站内上传的封面（`/api/uploads/<id>`）由后台直接读取 uploads 表里的 base64 传入。
+- **正文输入方式**：掘金编辑器基于 CodeMirror，不能直接 `fill()` 正文，脚本使用「复制到剪贴板 + Ctrl+V 粘贴」的方式（掘金会在粘贴时尝试转存其中的图片地址，实测并不可靠，见下条）。
+- **正文内联图片自动上传（重要）**：掘金对**粘贴**进正文的图片只会调用 `juejin.cn/image/urlSave` 做「转存」，实测对站内相对地址 `/api/uploads/<id>`（会被当成 `juejin.cn/api/uploads/<id>` → 404）以及第三方公网地址一律返回 `{"err_msg":"网址不合法"}`，图片会变成**空图 + “转存失败”提示**。因此脚本改为**主动上传**：粘贴前把每张正文图片的字节喂给编辑器工具栏的图片上传控件（走字节 ImageX `CommitImageUpload`），从编辑器里读回掘金图床地址，替换正文中的 `/api/uploads/<id>` 后再粘贴。失败只记录不阻断发布，结果 JSON 中 `bodyImagesUploaded` 为成功张数、`bodyImagesFailed` 为 `[{id, reason}]`（失败时正文会保留原地址，掘金页面上该图仍是破图，需人工处理）。
+- **文章封面自动上传**：提供封面数据（`--cover-file` 或 `--assets-stdin` 里的 `cover`）时，脚本在发布弹窗就绪后自动把封面字节注入「文章封面 → 上传封面」的 file input（`setInputFiles` 支持 Buffer，无需临时文件，也不要求封面公网可访问），由掘金自行上传。该步骤是 best-effort：失败只记录不阻断发布，结果 JSON 中 `coverUploaded` 取值 `true`（已观测到掘金 CDN 预览）/ `null`（未提供或未能确认）/ `false`（注入失败）。站内上传的封面（`/api/uploads/<id>`）由后台直接读取 uploads 表里的 base64 传入。
 - **验证码 / 滑块**：默认非无头模式。若发布途中出现验证码或滑块，脚本会暂停并提示，等待人工处理完成后按回车继续。
 - **分类与标签**：发布弹窗中分类必须选 1 个；标签建议至少 1 个、3 个更佳。脚本会逐个输入并选中标签。
 - **更新已有文章**：带 `--article-id` 且掘金上该文章仍存在时走更新流程（进入草稿编辑器，清空旧正文后重新填写并发布）；更新后掘金会再次审核，属平台机制。文章不存在时自动回退新增；文章存在但未能定位「编辑」入口时中止并报错（避免误新增重复文章），可改用 `--force-new` 强制新增。
