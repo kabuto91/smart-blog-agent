@@ -16,6 +16,7 @@ import { extractContentConfig } from "@smart-blog/core/lib/theme/content-extract
 import { ensureAvatarOverflow } from "@smart-blog/core/lib/theme/content-renderer"
 import {
   sanitizePageFragment,
+  createSanitizeReport,
   ensureLayoutContract,
   collectThemeClasses,
   validatePageFragment,
@@ -28,6 +29,12 @@ import {
   collectElementClasses,
   type StyleAuditReport,
 } from "@/lib/theme/style-analyzer"
+import {
+  checkThemeIntegrity,
+  formatIntegrityIssues,
+  type ThemeIntegrityReport,
+} from "@/lib/theme/theme-selfcheck"
+import { runVisualCheck } from "@/lib/theme/theme-visual-check"
 import { addMessage } from "@/lib/theme/theme-session"
 import {
   PAGE_TYPES,
@@ -55,7 +62,9 @@ export type ThemeStage =
   | "validator"
   | "audit"
   | "judge"
+  | "gate"
   | "revise"
+  | "reject"
   | "commit"
 
 /** 单次生成的运行指标（各阶段耗时/轮次/质量分）。 */
@@ -192,6 +201,14 @@ const ThemeStateAnnotation = Annotation.Root({
     warnings: [],
     pageIssues: {},
   })),
+  /** 渲染后自检结果（gate 节点产出，对合并后的产物做确定性检查）。 */
+  integrity: last<ThemeIntegrityReport>(() => ({
+    issues: [],
+    blockers: [],
+    ok: true,
+  })),
+  /** 自检存在 blocker 且修订机会用尽 → 拒绝保存。 */
+  rejected: last<boolean>(() => false),
   /** judge 的分维度评分。 */
   qualityDimensions: last<Record<string, DimensionVerdict>>(() => ({})),
   /** 骨架级修订反馈（样式体系不达标时下发给 skeleton 节点）。 */
@@ -435,10 +452,21 @@ function makePageNode(pageType: ThemePageType, ctx: NodeContext) {
     if (!html) html = rawText
     html = ensureAvatarOverflow(html)
     const result = extractContentConfig(html, state.siteConfig)
+    // 净化报告用于回传类名桥接的实际命中情况（观察期：统计后再决定是否彻底移除桥接）
+    const report = createSanitizeReport()
     const fragment = sanitizePageFragment(
       result.htmlTemplate,
-      collectThemeClasses(state.layoutHtml)
+      collectThemeClasses(state.layoutHtml),
+      report
     )
+    const bridged = Object.entries(report.bridges)
+    if (bridged.length > 0) {
+      ctx.emitter?.warn(
+        `「${pageTypeLabel(pageType)}」命中类名桥接（观察项）：${bridged
+          .map(([from, to]) => `${from}→${to}`)
+          .join("、")}`
+      )
+    }
 
     ctx.emitter?.stage(`page_${pageType}`, `生成${pageTypeLabel(pageType)}`, "done")
     return {
@@ -479,7 +507,12 @@ function makeValidatorNode(ctx: NodeContext) {
   }
 }
 
-/** audit：静态样式审计（纯代码规则检查），error 级问题将驱动修订。 */
+/**
+ * audit：静态样式审计 + 渲染后自检（纯代码规则检查），error/blocker 级问题将驱动修订。
+ *
+ * 自检放在 audit 里（而不是独立节点）是为了复用同一套修订预算：
+ * 问题被发现后要能拿到修订机会修掉，否则只会一路走到「拒绝保存」。
+ */
 function makeAuditNode(ctx: NodeContext) {
   return async function auditNode(state: GraphState) {
     ctx.emitter?.stage("audit", "静态样式审计", "start")
@@ -491,20 +524,28 @@ function makeAuditNode(ctx: NodeContext) {
     for (const w of report.warnings) {
       ctx.emitter?.warn(w)
     }
+    // 渲染后自检：对合并产物做确定性检查（片段级校验覆盖不到的部分）
+    const integrity = checkThemeIntegrity(state.layoutHtml, auditedPages)
+    for (const it of integrity.issues) {
+      if (it.level === "blocker") {
+        ctx.emitter?.warn(`[自检·必须修复] ${it.scope}：${it.message}`)
+      }
+    }
     const errorCount =
       report.skeletonIssues.length +
-      Object.values(report.pageIssues).reduce((n, list) => n + list.length, 0)
+      Object.values(report.pageIssues).reduce((n, list) => n + list.length, 0) +
+      integrity.issues.filter((i) => i.level !== "warn").length
     ctx.emitter?.stage(
       "audit",
       "静态样式审计",
       "done",
       errorCount > 0 ? `${errorCount} 处问题` : "全部通过"
     )
-    return { styleAudit: report }
+    return { styleAudit: report, integrity }
   }
 }
 
-/** 共享修订计划计算：validate/audit/judge 三个阶段复用同一套判定逻辑。 */
+/** 共享修订计划计算：validate/audit/judge/gate 四个阶段复用同一套判定逻辑。 */
 function computeRevisePlan(
   state: GraphState,
   scoreThreshold: number
@@ -515,6 +556,18 @@ function computeRevisePlan(
   const auditPages = state.activePages.filter(
     (pt) => (state.styleAudit.pageIssues[pt]?.length ?? 0) > 0
   )
+  // 渲染后自检的问题：骨架级 → 骨架重建；页面级 → 定向重生成该页
+  const integritySkeleton = state.integrity.issues.some(
+    (i) => i.level === "blocker" && i.scope === "skeleton"
+  )
+  const integrityPages = state.integrity.issues
+    .filter(
+      (i) =>
+        (i.level === "blocker" || i.level === "error") &&
+        i.scope !== "skeleton"
+    )
+    .map((i) => i.scope as ThemePageType)
+    .filter((pt) => state.activePages.includes(pt))
   const lowKeys = Object.entries(state.qualityDimensions)
     .filter(([, dim]) => dim.score > 0 && dim.score < scoreThreshold)
     .map(([k]) => k)
@@ -526,7 +579,9 @@ function computeRevisePlan(
   // 骨架级修订：设计系统本身不合格时整树重建（迭代模式下禁止）
   const skeletonFix =
     !state.iteration &&
-    (state.styleAudit.skeletonIssues.length > 0 || skeletonDimLow)
+    (state.styleAudit.skeletonIssues.length > 0 ||
+      skeletonDimLow ||
+      integritySkeleton)
 
   const pageTargets = skeletonFix
     ? []  // 骨架重做会连带所有页面重建，无需单独发 page Sends
@@ -534,11 +589,61 @@ function computeRevisePlan(
         new Set([
           ...failing,
           ...auditPages,
+          ...integrityPages,
           ...(pageDimLow || totalLow ? state.activePages : []),
         ])
       )
 
   return { skeletonFix, pageTargets }
+}
+
+/**
+ * gate：渲染后自检闸门（最终放行/拒绝）。
+ *
+ * 只做「放行 or 拒绝」，不再触发修订 —— 修订机会已在 audit 阶段用同一套预算发放过，
+ * 避免出现「审计修一轮、闸门又修一轮」的预算语义分叉。
+ * 这里重新跑一次自检是为了校验**最终状态**（含 judge 可能引发的最后一轮修订结果）。
+ */
+function makeGateNode(ctx: NodeContext) {
+  return async function gateNode(state: GraphState) {
+    ctx.emitter?.stage("gate", "渲染后自检", "start")
+    const auditedPages: Record<string, string> = {}
+    for (const pt of state.activePages) {
+      if (state.pages[pt]) auditedPages[pt] = state.pages[pt]
+    }
+    const report = checkThemeIntegrity(state.layoutHtml, auditedPages)
+    ctx.emitter?.stage(
+      "gate",
+      "渲染后自检",
+      "done",
+      report.ok ? "通过" : `${report.blockers.length} 处必须修复`
+    )
+
+    // 可选的浏览器几何验证（THEME_VISUAL_CHECK=1 开启）。
+    // 几何结论只作为提示，不参与拒绝判定 —— 字体/环境影响可能抖动，避免误伤。
+    const visual = await runVisualCheck(state.layoutHtml, auditedPages)
+    if (visual.ran && visual.issues.length > 0) {
+      for (const msg of visual.issues) {
+        ctx.emitter?.warn(`[几何验证] ${msg}`)
+      }
+    }
+
+    return { integrity: report }
+  }
+}
+
+/** reject：自检仍有 blocker 且修订机会用尽 → 拒绝保存（不落库、不提交成功事件）。 */
+function makeRejectNode(ctx: NodeContext) {
+  return async function rejectNode(state: GraphState) {
+    const detail = formatIntegrityIssues(state.integrity, "blocker")
+    ctx.emitter?.stage("reject", "主题未通过自检", "done", "已拒绝保存")
+    ctx.emitter?.warn(
+      `主题未通过渲染后自检，已拒绝保存（存在必须修复的问题）：\n${detail}`
+    )
+    // 仍然落一次会话快照，便于用户继续对话迭代（保存接口会再次拦截）
+    await persistSnapshot(ctx, state, "主题未通过渲染后自检，已拒绝保存")
+    return { rejected: true }
+  }
 }
 
 /** judge：多维度质量评估，产出结构化评分（替代原单一总分）。 */
@@ -711,6 +816,9 @@ function makeReviseNode(ctx: NodeContext) {
       )
       const skeletonFeedback = [
         ...audit.skeletonIssues.map((s) => `- ${s}`),
+        ...state.integrity.issues
+          .filter((i) => i.scope === "skeleton")
+          .map((i) => `- ${i.message}`),
         ...dimIssues.map((s) => `- ${s}`),
         state.qualityReason ? `总评意见：${state.qualityReason}` : "",
       ]
@@ -743,6 +851,12 @@ function makeReviseNode(ctx: NodeContext) {
         auditPageIssues: audit.pageIssues[pt],
         dimensions: state.qualityDimensions,
         qualityReason: state.qualityReason,
+        integrityIssues: state.integrity.issues
+          .filter(
+            (i) =>
+              i.scope === pt && (i.level === "blocker" || i.level === "error")
+          )
+          .map((i) => i.message),
       })
     }
     ctx.emitter?.stage(
@@ -775,8 +889,11 @@ function buildFeedback(opts: {
   auditPageIssues?: string[]
   dimensions?: Record<string, DimensionVerdict>
   qualityReason?: string
+  /** 渲染后自检（合并产物级）的问题描述 */
+  integrityIssues?: string[]
 }): string {
-  const { validation, auditPageIssues, dimensions, qualityReason } = opts
+  const { validation, auditPageIssues, dimensions, qualityReason, integrityIssues } =
+    opts
   const parts: string[] = []
 
   if (validation && validation.issues.length > 0) {
@@ -788,6 +905,12 @@ function buildFeedback(opts: {
   if (auditPageIssues && auditPageIssues.length > 0) {
     parts.push("静态样式审计问题：")
     for (const issue of auditPageIssues) {
+      parts.push(`- ${issue}`)
+    }
+  }
+  if (integrityIssues && integrityIssues.length > 0) {
+    parts.push("渲染后自检（合并产物）发现的问题，必须修复：")
+    for (const issue of integrityIssues) {
       parts.push(`- ${issue}`)
     }
   }
@@ -812,6 +935,36 @@ function buildFeedback(opts: {
   return parts.join("\n")
 }
 
+/** 落库会话快照（commit 与 reject 共用，保证被拒绝的结果仍可继续迭代）。 */
+async function persistSnapshot(
+  ctx: NodeContext,
+  state: GraphState,
+  content: string
+): Promise<void> {
+  const layoutForMerge = ensureAvatarOverflow(
+    ensureLayoutContract(state.layoutHtml)
+  )
+  const layoutConfigJson = JSON.stringify(
+    extractContentConfig(layoutForMerge, state.siteConfig).contentConfig
+  )
+  await addMessage(
+    state.conversationId,
+    "assistant",
+    content,
+    layoutForMerge,
+    layoutConfigJson,
+    JSON.stringify(state.pages),
+    JSON.stringify({
+      stages: ctx.stageDurations,
+      totalMs: Date.now() - ctx.runStartedAt,
+      reviseCount: state.reviseCount,
+      pageCount: PAGE_TYPES.filter((pt) => state.pages[pt]).length,
+      qualityScore: state.qualityScore,
+      iteration: state.iteration,
+    })
+  )
+}
+
 /** commit：把最终骨架/页面快照持久化到会话。 */
 function makeCommitNode(ctx: NodeContext) {
   return async function commitNode(state: GraphState) {
@@ -822,21 +975,10 @@ function makeCommitNode(ctx: NodeContext) {
     const layoutConfigJson = JSON.stringify(
       extractContentConfig(layoutForMerge, state.siteConfig).contentConfig
     )
-    await addMessage(
-      state.conversationId,
-      "assistant",
-      state.iteration ? state.userRequest : "已生成主题骨架与三个页面",
-      layoutForMerge,
-      layoutConfigJson,
-      JSON.stringify(state.pages),
-      JSON.stringify({
-        stages: ctx.stageDurations,
-        totalMs: Date.now() - ctx.runStartedAt,
-        reviseCount: state.reviseCount,
-        pageCount: PAGE_TYPES.filter((pt) => state.pages[pt]).length,
-        qualityScore: state.qualityScore,
-        iteration: state.iteration,
-      })
+    await persistSnapshot(
+      ctx,
+      state,
+      state.iteration ? state.userRequest : "已生成主题骨架与三个页面"
     )
     ctx.emitMetrics({
       stages: ctx.stageDurations,
@@ -907,12 +1049,19 @@ export async function createThemeGraph(
   const routeAfterAudit = (state: GraphState): string => {
     const plan = computeRevisePlan(state, ctx.scoreThreshold)
     if ((plan.skeletonFix || plan.pageTargets.length > 0) && state.reviseCount < ctx.maxAttempts) return "revise"
+    return "gate"
+  }
+
+  const routeAfterGate = (state: GraphState): string => {
+    // 自检仍有 blocker → 拒绝保存
+    if (state.integrity.blockers.length > 0) return "reject"
     return ctx.judgeEnabled ? "judge" : "commit"
   }
 
   const routeAfterJudge = (state: GraphState): string => {
     const plan = computeRevisePlan(state, ctx.scoreThreshold)
     if ((plan.skeletonFix || plan.pageTargets.length > 0) && state.reviseCount < ctx.maxAttempts) return "revise"
+    if (state.integrity.blockers.length > 0) return "reject"
     return "commit"
   }
 
@@ -931,10 +1080,12 @@ export async function createThemeGraph(
     .addNode("page_detail", makePageNode("detail", ctx), { retryPolicy: llmRetry })
     .addNode("validator", makeValidatorNode(ctx))
     .addNode("audit", makeAuditNode(ctx))
+    .addNode("gate", makeGateNode(ctx))
     .addNode("judge", makeJudgeNode(ctx))
     .addNode("revise", makeReviseNode(ctx), {
       ends: ["skeleton", "page_home", "page_list", "page_detail"],
     })
+    .addNode("reject", makeRejectNode(ctx))
     .addNode("commit", makeCommitNode(ctx))
 
   graph
@@ -950,13 +1101,19 @@ export async function createThemeGraph(
     .addEdge("validator", "audit")
     .addConditionalEdges("audit", routeAfterAudit, {
       revise: "revise",
+      gate: "gate",
+    })
+    .addConditionalEdges("gate", routeAfterGate, {
       judge: "judge",
       commit: "commit",
+      reject: "reject",
     })
     .addConditionalEdges("judge", routeAfterJudge, {
       revise: "revise",
       commit: "commit",
+      reject: "reject",
     })
+    .addEdge("reject", END)
     .addEdge("commit", END)
 
   return graph.compile({

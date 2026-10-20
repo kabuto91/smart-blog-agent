@@ -1,5 +1,5 @@
 import { prisma } from "../db/client"
-import { mergeMissingNav, repairBrokenNav } from "./content-extractor"
+import { mergeMissingNav, repairBrokenNav, stripDataDrivenNavItems } from "./content-extractor"
 import type { ContentConfig } from "../types/content-config"
 
 export interface ThemePageData {
@@ -91,8 +91,10 @@ function parseTheme(theme: {
 function ensureThemeNavConfig(theme: ThemeData): ThemeData {
   const config = mergeMissingNav(theme.contentConfig, theme.layoutHtml)
   const repaired = repairBrokenNav(config, theme.layoutHtml)
-  if (repaired === theme.contentConfig) return theme
-  return { ...theme, contentConfig: repaired }
+  // 过滤导航里硬编码的分类/标签/具体文章链接（存量主题同样生效）
+  const filtered = stripDataDrivenNavItems(repaired)
+  if (filtered === theme.contentConfig) return theme
+  return { ...theme, contentConfig: filtered }
 }
 
 const PAGE_INCLUDE = {

@@ -43,6 +43,7 @@ export default function ThemesPage() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [configEdit, setConfigEdit] = useState<{ theme: Theme; page: ThemePage | null } | null>(null)
   const [htmlEdit, setHtmlEdit] = useState<{ theme: Theme; page: ThemePage | null } | null>(null)
+  const [saveError, setSaveError] = useState("")
 
   useEffect(() => {
     fetch("/api/themes")
@@ -60,6 +61,7 @@ export default function ThemesPage() {
     contentConfig?: string
   }) {
     const name = `主题 ${themes.length + 1}`
+    setSaveError("")
     const res = await fetch("/api/themes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -76,7 +78,20 @@ export default function ThemesPage() {
         contentConfig: payload.contentConfig,
       }),
     })
-    if (!res.ok) return
+    if (!res.ok) {
+      // 保存被渲染后自检拦截时，服务端会返回 422 + blockers 明细
+      const data = (await res.json().catch(() => null)) as {
+        error?: string
+        blockers?: { scope: string; message: string }[]
+      } | null
+      const detail = (data?.blockers ?? [])
+        .map((b) => `- [${b.scope}] ${b.message}`)
+        .join("\n")
+      setSaveError(
+        `${data?.error ?? "主题保存失败"}${detail ? `\n${detail}` : ""}`
+      )
+      return
+    }
     const saved = await res.json()
     setThemes((prev) => [saved, ...prev])
   }
@@ -219,6 +234,13 @@ export default function ThemesPage() {
             </Button>
           </div>
         </div>
+
+        {/* 保存被自检拦截时的提示 */}
+        {saveError && (
+          <div className="mb-4 max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs leading-relaxed text-red-700">
+            {saveError}
+          </div>
+        )}
 
         {/* Loading state */}
         {loading && (

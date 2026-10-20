@@ -16,22 +16,66 @@ planner ──► skeleton ──► dispatch_pages ──Send(fan-out)──►
                                                      ▲                        │
                                                      │                有风险且未超轮次
                                                      │                        ▼
-                                              revise（反馈写回 prompt）       judge（可选打分）
+                                              revise（反馈写回 prompt）      audit（静态审计+自检）
                                                      │                        │
-                                                     └──────────────◄─────────┘ 低分且未超轮次
-                                                                                │
-                                                                                ▼
-                                                                             commit（持久化）──► END
+                                                     │              有问题且未超轮次 │
+                                                     │                        ▼
+                                                     │◄─────────────── revise ─┘
+                                                     │                        │ 无问题
+                                                     │                        ▼
+                                                     │                   gate（渲染后自检闸门）
+                                                     │                        │
+                                                     │              有 blocker   │ 通过
+                                                     │                        ▼
+                                                     │                   reject（拒绝保存）──► END
+                                                     │                        │
+                                                     └────────────────────────┘
+                                                                          ▼
+                                                                     judge（可选打分）──► commit（持久化）──► END
 ```
 
 - **planner「设计总监」**：把用户需求提炼成简短设计简报（风格/配色/字体/布局/配图/要点），统一约束后续所有节点，保证三页视觉一致。
-- **skeleton**：产出共享骨架（`<head>` 样式 + 导航 + 页脚 + `data-page-host` 挂载点），绑定图片搜索工具，经过 `ensureLayoutContract`（注入 `--nav-h`、导航测量脚本）与 `ensureAvatarOverflow` 标准化，并提取布局 `contentConfig`。
+- **skeleton**：产出共享骨架（`<head>` 样式 + 导航 + 页脚 + `data-page-host` 挂载点），绑定图片搜索工具，经过 `ensureLayoutContract`（注入 `--nav-h` 兜底、安全兜底层、导航测量脚本、留白归一）与 `ensureAvatarOverflow` 标准化，并提取布局 `contentConfig`。
 - **dispatch_pages**：通过 LangGraph `Send` 把三个页面节点并行 fan-out。这是真实的并行执行，而非串行 Promise.all。
-- **page_home / page_list / page_detail**：读取骨架「视觉契约」（`buildPagePromptContext`：结构 + 类名清单 + CSS），输出正文片段（`<section>`/`<div>`），绑定图片工具，同样走工具循环，最后 `sanitizePageFragment` 清洗。
+- **page_home / page_list / page_detail**：读取骨架「视觉契约」（`buildPagePromptContext`：结构 + 类名清单 + CSS），输出正文片段（`<section>`/`<div>`），绑定图片工具，同样走工具循环，最后 `sanitizePageFragment` 清洗（剥离 script/style/nav/footer、剥离根部的 `data-page-host`、追加式类名桥接）。
 - **validator**：对本次生成的所有页面做与骨架的一致性校验 —— 用 JSDOM 统计页面所用类名与骨架类名的重叠率（`validatePageFragment`，阈值 ≥15%），并检查 `data-content` 标记规范。
+- **audit**：静态样式审计（`analyzeSkeletonStyles`）+ 渲染后自检（`checkThemeIntegrity`）。两者的问题都进 `computeRevisePlan`，共用同一套修订预算。
+- **gate**：渲染后自检闸门。重新对**合并后的产物**跑一遍自检；存在 blocker 时走 reject，否则放行。另有可选的浏览器几何验证（`THEME_VISUAL_CHECK=1`，非阻断）。
 - **judge**（可选开关 `judgeEnabled`）：LLM 对整体设计打 0-100 分并给出一句理由。
-- **revise**：当校验有风险或质量分低于 `scoreThreshold`（默认 60）且修订轮次未超过 `maxAttempts`（默认 1）时，只对失败的页面重新 `Send`，并把校验反馈/评审意见写回下一轮 prompt（`feedback` 通道）。
+- **revise**：当校验/审计/自检有风险或质量分低于 `scoreThreshold` 且修订轮次未超过 `maxAttempts` 时，只对失败的页面重新 `Send`，并把校验反馈/自检结论/评审意见写回下一轮 prompt（`feedback` 通道）。
+- **reject**：自检仍有 blocker 且修订机会用尽 —— **拒绝保存**（不发 `done` 事件，后台不出现「使用此主题」；`POST /api/themes` 亦会二次拦截）。
 - **commit**：把最终骨架、三页快照与运行指标（阶段耗时/质量分/修订轮次）通过 `addMessage` 持久化到会话。
+
+### 1.1 全局字段在导航中的赋值规则
+
+全局字段（blog-title / author-name / site-description…）经常被放在**导航品牌区**（logo / 站名 / 头像）。渲染文本字段时必须区分：
+
+| 位置 | 是否被全局字段填充 | 原因 |
+| --- | --- | --- |
+| 导航品牌区（.nav-brand / .logo，链接列表之外） | ✅ 填充 | 承载的正是 blog-title 这类全局字段 |
+| 导航项标签（链接列表宿主内 / 渲染期克隆出的导航项） | ❌ 跳过 | 由导航项数据驱动，填了会导致每一项都变成站名 |
+
+早期实现直接跳过整个 `[data-content-type="nav-list"]` 容器，导致站名永远填不进去（页面上一直显示主题生成时的占位文案）。现由 `isNavItemLabel()` 精确判定，渲染期克隆出的导航项用 WeakSet 登记（不往输出 HTML 里塞内部属性）。
+
+### 1.2 导航里不硬编码分类/标签/文章链接
+
+LLM 常把导航拆成多组链接（导航 / 分类 / 标签），但渲染时**只有第一组**是受配置管理的列表宿主，其余组里的链接是原样输出的静态标记 —— slug 是编造的（点了 404），且与正文里按真实数据渲染的动态标签云/分类列表**重复展示**。
+
+| 位置 | 处理 |
+| --- | --- |
+| 布局 HTML 里的硬编码分类/标签/具体文章链接 | `ensureLayoutContract` → `stripHardCodedTaxonomyLinks()` 移除（含空分组与孤儿分组标题） |
+| `contentConfig` 里已写入的导航项 | `ensureThemeNavConfig` → `stripDataDrivenNavItems()` 过滤（存量主题同样生效） |
+| 骨架提示词 | 明确导航只放核心路由（`/blog`、`/blog/archive`） |
+
+### 1.3 关键样式契约
+
+| 变量 | 语义 | 写入方 |
+| --- | --- | --- |
+| `--nav-h` | 导航**自身高度**（设计令牌） | 只由骨架 CSS 声明；**运行时脚本永不修改** |
+| `--nav-clearance` | 固定顶部导航的**额外顶部留白** | 只由运行时脚本在检测到固定顶部导航时写入 |
+
+顶部留白只由 `--nav-clearance` 产生（`body { padding-top: var(--nav-clearance, 0px) }`），
+`--nav-h` 可安全用于 sticky 偏移等设计计算，不会被运行时测量值污染。
 
 ## 2. 状态设计（Annotation）
 
@@ -47,6 +91,8 @@ planner ──► skeleton ──► dispatch_pages ──Send(fan-out)──►
 | `pages` / `pageConfigs` / `validation` / `feedback` | `Record` | merge（浅合并） | 各页并行写回并合入 |
 | `activePages` | `ThemePageType[]` | last-value | 本次参与生成的页集合 |
 | `reviseCount` / `qualityScore` / `qualityReason` | 标量 | last-value | 修订/评审状态 |
+| `styleAudit` / `integrity` | 结构 | last-value | 静态审计 / 渲染后自检结论 |
+| `rejected` | `boolean` | last-value | 自检未通过 → 拒绝保存 |
 
 > 注意：本项目 LangGraph 为 1.4.x，`Annotation` 使用新式 `{ reducer, default }`（旧的 `{ value }` 已弃用）。last-value + 默认值写法为 `Annotation<T>({ reducer: (_l, r) => r, default })`。
 
@@ -99,6 +145,9 @@ src/agents/tools/image-search.ts   # 图片搜索工具（Safebooru 主色/亮�
 src/app/api/themes/generate/route.ts   # 主题生成 SSE 路由
 src/app/api/pages/generate/route.ts    # 自定义页面生成 SSE 路由
 src/lib/theme/theme-splitter.ts    # 骨架契约 / sanitize / validate（类名重叠率）
+src/lib/theme/nav-clearance.ts      # 导航留白契约（--nav-h / --nav-clearance 分离）
+src/lib/theme/theme-selfcheck.ts    # 渲染后自检（合并产物级，确定性检查）
+src/lib/theme/theme-visual-check.ts # 浏览器几何验证（可选，THEME_VISUAL_CHECK=1）
 src/lib/theme/theme-session.ts     # 会话持久化（含 metrics 列）
 src/lib/stream/sse.ts              # 统一 SSE helper
 src/components/admin/theme-generate-dialog.tsx  # 前端：阶段进度 / 指标 / 预设

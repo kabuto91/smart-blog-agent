@@ -148,9 +148,11 @@ const STAGE_META: Record<string, { label: string; order: number }> = {
   page_detail: { label: "文章详情页", order: 5 },
   validator: { label: "校验骨架一致性", order: 6 },
   audit: { label: "静态样式审计", order: 7 },
-  judge: { label: "评估设计质量", order: 8 },
-  revise: { label: "修订页面", order: 9 },
-  commit: { label: "保存会话快照", order: 10 },
+  gate: { label: "渲染后自检", order: 8 },
+  judge: { label: "评估设计质量", order: 9 },
+  revise: { label: "修订页面", order: 10 },
+  reject: { label: "未通过自检", order: 11 },
+  commit: { label: "保存会话快照", order: 12 },
 }
 const STAGE_LIST = Object.entries(STAGE_META)
   .sort((a, b) => a[1].order - b[1].order)
@@ -862,7 +864,11 @@ export function ThemeGenerateDialog({
 
             {/* Input area */}
             <div className="mt-4 border-t border-black/[0.06] pt-4">
-              {error && <p className="mb-2 break-words text-sm text-red-500">{error}</p>}
+              {error && (
+            <p className="mb-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
+              {error}
+            </p>
+          )}
 
               {canResume && !loading && (
                 <div className="mb-2 flex items-center gap-2">

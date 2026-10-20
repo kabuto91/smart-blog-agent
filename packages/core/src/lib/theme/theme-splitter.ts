@@ -5,6 +5,12 @@ import {
   pruneDetailPage,
 } from "./content-renderer"
 import { stripRedundantFragmentWrappers } from "./layout-inject"
+import { stripHardCodedTaxonomyLinks } from "./content-extractor"
+import {
+  hasBodyNavClearance,
+  normalizeNavClearanceCss,
+  NAV_CLEARANCE_VAR,
+} from "./nav-clearance"
 
 export type BuiltinPageType = "home" | "list" | "detail"
 
@@ -14,27 +20,37 @@ export const BUILTIN_PAGE_TYPES: BuiltinPageType[] = ["home", "list", "detail"]
  * 安全兜底样式层：作为布局 <head> 的最后一个 <style> 注入。
  * 只作用于 [data-page-host] 正文区（不影响导航/页脚），机械保证真实内容不外溢，
  * 弥补 LLM 骨架对长文本、固定宽度、刚性 grid 等溢出场景没有兜底的缺口。
+ *
+ * 【重要：全部用 :where() 包裹】
+ * :where() 把特异性降为 0，因此骨架设计系统里的任何规则都优先于本兜底层，
+ * 兜底只在骨架**没有管到**的场景才生效。
+ * 早期版本用高特异性选择器（如 `[data-page-host] img { height: auto }`），
+ * 会直接压掉骨架自己的封面高度（.cover-img { height: 320px }）造成版式塌陷；
+ * `overflow-wrap: anywhere` 还会改变 flex/grid 子项的 min-content 尺寸，
+ * 把多栏布局里的文字列压扁 —— 两者都已移除。
  */
 export const THEME_SAFETY_CSS = `/* === theme-safety: 溢出安全兜底，勿手工修改 === */
-html, body { max-width: 100%; overflow-x: clip; }
-[data-page-host] { box-sizing: border-box; max-width: 100%; }
-[data-page-host], [data-page-host] *,
-[data-page-host] *::before, [data-page-host] *::after { box-sizing: border-box; }
-/* 行内/host 子元素最小宽度修正，避免 flex/grid 子项撑破容器。
-   用 :where() 包裹降为 0 特异性，避免覆盖骨架设计系统的限宽容器（max-width 变量等）。 */
+/* 全部 :where() 包裹 → 特异性 0，骨架设计系统永远优先 */
+:where(html, body) { max-width: 100%; overflow-x: clip; }
+:where([data-page-host]) { box-sizing: border-box; max-width: 100%; }
+:where([data-page-host], [data-page-host] *,
+  [data-page-host] *::before, [data-page-host] *::after) { box-sizing: border-box; }
+/* 行内/host 子元素最小宽度修正，避免 flex/grid 子项撑破容器。 */
 :where([data-page-host] > *, [data-page-host] .container > *,
   [data-page-host] [class*="grid"] > *, [data-page-host] [class*="list"] > *) { min-width: 0; max-width: 100%; }
-[data-page-host] img, [data-page-host] video, [data-page-host] iframe,
-[data-page-host] canvas, [data-page-host] svg, [data-page-host] table { max-width: 100%; }
-[data-page-host] img { height: auto; }
-[data-page-host] pre { max-width: 100%; overflow-x: auto; }
-[data-page-host] p, [data-page-host] h1, [data-page-host] h2, [data-page-host] h3,
-[data-page-host] h4, [data-page-host] h5, [data-page-host] h6, [data-page-host] li,
-[data-page-host] dd, [data-page-host] a, [data-page-host] td, [data-page-host] th {
-  overflow-wrap: anywhere; word-break: break-word;
+:where([data-page-host] img, [data-page-host] video, [data-page-host] iframe,
+  [data-page-host] canvas, [data-page-host] svg, [data-page-host] table) { max-width: 100%; }
+/* 注意：不再声明 img { height: auto } —— 会压掉骨架的封面/头像固定高度 */
+:where([data-page-host] pre) { max-width: 100%; overflow-x: auto; }
+/* 用 break-word（而非 anywhere）：anywhere 会改变 flex/grid 子项的 min-content 尺寸，
+   导致多栏布局里的文字列被压扁变形；word-break: normal 取代已废弃的 break-word 值。 */
+:where([data-page-host] p, [data-page-host] h1, [data-page-host] h2, [data-page-host] h3,
+  [data-page-host] h4, [data-page-host] h5, [data-page-host] h6, [data-page-host] li,
+  [data-page-host] dd, [data-page-host] a, [data-page-host] td, [data-page-host] th) {
+  overflow-wrap: break-word; word-break: normal;
 }
-[data-page-host] .article-body,
-[data-page-host] [data-map="body"] { overflow-wrap: anywhere; word-break: break-word; }
+:where([data-page-host] .article-body,
+  [data-page-host] [data-map="body"]) { overflow-wrap: break-word; word-break: normal; }
 /* 导航链接 li 的兜底：骨架可能生成 div 直接包 li（非法结构），清除 UA 默认圆点标记 */
 :where(nav li, [data-content-type="nav-list"] li) { list-style: none; }
 /* === /theme-safety === */`
@@ -83,8 +99,11 @@ export function splitGeneratedTheme(fullHtml: string): SplitResult {
 /**
  * 确保布局满足"布局契约"：
  * 1. body 中必须存在唯一的 [data-page-host] 占位节点（缺失时在页脚前补插）；
- * 2. :root 必须声明 --nav-h（固定导航高度），缺失时补默认值；
- * 3. 注入一个运行时脚本，按实际导航测量结果刷新 --nav-h（仅固定导航需要留白，静态/吸顶导航置 0，避免双重留白冲突）。
+ * 2. :root 必须声明 --nav-h（导航自身高度，设计令牌），缺失时补默认值；
+ * 3. 注入一个运行时脚本，按实际导航测量结果写入 --nav-clearance（固定顶部导航留白）。
+ *    脚本**绝不修改 --nav-h** —— 它是设计令牌，被覆盖会连带破坏 sticky 偏移等设计计算。
+ * 4. body/html 上的 var(--nav-h) 顶部留白归一为 var(--nav-clearance, 0px)，
+ *    让"顶部留白"只由 --nav-clearance 承担。
  */
 export function ensureLayoutContract(layoutHtml: string): string {
   const dom = new JSDOM(layoutHtml)
@@ -104,7 +123,7 @@ export function ensureLayoutContract(layoutHtml: string): string {
     else body.appendChild(host)
   }
 
-  // 2. --nav-h 默认值
+  // 2. --nav-h 默认值（设计令牌；运行时脚本不会改动它）
   const cssText = Array.from(doc.querySelectorAll("style"))
     .map((s) => s.textContent ?? "")
     .join("\n")
@@ -126,8 +145,10 @@ export function ensureLayoutContract(layoutHtml: string): string {
   doc.head.appendChild(safety)
 
   // 4. 运行时测量脚本（版本化重注入：先移除旧版脚本再注入当前版，
-  //    使存量主题在下次渲染时自动升级；旧版只取第一个匹配元素检查 fixed，
-  //    会误把固定 header 内的静态 <nav> 当成导航而把 --nav-h 置 0）。
+  //    使存量主题在下次渲染时自动升级）。
+  //    【关键】只写 --nav-clearance（固定顶部导航留白），绝不写 --nav-h：
+  //    --nav-h 是设计令牌，旧版脚本把它无条件覆盖为测量值（吸顶/侧栏布局下为 0），
+  //    会连带抹掉骨架里 .sidebar { top: calc(var(--nav-h) + 16px) } 之类的设计计算。
   for (const el of Array.from(
     body.querySelectorAll("script[data-theme-nav-measure]")
   )) {
@@ -135,10 +156,22 @@ export function ensureLayoutContract(layoutHtml: string): string {
   }
   const script = doc.createElement("script")
   script.setAttribute("data-theme-nav-measure", "")
-  script.textContent = `(function(){var sync=function(){var els=document.querySelectorAll('nav[data-content="main-nav"], nav, header');var h=0;for(var i=0;i<els.length;i++){var el=els[i];if(window.getComputedStyle(el).position!=='fixed'){continue;}var r=el.getBoundingClientRect();if(r.height>0&&r.width>0&&r.height>=(window.innerHeight||r.height)*0.5){continue;}h=r.height;break;}document.documentElement.style.setProperty('--nav-h',h+'px');};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();`
+  script.textContent = `(function(){var sync=function(){var els=document.querySelectorAll('nav[data-content="main-nav"], nav, header');var h=0;for(var i=0;i<els.length;i++){var el=els[i];if(window.getComputedStyle(el).position!=='fixed'){continue;}var r=el.getBoundingClientRect();if(!(r.height>0&&r.width>0)){continue;}var vh=window.innerHeight||r.height;var vw=window.innerWidth||r.width;if(r.height>=vh*0.5){continue;}if(r.top>8){continue;}if(r.width<=r.height*1.5){continue;}if(!(r.width>=vw*0.7||r.left>0)){continue;}h=r.height;break;}var root=document.documentElement;if(h>0){root.style.setProperty('${NAV_CLEARANCE_VAR}',h+'px');}else{root.style.removeProperty('${NAV_CLEARANCE_VAR}');}};if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',sync);}else{sync();}window.addEventListener('resize',sync);})();`
   body.appendChild(script)
 
-  // 5. 间距兜底：强制 clamp 过大的 padding/margin/gap
+  // 5. 移除导航/页脚里硬编码的分类/标签/具体文章链接
+  //    （LLM 常把导航拆成多组链接，只有第一组受配置管理，其余组是编造 slug 的
+  //      静态标记 —— 既点了失效，又与正文的动态标签云/分类列表重复展示）
+  stripHardCodedTaxonomyLinks(doc)
+
+  // 6. 留白归一：body/html 的 var(--nav-h) 顶部留白 → var(--nav-clearance, 0px)
+  for (const style of Array.from(doc.querySelectorAll("style"))) {
+    if (style.textContent) {
+      style.textContent = normalizeNavClearanceCss(style.textContent)
+    }
+  }
+
+  // 7. 间距兜底：强制 clamp 过大的 padding/margin/gap
   return normalizeThemeSpacing(dom.serialize())
 }
 
@@ -161,85 +194,52 @@ export function mergeThemePage(
   }
 
   host.innerHTML = stripRedundantFragmentWrappers(pageHtml)
-  const injectedRoot = host.firstElementChild
-  if (
-    injectedRoot &&
-    host.children.length === 1 &&
-    isRedundantPageWrapper(injectedRoot)
-  ) {
-    while (injectedRoot.firstChild) {
-      host.insertBefore(injectedRoot.firstChild, injectedRoot)
-    }
-    injectedRoot.remove()
-  }
-  // 布局自身已在 body 上提供 var(--nav-h) 级留白时不再叠加 host 留白（避免双重间距）；
-  // 否则对所有页面（含 home）统一补 padding-top:var(--nav-h,0px)。
-  // 非固定导航时运行时脚本会把 --nav-h 置 0，此留白无副作用，符合"仅固定导航需要留白"契约。
-  if (!hasBodyNavClearance(doc)) {
-    host.style.paddingTop = "var(--nav-h, 0px)"
+  // 顶部留白统一由 --nav-clearance 承担（仅固定顶部导航时有值），
+  // 布局自身已在 body 上提供顶部留白时不再叠加 host 留白（避免双重间距）。
+  // 片段根部的冗余包裹（data-page-host / page-content）已由
+  // stripRedundantFragmentWrappers 统一剥离 —— 早期这里还有第二套判定
+  // （宽松正则匹配 page/main/content 词根），会导致片段根在某些布局下被
+  // 拆散、某些布局下不被拆散，页面之间结构不一致。
+  if (!hasBodyNavClearance(doc.documentElement.outerHTML)) {
+    setHostPaddingTop(host, `var(${NAV_CLEARANCE_VAR}, 0px)`)
   }
 
   return dom.serialize()
 }
 
 /**
- * 判定注入的正文片段单一根节点是否是"冗余页面容器"——即布局本身已提供、却再次出现在
- * 片段根部的包裹（<main class="page-content"> / <div class="page-content"> / data-page-host 宿主）。
- * 这类容器会与布局重复叠加 margin-left（侧边栏偏移）或 padding，造成排版错乱。
- * 只有满足以下条件才视为冗余，避免误伤片段内合法使用的 page-content 子容器：
- * 1. 根节点自身带 data-page-host，或
- * 2. 根节点是 page-content 类容器，且布局中确实存在包裹 host 的 page-content/main 容器。
+ * 写入 host 的顶部留白内联样式。
+ * 直接改写 style 属性而非走 CSSOM（element.style.xxx = ...）：
+ * jsdom 的 cssstyle 对 `var()` 的处理曾多次丢值（见 18c5e0a 修复），
+ * 用属性拼接可彻底绕开这层不确定性。
  */
-function isRedundantPageWrapper(el: Element): boolean {
-  if (el.hasAttribute("data-page-host")) return true
-  const cls = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
-  const isPageContentLike = /(^|_|-)(page-content|page|main|content)(_|-|$)/i.test(
-    cls.join(" ")
-  )
-  if (!isPageContentLike) return false
-  // 布局中需确实存在与片段根同类的 page-content/main 容器，才能判定为重复包裹
-  const doc = el.ownerDocument
-  const host = doc.querySelector<HTMLElement>("[data-page-host]")
-  if (!host) return false
-  const container = host.parentElement
-  if (!container) return false
-  const containerCls = (container.getAttribute("class") ?? "").toLowerCase()
-  const containerTag = container.tagName.toLowerCase()
-  return (
-    containerTag === "main" ||
-    containerTag === "div" ||
-    containerCls.includes("page-content") ||
-    containerCls.includes("content")
-  )
-}
-
-/**
- * 检测布局 CSS 是否已为固定导航提供 body 级留白
- * （body / html,body 规则中的 padding/margin 引用 var(--nav-h)）。
- * 此类留白随测量值联动，host 再叠加一层会造成双重间距。
- */
-function hasBodyNavClearance(doc: Document): boolean {
-  for (const style of Array.from(doc.querySelectorAll("style"))) {
-    const css = style.textContent ?? ""
-    const blockRe = /(?:^|[{};,])\s*(?:html\s*,\s*body|body)\s*\{([^}]*)\}/gi
-    let m: RegExpExecArray | null
-    while ((m = blockRe.exec(css)) !== null) {
-      if (/(?:padding|margin)(?:-top)?\s*:\s*[^;}]*var\(--nav-h/.test(m[1])) {
-        return true
-      }
-    }
-  }
-  return false
+function setHostPaddingTop(host: HTMLElement, value: string): void {
+  const existing = (host.getAttribute("style") ?? "").trim()
+  const decl = `padding-top: ${value};`
+  host.setAttribute("style", existing ? `${existing} ${decl}` : decl)
 }
 
 /**
  * 把单页生成器输出的"完整独立文档"净化为可直接注入布局的正文片段：
  * - 丢弃 <html>/<head>/<body> 包裹，以及页面自带的 <script>/<style> 等；
- * - 丢弃页面自带的固定导航类型组件（reading-progress / back-to-top 等）；
- * - 把常见的"页面专属容器类"桥接到共享设计系统类（映射即替换，避免双类样式叠加）。
+ * - 丢弃页面自带的导航/页脚等站点 chrome（由布局统一提供）；
+ * - 剥离片段根部的 data-page-host / page-content 冗余包裹；
+ * - 把常见的"页面专属容器类"桥接到共享设计系统类（追加式：保留原类名 + 追加目标类）。
  */
 const PAGE_CHROME_SELECTORS =
   ".reading-progress, .back-to-top, .to-top, #readingProgress"
+/**
+ * 页面专属容器类 → 共享设计系统类的桥接表。
+ *
+ * 【追加式桥接（观察期）】
+ * 早期实现是「映射即替换」：把 `.post-list` 直接换成 `.article-list`。
+ * 由于两个类往往在骨架里同时存在且语义不同（纵向流 vs 三列网格），
+ * 静默替换会直接把页面的排版改写掉 —— 这是「文章排版错乱」的主要来源之一。
+ *
+ * 现在改为**追加**：保留原类名，同时补上骨架里存在的目标类，
+ * 让页面原有的样式（间距/边框/配色）不被丢弃。
+ * 桥接命中情况通过 SanitizeReport 回传，便于统计观察一轮后再决定是否彻底移除。
+ */
 const CLASS_BRIDGE: Record<string, string> = {
   "article-hero": "article-header",
   "article-hero__title": "post-title",
@@ -264,29 +264,100 @@ const CLASS_BRIDGE: Record<string, string> = {
   "hero-post": "post-card",
 }
 
+/**
+ * 桥接源类名集合。
+ * 这些类名本身可能不在骨架 CSS 里（它们的样式由映射到的目标类提供），
+ * 因此**不能**被判定为「使用了骨架未定义的类名」——
+ * 否则页面会因为桥接机制本身而被判丢样式（假阳性 → 无休止修订）。
+ */
+export const CLASS_BRIDGE_SOURCE_CLASSES: ReadonlySet<string> = new Set(
+  Object.keys(CLASS_BRIDGE)
+)
+
+/** 净化过程的可观测报告（用于观察桥接/剥离的实际命中情况）。 */
+export interface SanitizeReport {
+  /** 实际生效的类名桥接：源类名 -> 追加的目标类名 */
+  bridges: Record<string, string>
+  /** 被剥离的违规标签名（去重） */
+  removedTags: string[]
+}
+
+/** 创建一份空的净化报告。 */
+export function createSanitizeReport(): SanitizeReport {
+  return { bridges: {}, removedTags: [] }
+}
+
+/**
+ * 判定 <header> 是否是「站点级页头」需要剥离。
+ * 文章/卡片内部的 <header>（如 <article><header><h1>标题</h1></header></article>）
+ * 是合法的语义结构，必须保留；只有 body 直属的才视为站点级页头。
+ */
+function isSiteLevelHeader(el: Element): boolean {
+  const parent = el.parentElement
+  if (!parent) return false
+  const tag = parent.tagName.toLowerCase()
+  return tag === "body" || tag === "html"
+}
+
+/** 解包元素：用其子节点替换自身（保留内容，只拆掉多余容器）。 */
+function unwrapElement(el: Element): void {
+  const parent = el.parentElement
+  if (!parent) return
+  while (el.firstChild) {
+    parent.insertBefore(el.firstChild, el)
+  }
+  el.remove()
+}
+
 export function sanitizePageFragment(
   rawHtml: string,
-  layoutClasses?: Set<string>
+  layoutClasses?: Set<string>,
+  report?: SanitizeReport
 ): string {
   const dom = new JSDOM(rawHtml)
   const doc = dom.window.document
   const body = doc.body
 
+  const noteRemoved = (tag: string) => {
+    if (report && !report.removedTags.includes(tag)) report.removedTags.push(tag)
+  }
+
   for (const el of Array.from(
     body.querySelectorAll("script, style, link, meta, title, template, noscript")
   )) {
+    noteRemoved(el.tagName.toLowerCase())
+    el.remove()
+  }
+  // 导航/页脚由布局统一提供，页面片段里再出现就是重复 chrome —— 强制剥离。
+  // （旧实现只在校验阶段报告、不剥离，fastMode 下修订次数用完就直接提交，
+  //   线上会出现第二个导航栏。）
+  for (const el of Array.from(body.querySelectorAll("nav, footer"))) {
+    noteRemoved(el.tagName.toLowerCase())
+    el.remove()
+  }
+  for (const el of Array.from(body.querySelectorAll("header"))) {
+    if (!isSiteLevelHeader(el)) continue
+    noteRemoved("header")
     el.remove()
   }
   for (const el of Array.from(body.querySelectorAll(PAGE_CHROME_SELECTORS))) {
     el.remove()
   }
 
+  // 片段里的 data-page-host 一律非法（正文容器由布局唯一提供）。
+  // 根部的由 stripRedundantFragmentWrappers 剥离；嵌套的在这里解包
+  // （保留子节点，只拆掉多余容器），避免正文被塞进嵌套容器。
+  for (const el of Array.from(body.querySelectorAll("[data-page-host]"))) {
+    unwrapElement(el)
+  }
+
   for (const el of Array.from(body.querySelectorAll<HTMLElement>("[class]"))) {
     const classes = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
-    const next = classes.map((cls) => {
+    const bridged: string[] = []
+    const kept = classes.map((cls) => {
       const target = CLASS_BRIDGE[cls]
-      // 上下文感知：仅当映射目标确实存在于骨架类集时才改写，
-      // 否则保留原类名，避免改写成不存在的类而无声丢样。
+      // 上下文感知：仅当映射目标确实存在于骨架类集时才桥接，
+      // 否则保留原类名，避免追加一个不存在的类而无声丢样。
       if (target === undefined) return cls
       if (layoutClasses && !layoutClasses.has(target)) return cls
       // 「时间锚点」侧边栏的归档条目复用 archive-title 作小字号列表项标题，
@@ -294,15 +365,20 @@ export function sanitizePageFragment(
       if (cls === "archive-title" && el.closest(".archive-item, .archive-list")) {
         return cls
       }
-      return target
+      bridged.push(target)
+      if (report) report.bridges[cls] = target
+      // 追加式：原类名保留，目标类追加其后
+      return cls
     })
-    const final = Array.from(new Set(next))
+    const final = Array.from(new Set([...kept, ...bridged]))
     if (final.length !== classes.length || final.some((c, i) => c !== classes[i])) {
       el.setAttribute("class", final.join(" ") || el.tagName.toLowerCase())
     }
   }
 
-  return body.innerHTML
+  // 片段根部的 data-page-host / page-content 包裹由布局提供，统一剥离，
+  // 避免存进库里的片段自带第二个 host（与布局的占位语义冲突）。
+  return stripRedundantFragmentWrappers(body.innerHTML)
 }
 
 /** 收集 HTML 中全部用到/设计系统(CSS)中声明的类名（用于校验页面与骨架类库的重叠率）。 */

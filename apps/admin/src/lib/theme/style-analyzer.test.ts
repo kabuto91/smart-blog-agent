@@ -110,7 +110,7 @@ describe("analyzeSkeletonStyles", () => {
     expect(report.pageIssues.home ?? []).toHaveLength(0)
   })
 
-  it("固定导航但未在 body 声明 var(--nav-h) 留白 → 报遮挡 error", () => {
+  it("固定导航但未在 body 声明顶部留白 → 报遮挡 error", () => {
     const skeleton = `<!DOCTYPE html><html><head><style>
 :root { --nav-h:64px; --bg:#f7f4ef; --main:#1a1a2e; --accent:#e5a83d; --radius:8px; }
 body { background:var(--bg); color:var(--main); }
@@ -121,11 +121,38 @@ body { background:var(--bg); color:var(--main); }
 </body></html>`
     const report = analyzeSkeletonStyles(skeleton)
     expect(report.skeletonIssues.some((s) => s.includes("遮挡"))).toBe(true)
+    // 现行契约：顶部留白由 --nav-clearance 承担（运行时实测固定导航高度后写入）
     expect(
       report.skeletonIssues.some((s) =>
-        s.includes("padding-top:var(--nav-h)")
+        s.includes("padding-top:var(--nav-clearance")
       )
     ).toBe(true)
+  })
+
+  it("固定导航且已在 body 声明 var(--nav-clearance) 留白 → 不报遮挡", () => {
+    const skeleton = `<!DOCTYPE html><html><head><style>
+:root { --nav-h:64px; --bg:#f7f4ef; --main:#1a1a2e; --accent:#e5a83d; --radius:8px; }
+body { padding-top: var(--nav-clearance, 0px); background:var(--bg); color:var(--main); }
+.navbar { position: fixed; top:0; left:0; right:0; height:64px; }
+</style></head><body>
+<nav data-content="main-nav"><a href="/blog">首页</a></nav>
+<div data-page-host=""></div>
+</body></html>`
+    const report = analyzeSkeletonStyles(skeleton)
+    expect(report.skeletonIssues.some((s) => s.includes("遮挡"))).toBe(false)
+  })
+
+  it("固定导航且 body 声明了历史写法 var(--nav-h) 留白 → 同样不报遮挡", () => {
+    const skeleton = `<!DOCTYPE html><html><head><style>
+:root { --nav-h:64px; --bg:#f7f4ef; --main:#1a1a2e; --accent:#e5a83d; --radius:8px; }
+body { padding-top: var(--nav-h); background:var(--bg); color:var(--main); }
+.navbar { position: fixed; top:0; left:0; right:0; height:64px; }
+</style></head><body>
+<nav data-content="main-nav"><a href="/blog">首页</a></nav>
+<div data-page-host=""></div>
+</body></html>`
+    const report = analyzeSkeletonStyles(skeleton)
+    expect(report.skeletonIssues.some((s) => s.includes("遮挡"))).toBe(false)
   })
 
   it("固定导航且已在 body 声明 var(--nav-h) 留白 → 不报遮挡", () => {

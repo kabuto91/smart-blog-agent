@@ -1,6 +1,7 @@
 import { JSDOM } from "jsdom"
 import type { ContentConfig, DynamicField, NavField, TextField } from "../types/content-config"
 import { FIELD_DEFINITIONS } from "../field-registry"
+import { isBrandElement } from "./content-extractor"
 
 export interface ArticleData {
   id: string | number
@@ -773,6 +774,49 @@ function resolveTextValue(
   return field.value
 }
 
+/**
+ * 渲染期由导航项模板克隆出的元素集合。
+ * 用 WeakSet 而非 DOM 属性标记，避免往最终输出的 HTML 里塞内部属性。
+ */
+const renderedNavItems = new WeakSet<Element>()
+
+/** 元素是否位于某个已渲染的导航项内部（导航项文字由导航数据驱动，不可被全局字段覆盖）。 */
+function isInsideRenderedNavItem(el: Element): boolean {
+  let node: Element | null = el
+  while (node) {
+    if (renderedNavItems.has(node)) return true
+    node = node.parentElement
+  }
+  return false
+}
+
+/**
+ * 判定文本元素是否属于「导航项标签」——这类文字由导航项数据驱动，
+ * 不能被全局字段（blog-title 等）覆盖，否则导航每一项都会变成站名。
+ *
+ * 【为什么不能简单地跳过整个 nav-list 容器】
+ * 导航容器里除了导航项，还常常放着**品牌区**（logo / 站名 / 头像），
+ * 品牌区承载的正是 `blog-title` 这类全局字段 —— 早期实现跳过整个容器，
+ * 导致站名永远填不进去（页面上一直显示主题生成时的占位文案）。
+ *
+ * 判定顺序：
+ * 1. 渲染期由导航项模板克隆出的元素 → 是导航项标签；
+ * 2. 尚未被 renderNavField 替换的原始导航项：位于导航的链接列表宿主内 → 是导航项标签；
+ * 3. 品牌元素（.nav-brand / .logo）承载全局字段 → 不是导航项标签，照常填充。
+ */
+function isNavItemLabel(el: Element): boolean {
+  // 1) 渲染期克隆出的导航项
+  if (isInsideRenderedNavItem(el)) return true
+  // 2) 原始导航项（尚未被替换）
+  const navContainer = el.closest('[data-content-type="nav-list"]')
+  if (!navContainer) return false
+  // 品牌区承载全局字段，不能当作导航项标签跳过
+  if (isBrandElement(el)) return false
+  if (navContainer.matches("ul, ol")) return true
+  const listHost = findNavListHost(navContainer)
+  return !!listHost && listHost.contains(el)
+}
+
 function renderTextField(doc: Document, key: string, value: string): void {
   const els = Array.from(doc.querySelectorAll(`[data-content="${key}"]`))
   if (els.length === 0) return
@@ -791,8 +835,9 @@ function renderTextField(doc: Document, key: string, value: string): void {
       }
     }
 
-    // 跳过属于 nav-list 容器的文字元素，避免覆盖导航标签；img 元素（如头像）不受影响
-    if (!img && el.closest('[data-content-type="nav-list"]')) {
+    // 跳过导航「项标签」文字，避免被全局标题覆盖；
+    // 导航品牌区（列表之外）仍需被全局字段填充；img 元素（如头像）不受影响
+    if (!img && isNavItemLabel(el)) {
       continue
     }
 
@@ -1504,6 +1549,9 @@ function renderNavField(doc: Document, key: string, field: NavField): void {
 
     for (const item of field.items) {
       const clone = templateEl.cloneNode(true) as Element
+      // 登记为导航项：其文字由导航项数据驱动，
+      // 后续的文本字段渲染（blog-title 等）不得覆盖它。
+      renderedNavItems.add(clone)
       const linkEl =
         clone.matches("a, [data-href]")
           ? clone
@@ -1517,6 +1565,7 @@ function renderNavField(doc: Document, key: string, field: NavField): void {
       }
       if (wrapInLi) {
         const li = doc.createElement("li")
+        renderedNavItems.add(li)
         li.appendChild(clone)
         target.appendChild(li)
       } else {

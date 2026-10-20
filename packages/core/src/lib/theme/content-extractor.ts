@@ -500,6 +500,107 @@ function extractCustomListItems(
   return items
 }
 
+/**
+ * 导航中「数据驱动路由」的链接：分类详情、标签详情、具体文章、合集详情。
+ *
+ * 这类链接应由正文的动态区块（标签云 / 分类列表 / 文章流）按后台真实数据渲染。
+ * LLM 硬编码在导航里的是**编造的 slug**（如 /blog/tag/vue、/blog/sample-post），
+ * 点了要么 404、要么指向不存在的分类标签；而且会和动态区块**重复展示**同一批标签
+ * （导航一份 + 标签云一份），这就是用户看到的「一排漫游标签 + 重复标签」。
+ */
+const DATA_DRIVEN_NAV_PATH_RES: RegExp[] = [
+  /^\/blog\/category\//i,
+  /^\/blog\/tag\//i,
+  /^\/collections\/[^/]+/i,
+  // 具体文章详情（/blog/archive 归档页是核心路由，单独排除）
+  /^\/blog\/[^/]+$/i,
+]
+
+/** 判定导航链接是否指向「数据驱动路由」（分类/标签/具体文章/合集详情）。 */
+export function isDataDrivenNavHref(href: string): boolean {
+  const raw = (href ?? "").trim()
+  if (!raw) return false
+  // 站外链接保留
+  if (/^(https?:)?\/\//i.test(raw) || raw.startsWith("mailto:")) return false
+  const path = raw.split(/[?#]/)[0].replace(/\/+$/, "") || "/"
+  if (path === "/blog/archive") return false
+  return DATA_DRIVEN_NAV_PATH_RES.some((re) => re.test(path))
+}
+
+/**
+ * 判定元素是否是链接分组前的「小标题」（如导航里的「分类」「标签」文字块）。
+ */
+function isGroupLabelElement(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (!["div", "span", "p", "h3", "h4", "h5", "h6"].includes(tag)) return false
+  if (el.querySelector("a, ul, ol")) return false
+  const text = (el.textContent ?? "").trim()
+  return text.length > 0 && text.length <= 20
+}
+
+/**
+ * 移除导航/页脚里硬编码的「数据驱动链接」（分类/标签/具体文章/合集详情）。
+ *
+ * 【为什么必须清】
+ * LLM 常把导航拆成多组链接（导航 / 分类 / 标签），而渲染时只有**第一组**是
+ * 受配置管理的列表宿主，其余组里的链接是**原样输出**的静态标记：
+ *   - slug 是编造的（/blog/tag/vue、/blog/sample-post），点了 404；
+ *   - 与正文里按真实数据渲染的动态标签云/分类列表**重复展示**同一批标签。
+ * 这就是用户看到的「一排漫游标签 + 一堆重复标签」。
+ *
+ * 受配置管理的列表宿主内的链接同样清理：其内容在渲染期会被导航项数据整体替换，
+ * 提前清掉不影响渲染，却能保证「导航项配置缺失时也不残留假链接」。
+ */
+export function stripHardCodedTaxonomyLinks(doc: Document): void {
+  for (const nav of Array.from(doc.querySelectorAll("nav, footer"))) {
+    for (const link of Array.from(nav.querySelectorAll("a[href]"))) {
+      if (!isDataDrivenNavHref(link.getAttribute("href") ?? "")) continue
+      const item = link.closest("li")
+      const target = item && nav.contains(item) ? item : link
+      target.remove()
+    }
+    // 移除因此变空的链接列表，并连带移除其前置的分组标题（如「分类」「标签」）
+    for (const list of Array.from(nav.querySelectorAll("ul, ol"))) {
+      if (list.querySelector("a[href], [data-href]")) continue
+      const prev = list.previousElementSibling
+      list.remove()
+      if (prev && isGroupLabelElement(prev)) prev.remove()
+    }
+  }
+}
+
+/**
+ * 过滤导航项中硬编码的数据驱动链接（分类/标签/具体文章/合集详情）。
+ *
+ * 用于**存量主题**：这些项是在过滤规则生效之前写入 contentConfig 的，
+ * 存量主题不做这一步的话，导航里仍会残留编造的分类/标签链接。
+ * 仅当过滤后仍有导航项时才生效，避免把整个导航清空。
+ */
+export function stripDataDrivenNavItems(
+  config: ContentConfig | null | undefined
+): ContentConfig | null {
+  if (!config) return config ?? null
+  let changed = false
+  const next: ContentConfig = {}
+  for (const [key, field] of Object.entries(config)) {
+    if (field.type !== "nav-list") {
+      next[key] = field
+      continue
+    }
+    const navField = field as NavField
+    const coreItems = navField.items.filter(
+      (it) => !isDataDrivenNavHref(it.href)
+    )
+    if (coreItems.length === 0 || coreItems.length === navField.items.length) {
+      next[key] = field
+      continue
+    }
+    changed = true
+    next[key] = { ...navField, items: coreItems }
+  }
+  return changed ? next : config
+}
+
 function extractNavField(el: Element, key: string): NavField {
   // 优先提取导航列表容器内的链接（如 .nav-links / ul / ol），
   // 避免把品牌(logo + data-content)也当成 nav 项，也避免结构被展平。
@@ -507,8 +608,7 @@ function extractNavField(el: Element, key: string): NavField {
   const itemEls = listHost ? collectNavItemElements(listHost) : null
 
   const itemSource = itemEls && itemEls.length > 0 ? itemEls : collectNavItemElements(el)
-  const items: { label: string; href: string }[] = []
-  let itemTemplate = ""
+  const collected: { label: string; href: string; itemEl: Element }[] = []
 
   for (const itemEl of itemSource) {
     const linkEl = resolveNavLink(itemEl)
@@ -516,11 +616,18 @@ function extractNavField(el: Element, key: string): NavField {
     const label = linkEl.textContent?.trim() ?? ""
     if (!label && !linkEl.getAttribute("href")) continue
     const href = linkEl.getAttribute("href") ?? linkEl.getAttribute("data-href") ?? ""
-    items.push({ label, href })
-    if (!itemTemplate) {
-      itemTemplate = buildNavTemplate(itemEl)
-    }
+    collected.push({ label, href, itemEl })
   }
+
+  // 过滤掉硬编码的数据驱动链接（分类/标签/具体文章）。
+  // 仅当导航里还留有核心路由项时才过滤 —— 否则（导航本身就是标签云的主题）
+  // 宁可保留这些链接，也不要把导航清空。
+  const coreItems = collected.filter((c) => !isDataDrivenNavHref(c.href))
+  const kept = coreItems.length > 0 ? coreItems : collected
+
+  const items = kept.map((c) => ({ label: c.label, href: c.href }))
+  // 模板取自第一个保留项，保证克隆结构与实际渲染的项一致
+  const itemTemplate = kept.length > 0 ? buildNavTemplate(kept[0].itemEl) : ""
 
   return {
     type: "nav-list",
@@ -544,7 +651,7 @@ function findNavListHost(nav: Element): Element | null {
 }
 
 /** 品牌元素（logo / 站点标题链接）不算导航项。 */
-function isBrandElement(el: Element): boolean {
+export function isBrandElement(el: Element): boolean {
   if (/\bnav-brand\b|\blogo\b/i.test(el.getAttribute("class") ?? "")) return true
   return el.querySelector(".nav-brand, .logo") !== null
 }

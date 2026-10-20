@@ -153,8 +153,10 @@ describe("createThemeGraph", () => {
     expect(stages).toContain("skeleton")
     expect(stages).toContain("validator")
     expect(stages).toContain("audit")
+    expect(stages).toContain("gate")
     expect(stages).toContain("judge")
     expect(stages).toContain("commit")
+    expect(stages).not.toContain("reject")
 
     expect(addMessage).toHaveBeenCalledTimes(1)
     const [conversationId, role, , , , pagesJson] = vi.mocked(addMessage).mock
@@ -186,6 +188,48 @@ describe("createThemeGraph", () => {
     // 只对失败的页面触发修订
     expect(res.validation.home?.ok).toBe(true)
     expect(res.validation.detail?.ok).toBe(true)
+  })
+
+  it("渲染后自检存在 blocker 且修订机会用尽 → 拒绝保存（不 commit）", async () => {
+    // 骨架引用了未定义的 CSS 变量（无 fallback）→ 浏览器会丢弃整条声明
+    const BROKEN_SKELETON = SKELETON.replace(
+      "color: var(--main);",
+      "color: var(--never-defined);"
+    )
+    const invoke = async (messages: BaseMessage[]): Promise<AIMessage> => {
+      const sys = String(messages[0]?.content ?? "")
+      let text = ""
+      if (sys.includes("任务分为两阶段")) {
+        text = BROKEN_SKELETON
+      } else if (sys.includes("博客首页")) {
+        text = HOME
+      } else if (sys.includes("文章列表页")) {
+        text = LIST
+      } else if (sys.includes("文章详情页")) {
+        text = DETAIL
+      }
+      return new AIMessage({ content: text })
+    }
+    const model = {
+      invoke,
+      bindTools: () => ({ invoke }),
+    } as unknown as BaseChatModel
+
+    const graph = await createThemeGraph({
+      llm: model,
+      emitter,
+      judgeEnabled: false,
+      maxAttempts: 1,
+    })
+    const res = await graph.invoke(input(), {
+      configurable: { thread_id: "t-reject" },
+    })
+
+    expect(res.rejected).toBe(true)
+    expect(stages).toContain("gate")
+    expect(stages).toContain("reject")
+    expect(stages).not.toContain("commit")
+    expect(res.integrity?.blockers?.length ?? 0).toBeGreaterThan(0)
   })
 
   it("迭代模式：已有骨架时仅重生成 targetPage", async () => {

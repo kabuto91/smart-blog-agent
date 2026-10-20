@@ -4,11 +4,17 @@ import {
   ensureLayoutContract,
   mergeThemePage,
   sanitizePageFragment,
+  createSanitizeReport,
   collectThemeClasses,
   validatePageFragment,
   normalizeThemeSpacing,
 } from "./theme-splitter"
 import { injectPageIntoLayout, stripRedundantFragmentWrappers } from "./layout-inject"
+import {
+  hasBodyNavClearance,
+  hasBodyTopClearance,
+  normalizeNavClearanceCss,
+} from "./nav-clearance"
 
 const LAYOUT = `<!DOCTYPE html>
 <html>
@@ -124,6 +130,85 @@ describe("ensureLayoutContract", () => {
   })
 })
 
+describe("导航留白契约（--nav-h / --nav-clearance 分离）", () => {
+  it("测量脚本只写 --nav-clearance，绝不改写设计令牌 --nav-h", () => {
+    const fixed = ensureLayoutContract(LAYOUT)
+    const script = fixed.match(
+      /<script data-theme-nav-measure="">([\s\S]*?)<\/script>/
+    )?.[1]
+    expect(script).toBeTruthy()
+    expect(script).toContain("--nav-clearance")
+    expect(script).not.toContain("--nav-h")
+    // 明确断言：没有任何对 --nav-h 的写操作
+    expect(script).not.toMatch(/setProperty\(\s*['"]--nav-h/)
+    expect(script).not.toMatch(/removeProperty\(\s*['"]--nav-h/)
+  })
+
+  it("body 的 var(--nav-h) 顶部留白归一为 var(--nav-clearance, 0px)", () => {
+    const fixed = ensureLayoutContract(
+      LAYOUT.replace(
+        ":root { --nav-h: 72px; --primary: #c0392b; }",
+        ":root { --nav-h: 72px; --primary: #c0392b; } body { padding-top: var(--nav-h); }"
+      )
+    )
+    expect(fixed).toContain("padding-top: var(--nav-clearance, 0px)")
+    expect(fixed).not.toContain("padding-top: var(--nav-h)")
+    // 设计令牌本身必须保留（骨架还要用它做 sticky 偏移等计算）
+    expect(fixed).toContain("--nav-h: 72px")
+  })
+
+  it("归一化只作用于 body/html 的顶部留白，其它选择器里的 --nav-h 不变", () => {
+    const css = `.sidebar { top: calc(var(--nav-h) + 16px); } body { padding-top: var(--nav-h); }`
+    const out = normalizeNavClearanceCss(css)
+    expect(out).toContain(".sidebar { top: calc(var(--nav-h) + 16px); }")
+    expect(out).toContain("body { padding-top: var(--nav-clearance, 0px); }")
+  })
+
+  it("body 已有顶部留白时不再叠加 host 留白（避免双重间距）", () => {
+    expect(hasBodyTopClearance(`body { padding-top: var(--nav-clearance, 0px); }`)).toBe(true)
+    expect(hasBodyTopClearance(`body { padding-top: var(--nav-h); }`)).toBe(true)
+    expect(hasBodyTopClearance(`.a { padding-top: var(--nav-h); }`)).toBe(false)
+    expect(hasBodyTopClearance(`body { padding-top: 40px; }`)).toBe(false)
+  })
+
+  it("服务端与客户端预览对留白的判定口径一致", () => {
+    const html = `<html><head><style>body{margin-top:var(--nav-h)}</style></head><body></body></html>`
+    // margin-top 也算顶部留白（两端一致，不再分叉）
+    expect(hasBodyNavClearance(html)).toBe(true)
+    expect(hasBodyTopClearance(`body{margin-top:var(--nav-h)}`)).toBe(true)
+  })
+})
+
+describe("安全兜底层不覆盖骨架设计（低特异性）", () => {
+  it("不再声明 img { height: auto }（会压掉骨架封面高度）", () => {
+    const fixed = ensureLayoutContract(LAYOUT)
+    expect(fixed).not.toMatch(/\[data-page-host\]\s+img\s*\{[^}]*height:\s*auto/)
+  })
+
+  it("文本换行用 break-word 而非 anywhere（不改 flex/grid 的 min-content 尺寸）", () => {
+    const fixed = ensureLayoutContract(LAYOUT)
+    expect(fixed).not.toContain("overflow-wrap: anywhere")
+    expect(fixed).toContain("overflow-wrap: break-word")
+  })
+
+  it("兜底规则全部经 :where() 降特异性，骨架设计系统优先", () => {
+    const fixed = ensureLayoutContract(LAYOUT)
+    const safety = new JSDOM(fixed).window.document.querySelector(
+      "style[data-theme-safety]"
+    )?.textContent
+    expect(safety).toBeTruthy()
+    // 去掉注释后，逐条规则的选择器都必须以 :where( 开头
+    const withoutComments = (safety ?? "").replace(/\/\*[\s\S]*?\*\//g, "")
+    const selectors = Array.from(
+      withoutComments.matchAll(/([^{}]+)\{/g)
+    ).map((m) => m[1].trim())
+    expect(selectors.length).toBeGreaterThan(0)
+    for (const sel of selectors) {
+      expect(sel.startsWith(":where(")).toBe(true)
+    }
+  })
+})
+
 describe("mergeThemePage / injectPageIntoLayout", () => {
   it("页面正文插入占位节点", () => {
     const merged = mergeThemePage(LAYOUT, '<div class="container">正文</div>')
@@ -140,14 +225,14 @@ describe("mergeThemePage / injectPageIntoLayout", () => {
     expect(pageIdx).toBeLessThan(footerIdx)
   })
 
-  it("navClearance 应用 --nav-h 留白", () => {
+  it("navClearance 应用 --nav-clearance 留白", () => {
     const merged = mergeThemePage(LAYOUT, "<p>x</p>", { navClearance: true })
-    expect(merged).toContain('style="padding-top: var(--nav-h, 0px);"')
+    expect(merged).toContain('style="padding-top: var(--nav-clearance, 0px);"')
   })
 
   it("首页场景（无 navClearance）也统一补 host 留白，避免被固定导航遮挡", () => {
     const merged = mergeThemePage(LAYOUT, "<p>x</p>")
-    expect(merged).toContain('style="padding-top: var(--nav-h, 0px);"')
+    expect(merged).toContain('style="padding-top: var(--nav-clearance, 0px);"')
   })
 
   it("布局已有 body 级 var(--nav-h) 留白时不再叠加 host 留白", () => {
@@ -159,9 +244,11 @@ describe("mergeThemePage / injectPageIntoLayout", () => {
       navClearance: true,
     })
     expect(merged).not.toContain('style="padding-top: var(--nav-h')
+    expect(merged).not.toContain('style="padding-top: var(--nav-clearance')
     // 未开启 navClearance 的既有行为不受影响
     const plain = mergeThemePage(withBodyClearance, "<p>x</p>")
     expect(plain).not.toContain('style="padding-top: var(--nav-h')
+    expect(plain).not.toContain('style="padding-top: var(--nav-clearance')
   })
 
   it("injectPageIntoLayout 与 mergeThemePage 行为一致（占位缺失也不丢正文）", () => {
@@ -242,12 +329,32 @@ describe("sanitizePageFragment", () => {
     expect(out).not.toContain("<script")
     expect(out).not.toContain("back-to-top")
     expect(out).not.toContain("<html")
-    // 桥接：article-hero__title -> post-title，且删除原类
-    expect(out).toContain('class="post-title"')
-    expect(out).not.toContain("article-hero__title")
-    // 映射即替换：article-main -> article-body
-    expect(out).toContain('class="article-body"')
-    expect(out).not.toContain("article-main")
+    // 追加式桥接：保留原类名 + 追加骨架设计系统类
+    expect(out).toContain('class="article-hero__title post-title"')
+    expect(out).toContain('class="article-main article-body"')
+  })
+
+  it("追加式桥接不会丢弃页面自身的类名（排版不被改写）", () => {
+    const layoutClasses = new Set(["article-list", "article-body"])
+    const out = sanitizePageFragment(
+      '<div class="post-list">列表</div>',
+      layoutClasses
+    )
+    // 原类名保留（纵向流不被改成网格），同时补上骨架类
+    expect(out).toContain('class="post-list article-list"')
+    expect(out).not.toContain('class="article-list"')
+  })
+
+  it("桥接命中情况通过 SanitizeReport 回传（观察用）", () => {
+    const layoutClasses = new Set(["article-list"])
+    const report = createSanitizeReport()
+    sanitizePageFragment(
+      '<div class="post-list">列表</div><script>x</script>',
+      layoutClasses,
+      report
+    )
+    expect(report.bridges).toEqual({ "post-list": "article-list" })
+    expect(report.removedTags).toContain("script")
   })
 
   it("保留未映射的类", () => {
@@ -267,8 +374,48 @@ describe("sanitizePageFragment", () => {
     const out = sanitizePageFragment(raw)
     // 列表项内的 archive-title 保留原类
     expect(out).toContain('class="archive-title">五月跃迁记录')
-    // 页面级归档标题仍桥接为 page-title
-    expect(out).toContain('class="page-title">全部文章')
+    // 页面级归档标题追加 page-title（保留原类）
+    expect(out).toContain('class="archive-title page-title">全部文章')
+  })
+})
+
+describe("sanitizePageFragment 强制剥离站点 chrome", () => {
+  it("剥离页面自带的 nav / footer / 站点级 header", () => {
+    const raw = `<header class="site-head">站点页头</header>
+<nav class="site-nav"><a href="/blog">首页</a></nav>
+<main class="container"><p>正文</p></main>
+<footer class="site-footer">页脚</footer>`
+    const out = sanitizePageFragment(raw)
+    expect(out).not.toContain("<nav")
+    expect(out).not.toContain("<footer")
+    expect(out).not.toContain("site-head")
+    expect(out).toContain("正文")
+  })
+
+  it("保留文章/卡片内部的 header（合法语义结构）", () => {
+    const raw = `<article class="post-card">
+  <header class="post-header"><h2 class="post-title">标题</h2></header>
+  <p class="post-excerpt">摘要</p>
+</article>`
+    const out = sanitizePageFragment(raw)
+    expect(out).toContain("post-header")
+    expect(out).toContain("post-title")
+  })
+
+  it("剥离片段根部的 data-page-host 包裹（布局已提供正文容器）", () => {
+    const raw = `<div data-page-host=""><section class="hero"><h1>标题</h1></section></div>`
+    const out = sanitizePageFragment(raw)
+    expect(out).not.toContain("data-page-host")
+    expect(out).toContain('<section class="hero">')
+  })
+
+  it("剥离结果在合并后不产生第二个 host", () => {
+    const frag = sanitizePageFragment(
+      `<div data-page-host=""><div class="page-content"><p>正文</p></div></div>`
+    )
+    const merged = mergeThemePage(LAYOUT, frag)
+    const doc = new JSDOM(merged).window.document
+    expect(doc.querySelectorAll("[data-page-host]").length).toBe(1)
   })
 })
 

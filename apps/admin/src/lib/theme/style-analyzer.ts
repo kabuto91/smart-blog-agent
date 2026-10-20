@@ -1,4 +1,5 @@
 import { JSDOM } from "jsdom"
+import { CLASS_BRIDGE_SOURCE_CLASSES } from "@smart-blog/core/lib/theme/theme-splitter"
 
 /**
  * 静态样式审计：对主题骨架的 CSS 设计系统做确定性规则检查，
@@ -204,7 +205,10 @@ function hasFixedNav(css: string): boolean {
   )
 }
 
-/** body / html,body 规则是否已通过 padding/margin 引用 var(--nav-h) 提供顶部留白。 */
+/**
+ * body / html,body 规则是否已通过 padding/margin 引用导航变量提供顶部留白。
+ * 识别 --nav-h（历史写法）与 --nav-clearance（现行契约：顶部留白只由它承担）。
+ */
 function hasBodyTopClearance(css: string): boolean {
   return parseRuleBlocks(css).some((block) => {
     const hitsBody = block.selectors.some((s) =>
@@ -212,7 +216,9 @@ function hasBodyTopClearance(css: string): boolean {
     )
     return (
       hitsBody &&
-      /(?:padding|margin)(?:-top)?\s*:\s*[^;}]*var\(--nav-h/.test(block.body)
+      /(?:padding|margin)(?:-top)?\s*:\s*[^;}]*var\(\s*--(?:nav-h|nav-clearance)(?![-\w])/.test(
+        block.body
+      )
     )
   })
 }
@@ -221,7 +227,7 @@ function hasBodyTopClearance(css: string): boolean {
 function checkNavClearance(css: string, issues: string[]): void {
   if (hasFixedNav(css) && !hasBodyTopClearance(css)) {
     issues.push(
-      "固定导航（position:fixed）未在 body 上声明 padding-top:var(--nav-h)，首页首屏会被导航遮挡；请在 :root 定义 --nav-h 后增加 body{padding-top:var(--nav-h)}"
+      "固定导航（position:fixed）未预留 body 级顶部留白，首页首屏会被导航遮挡；请在 :root 定义 --nav-h 后增加 body{padding-top:var(--nav-clearance,0px)}（--nav-clearance 由运行时测量固定导航高度后写入）"
     )
   }
 }
@@ -310,7 +316,9 @@ export function analyzeSkeletonStyles(
     for (const [type, html] of Object.entries(pages)) {
       if (!html) continue
       const missing = Array.from(collectElementClasses(html))
+        // 桥接源类名（如 .post-list）由映射到的目标类提供样式，不算「未定义」
         .filter((cls) => !skeletonClasses.has(cls))
+        .filter((cls) => !CLASS_BRIDGE_SOURCE_CLASSES.has(cls))
         .slice(0, MAX_MISSING_CLASSES)
       if (missing.length > 0) {
         pageIssues[type] = [

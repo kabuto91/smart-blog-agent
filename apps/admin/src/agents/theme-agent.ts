@@ -179,8 +179,14 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
    - 用 CSS 变量（:root）统一管理配色、字体、字号阶梯、行高、间距、圆角、阴影、动效参数
    - 定义正文会用到的通用类：容器（.container/.wrap/.section）、标题（.section-title/.page-title/.post-title）、卡片（.post-card）、按钮（.btn）、文章网格、列表、侧边栏（.sidebar）、文章详情（.article-header/.article-body）、标签等
    - 设计感要求：明确美学方向（极简/杂志/复古/日式/工业/粉彩/奢雅等），避免"AI 感"平淡设计；排版有对比（中文标题选有特色的系统字体栈）；色彩"主色+锐利点缀色"；背景不默认纯白（可用渐变/噪点/几何/颗粒营造层次）；用纯 CSS 做过渡与入场动效
-   - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。若导航为 position: fixed，页面正文将由布局读取该变量自动让位，.data-page-host 无需、也不应自行写 padding-top。
-2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，链接列表必须用 <ul>/<ol> 包裹 <li>（li 不要直接挂在 div 下），包含到 /blog、/blog/archive、/blog/category/{slug}、/blog/tag/{slug}、/blog/{slug} 的完整路由。若导航固定于视口顶部（position:fixed 或 sticky），必须把 :root 中的 --nav-h 定义为导航真实高度。导航品牌区（品牌名/logo 所在）如需放置作者头像占位：${AVATAR_PLACEHOLDER}，并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
+   - 【导航留白契约】:root 中必须定义 --nav-h（等于导航自身的实际高度，单位 px，例如 --nav-h: 72px）。--nav-h 是**设计令牌**，只描述导航自身高度，运行时不会被改写，可放心用于 sticky 偏移、侧栏定位等计算。
+     若导航为 position: fixed（固定顶部导航），布局会在运行时实测其高度并写入 --nav-clearance，由 --nav-clearance 统一为正文预留顶部空间 —— 你**不需要、也不应该**在 body 上写 padding-top: var(--nav-h)，顶层留白只由 --nav-clearance 承担。
+     若导航不是固定顶部（sticky 吸顶 / 静态 / 左侧竖排），则不会有额外顶部留白，导航自身占据文档流位置即可。
+2. 站点导航 <nav>：用 data-content="main-nav" data-content-type="nav-list" 标记，链接列表必须用 <ul>/<ol> 包裹 <li>（li 不要直接挂在 div 下）。
+   - 导航**只放核心路由**：/blog（首页）、/blog/archive（归档）等站内固定页面。
+   - **禁止**在导航里硬编码分类（/blog/category/...）、标签（/blog/tag/...）或具体文章（/blog/xxx）链接 —— 这些 slug 是编造的，点了会失效；而且正文里的动态标签云/分类列表已经按后台真实数据渲染了一份，导航里再写一份就是同一批标签重复出现两遍。
+   - 导航品牌区（品牌名/logo 所在）如需放置作者头像占位：${AVATAR_PLACEHOLDER}，并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
+   - 若导航固定于视口顶部（position:fixed 或 sticky），必须把 :root 中的 --nav-h 定义为导航真实高度。
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
 4. body 中【必须】包含一个正文占位节点，且仅此一个：
    <div data-page-host=""></div>
@@ -405,9 +411,10 @@ export function buildPagePromptContext(
   parts.push(`硬性约束（必须严格遵守）：
 - 只输出 body 内的页面正文，不要输出 <!DOCTYPE html>、<html>、<head>、<body>；
 - 不要输出任何 <style>、<script>、<link>、<meta>、<title> 标签；不要使用 !important；不要书写自定义 @media 规则（响应式已由骨架统一处理）；
-- 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；
-- 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已通过 --nav-h 统一处理该间距；
-- 正文以 data-page-host 下的单层结构组织，不要自建整份 fixed 宽度的全屏容器；不得使用固定 px/vw 的 width、min-width、max-width、height，也不得用固定 px 字号覆盖骨架（layout 与字号交给骨架设计变量），以免造成溢出或错乱；
+- 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；文章/卡片内部的 <header> 可以正常使用；
+- 不要输出 data-page-host（正文容器由布局提供），正文直接以页面自己的根元素开始；
+- 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已通过 --nav-clearance 统一处理该间距；
+- 正文以单层结构组织，不要自建整份 fixed 宽度的全屏容器；不得使用固定 px/vw 的 width、min-width、max-width、height，也不得用固定 px 字号覆盖骨架（layout 与字号交给骨架设计变量），以免造成溢出或错乱；
 - 封面/头图占位类（如 post-cover 等）只能用于网格/多列卡片容器内，全宽列表卡片内不要放 16:9 大幅封面块；网格/多列卡片容器内的文章封面占位必须使用 <img data-map="cover">（有封面时自动填充 src、无封面时整块隐藏），且必须放在列表宿主容器内；
 - 不要把 section 间距类与 container 容器类叠加在同一元素上（两者的 padding 会互相覆盖，导致容器失去左右内边距）。`)
   return parts.join("\n\n")

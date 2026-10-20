@@ -141,9 +141,12 @@ export async function POST(request: Request) {
           metrics: (metrics) => send({ type: "metrics", metrics }),
         },
         // 快速模式：跳过 AI 质量评审、修订上限 1 轮；质量优先走完整流程。
+        // （修订轮数直接决定「样式问题能否被修掉」——渲染后自检发现 blocker 时
+        //   没有修订机会就只会拒绝保存，所以快速模式也给到 2 轮，
+        //   省掉的是 judge 的 LLM 调用，不是 revise 的。）
         // resume 时前端需回传与首次生成一致的 fastMode（影响图路由结构）。
         judgeEnabled: !fastMode,
-        maxAttempts: fastMode ? 1 : 2,
+        maxAttempts: fastMode ? 2 : 3,
         // 断线时中止在途 LLM 请求，让图尽快停在当前 superstep
         signal: runAbort.signal,
       })
@@ -253,9 +256,25 @@ export async function POST(request: Request) {
           contentConfig?: string
           pages?: Record<string, string>
           pageConfigs?: Record<string, string>
+          rejected?: boolean
+          integrity?: { blockers?: { scope: string; message: string }[] }
         }
         // resume 时前端可能没拿到首次生成的 conversationId，以检查点里的为准。
         const finalConversationId = values.conversationId || conversationId
+
+        // 渲染后自检未通过 → 拒绝保存：不发 done 事件，前端不会出现「使用此主题」。
+        if (values.rejected) {
+          const detail = (values.integrity?.blockers ?? [])
+            .map((b) => `- [${b.scope}] ${b.message}`)
+            .join("\n")
+          send({
+            type: "error",
+            error: `主题未通过渲染后自检，已拒绝保存。请按下列问题调整后重新生成：\n${detail}`,
+            fatal: true,
+          })
+          close()
+          return
+        }
 
         for (const t of PAGE_TYPES) {
           send({

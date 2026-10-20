@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest"
-import { mergeMissingNav, extractContentConfig } from "./content-extractor"
+import { JSDOM } from "jsdom"
+import {
+  mergeMissingNav,
+  extractContentConfig,
+  isDataDrivenNavHref,
+  stripDataDrivenNavItems,
+  stripHardCodedTaxonomyLinks,
+} from "./content-extractor"
 import type { ContentConfig, NavField, DynamicField } from "../types/content-config"
 
 const NAV_HTML = `<!DOCTYPE html>
@@ -17,6 +24,135 @@ const NAV_HTML = `<!DOCTYPE html>
   </footer>
 </body>
 </html>`
+
+describe("导航中的硬编码分类/标签/文章链接", () => {
+  const NAV_WITH_FAKE_TAXONOMY = `<!DOCTYPE html>
+<html><body>
+  <nav data-content="main-nav" data-content-type="nav-list">
+    <ul class="nav-links">
+      <li><a href="/blog">首页</a></li>
+      <li><a href="/blog/archive">归档</a></li>
+      <li><a href="/blog/category/frontend">前端</a></li>
+      <li><a href="/blog/tag/vue">Vue</a></li>
+      <li><a href="/blog/sample-post">示例文章</a></li>
+      <li><a href="https://github.com">GitHub</a></li>
+    </ul>
+  </nav>
+</body></html>`
+
+  it("isDataDrivenNavHref 识别数据驱动路由", () => {
+    expect(isDataDrivenNavHref("/blog/category/frontend")).toBe(true)
+    expect(isDataDrivenNavHref("/blog/tag/vue")).toBe(true)
+    expect(isDataDrivenNavHref("/blog/sample-post")).toBe(true)
+    expect(isDataDrivenNavHref("/collections/my-collection")).toBe(true)
+    expect(isDataDrivenNavHref("/blog")).toBe(false)
+    expect(isDataDrivenNavHref("/blog/archive")).toBe(false)
+    expect(isDataDrivenNavHref("https://github.com")).toBe(false)
+    expect(isDataDrivenNavHref("/")).toBe(false)
+  })
+
+  it("提取导航项时过滤掉硬编码的分类/标签/文章链接", () => {
+    const { contentConfig } = extractContentConfig(NAV_WITH_FAKE_TAXONOMY)
+    const nav = contentConfig["main-nav"] as NavField
+    expect(nav.items.map((i) => i.label)).toEqual(["首页", "归档", "GitHub"])
+    expect(nav.items.some((i) => i.href.includes("/blog/tag/"))).toBe(false)
+  })
+
+  it("导航项全部是数据驱动链接时保留原样（不清空导航）", () => {
+    const html = `<!DOCTYPE html><html><body>
+      <nav data-content="main-nav" data-content-type="nav-list">
+        <ul class="nav-links">
+          <li><a href="/blog/tag/vue">Vue</a></li>
+          <li><a href="/blog/tag/react">React</a></li>
+        </ul>
+      </nav>
+    </body></html>`
+    const { contentConfig } = extractContentConfig(html)
+    const nav = contentConfig["main-nav"] as NavField
+    expect(nav.items).toHaveLength(2)
+  })
+
+  it("stripDataDrivenNavItems 清理存量配置里的假导航项", () => {
+    const config: ContentConfig = {
+      "main-nav": {
+        type: "nav-list",
+        label: "main-nav",
+        items: [
+          { label: "首页", href: "/blog" },
+          { label: "Vue", href: "/blog/tag/vue" },
+          { label: "示例文章", href: "/blog/sample-post" },
+        ],
+        itemTemplate: "<li><a href=\"{href}\">{label}</a></li>",
+      },
+      "hero-title": { type: "text", label: "Hero", value: "x" },
+    }
+    const out = stripDataDrivenNavItems(config) as ContentConfig
+    const nav = out["main-nav"] as NavField
+    expect(nav.items.map((i) => i.label)).toEqual(["首页"])
+    // 非导航字段不受影响
+    expect(out["hero-title"]).toBe(config["hero-title"])
+  })
+
+  it("stripDataDrivenNavItems 无变化时保持原对象引用", () => {
+    const config: ContentConfig = {
+      "main-nav": {
+        type: "nav-list",
+        label: "main-nav",
+        items: [{ label: "首页", href: "/blog" }],
+        itemTemplate: "",
+      },
+    }
+    expect(stripDataDrivenNavItems(config)).toBe(config)
+  })
+})
+
+describe("stripHardCodedTaxonomyLinks（导航多组链接）", () => {
+  it("移除导航中未受管理的分组里的硬编码分类/标签链接及其分组标题", () => {
+    const html = `<!DOCTYPE html><html><body>
+      <nav class="site-nav" data-content="main-nav" data-content-type="nav-list">
+        <div class="nav-brand"><span class="brand">站名</span></div>
+        <div class="nav-links">
+          <div class="nav-section-label">导航</div>
+          <ul class="nav-list"><li><a href="/blog">首页</a></li><li><a href="/blog/archive">归档</a></li></ul>
+          <div class="nav-section-label">分类</div>
+          <ul class="nav-list"><li><a href="/blog/category/tech">技术</a></li></ul>
+          <div class="nav-section-label">标签</div>
+          <ul class="nav-list"><li><a href="/blog/tag/css">CSS</a></li></ul>
+        </div>
+      </nav>
+    </body></html>`
+    const dom = new JSDOM(html)
+    stripHardCodedTaxonomyLinks(dom.window.document)
+    const out = dom.window.document.body.innerHTML
+    // 核心路由保留
+    expect(out).toContain('href="/blog"')
+    expect(out).toContain('href="/blog/archive"')
+    // 硬编码的分类/标签链接移除
+    expect(out).not.toContain("/blog/category/tech")
+    expect(out).not.toContain("/blog/tag/css")
+    // 分组标题不留下孤儿
+    expect(out).not.toContain("分类")
+    expect(out).not.toContain("标签")
+    // 品牌区不受影响
+    expect(out).toContain("站名")
+  })
+
+  it("站外链接与核心路由不受影响", () => {
+    const html = `<!DOCTYPE html><html><body>
+      <nav data-content="main-nav" data-content-type="nav-list">
+        <ul class="nav-links">
+          <li><a href="/blog">首页</a></li>
+          <li><a href="https://github.com">GitHub</a></li>
+        </ul>
+      </nav>
+    </body></html>`
+    const dom = new JSDOM(html)
+    stripHardCodedTaxonomyLinks(dom.window.document)
+    const out = dom.window.document.body.innerHTML
+    expect(out).toContain("/blog")
+    expect(out).toContain("https://github.com")
+  })
+})
 
 describe("mergeMissingNav", () => {
   it("从布局补齐缺失的导航字段", () => {

@@ -1,5 +1,6 @@
 import { getThemes, saveTheme, ThemePageInput } from "@smart-blog/core/lib/theme/theme"
 import { ensureLayoutContract } from "@smart-blog/core/lib/theme/theme-splitter"
+import { checkThemeIntegrity } from "@/lib/theme/theme-selfcheck"
 
 export const runtime = "nodejs"
 
@@ -29,9 +30,33 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+
+    const layoutHtml = ensureLayoutContract(body.layoutHtml)
+
+    // 保存前硬闸门：渲染后自检存在 blocker 时拒绝保存。
+    // （生成管线已有 gate 节点兜底，这里是第二道防线 —— 防止历史遗留
+    //   或其它入口写入未经自检的主题。）
+    const pages: Record<string, string> = {}
+    for (const p of body.pages ?? []) {
+      if (p.html) pages[p.type] = p.html
+    }
+    const report = checkThemeIntegrity(layoutHtml, pages)
+    if (!report.ok) {
+      return Response.json(
+        {
+          error: "主题未通过渲染后自检，已拒绝保存",
+          blockers: report.blockers.map((b) => ({
+            scope: b.scope,
+            message: b.message,
+          })),
+        },
+        { status: 422 }
+      )
+    }
+
     const theme = await saveTheme(
       body.name,
-      ensureLayoutContract(body.layoutHtml),
+      layoutHtml,
       body.pages ?? [],
       body.contentConfig
     )

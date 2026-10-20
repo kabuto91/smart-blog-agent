@@ -60,6 +60,79 @@ describe("renderContent nav-label 不被文本字段覆盖", () => {
   })
 })
 
+describe("renderContent 导航品牌区的全局字段可被赋值", () => {
+  // 导航品牌区承载 blog-title（站名），必须在导航项之外被全局站名填充；
+  // 而导航项标签由导航数据驱动，不能被覆盖。
+  const layout = `<!DOCTYPE html><html><body>
+<nav class="site-nav" data-content="main-nav" data-content-type="nav-list">
+  <div class="nav-inner">
+    <a href="/blog" class="nav-brand">
+      <span class="brand-text" data-content="blog-title" data-content-type="text">占位站名</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="/blog" data-content="blog-title" data-content-type="text">占位导航项</a></li>
+    </ul>
+  </div>
+</nav>
+</body></html>`
+
+  const navConfig: ContentConfig = {
+    "main-nav": {
+      type: "nav-list",
+      label: "main-nav",
+      items: [
+        { label: "首页", href: "/blog" },
+        { label: "归档", href: "/blog/archive" },
+      ],
+      itemTemplate:
+        '<a href="{href}" data-content="blog-title" data-content-type="text">{label}</a>',
+    },
+  }
+
+  it("导航品牌区的 blog-title 被全局站名填充", () => {
+    const out = renderContent(
+      layout,
+      navConfig,
+      undefined,
+      { "blog-title": "我的博客" },
+      { pageSpecific: true }
+    )
+    expect(out).toContain('<span class="brand-text" data-content="blog-title" data-content-type="text">我的博客</span>')
+    expect(out).not.toContain("占位站名")
+  })
+
+  it("导航项标签不被全局站名覆盖", () => {
+    const out = renderContent(
+      layout,
+      navConfig,
+      undefined,
+      { "blog-title": "我的博客" },
+      { pageSpecific: true }
+    )
+    expect(out).toContain('>首页</a>')
+    expect(out).toContain('>归档</a>')
+    expect(out).not.toContain('>我的博客</a>')
+  })
+
+  it("渲染顺序无关：文本字段先于导航渲染时同样正确", () => {
+    // config 中把 blog-title 放在 main-nav 之前 → 文本字段先渲染
+    const ordered: ContentConfig = {
+      "blog-title": { type: "text", label: "blog-title", value: "我的博客" },
+      ...navConfig,
+    }
+    const out = renderContent(
+      layout,
+      ordered,
+      undefined,
+      { "blog-title": "我的博客" },
+      { pageSpecific: true }
+    )
+    expect(out).toContain("我的博客")
+    expect(out).toContain('>首页</a>')
+    expect(out).toContain('>归档</a>')
+  })
+})
+
 describe("renderContent legacy mode", () => {
   it("非拆分模式仍执行 data-page-type 剪枝（保留 home）", () => {
     // resolvePageType(undefined) => home
