@@ -5,7 +5,11 @@ import {
   pruneDetailPage,
 } from "./content-renderer"
 import { stripRedundantFragmentWrappers } from "./layout-inject"
-import { stripHardCodedTaxonomyLinks } from "./content-extractor"
+import {
+  stripHardCodedTaxonomyLinks,
+  stripNavLikeContainers,
+  isNavLikeContainer,
+} from "./content-extractor"
 import {
   hasBodyNavClearance,
   normalizeNavClearanceCss,
@@ -194,6 +198,16 @@ export function mergeThemePage(
   }
 
   host.innerHTML = stripRedundantFragmentWrappers(pageHtml)
+  // 渲染期兜底：页面片段里若残留了站点级 chrome（nav/footer/站点级 header/
+  // 导航形态的容器），剥离掉 —— 布局已提供，重复渲染就会出现两个导航栏。
+  // （生成期 sanitize 已处理，这里覆盖存量主题与任何绕过 sanitize 的路径。）
+  // 仅当布局本身确实提供了导航时才剥离 —— 否则页面会一个导航都不剩。
+  if (layoutHasNav(doc)) {
+    stripSiteChrome(host, host)
+  }
+  // 剥离页面片段里复制来的布局骨架（LLM 照着骨架类名清单抄了整块布局），
+  // 否则页面上会嵌套两层栅格，正文被挤进窄列。
+  stripLayoutSkeleton(host, collectLayoutSkeletonClasses(doc))
   // 顶部留白统一由 --nav-clearance 承担（仅固定顶部导航时有值），
   // 布局自身已在 body 上提供顶部留白时不再叠加 host 留白（避免双重间距）。
   // 片段根部的冗余包裹（data-page-host / page-content）已由
@@ -205,6 +219,64 @@ export function mergeThemePage(
   }
 
   return dom.serialize()
+}
+
+/**
+ * 判定布局里是否提供了导航。
+ * 布局没有导航时，页面正文里的导航不能被剥掉（否则一个导航都不剩）。
+ */
+function layoutHasNav(doc: Document): boolean {
+  if (doc.querySelector('[data-content-type="nav-list"]')) return true
+  if (doc.querySelector("nav")) return true
+  return Array.from(doc.querySelectorAll("aside, div, section")).some(
+    isNavLikeContainer
+  )
+}
+
+/**
+ * 收集布局中正文宿主（[data-page-host]）的祖先容器 class。
+ *
+ * 这些 class 就是**布局骨架**（如 .layout-grid / .content-area）。
+ * 页面片段里若出现同名容器，说明 LLM 把整块布局复制进了正文 —— 结果是
+ * 页面上嵌套了两层栅格：正文被塞进内层栅格的窄列里（宽度骤减），
+ * 同时导航也出现了第二份。
+ */
+export function collectLayoutSkeletonClasses(input: Document | string): Set<string> {
+  const classes = new Set<string>()
+  const doc =
+    typeof input === "string"
+      ? new JSDOM(input).window.document
+      : input
+  const host = doc.querySelector("[data-page-host]")
+  let el = host?.parentElement ?? null
+  while (el) {
+    const tag = el.tagName.toLowerCase()
+    if (tag === "body" || tag === "html") break
+    for (const c of (el.getAttribute("class") ?? "").split(/\s+/)) {
+      if (c) classes.add(c)
+    }
+    el = el.parentElement
+  }
+  return classes
+}
+
+/**
+ * 剥离页面片段里复制来的布局骨架容器。
+ *
+ * 只针对「与布局骨架同名的容器」做处理 —— 不碰 .container/.wrap 这类
+ * 通用内容容器（它们是页面自己该有的，剥掉会丢掉限宽与内边距）。
+ */
+function stripLayoutSkeleton(root: Element, skeletonClasses: Set<string>): void {
+  if (skeletonClasses.size === 0) return
+  // 从最外层开始剥离：外层剥掉后内层会提升上来
+  const candidates = Array.from(
+    root.querySelectorAll("div, main, section, aside, ul, ol")
+  )
+  for (const el of candidates) {
+    const tokens = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
+    if (!tokens.some((t) => skeletonClasses.has(t))) continue
+    unwrapElement(el)
+  }
 }
 
 /**
@@ -290,13 +362,38 @@ export function createSanitizeReport(): SanitizeReport {
 /**
  * 判定 <header> 是否是「站点级页头」需要剥离。
  * 文章/卡片内部的 <header>（如 <article><header><h1>标题</h1></header></article>）
- * 是合法的语义结构，必须保留；只有 body 直属的才视为站点级页头。
+ * 是合法的语义结构，必须保留；只有容器直属的才视为站点级页头。
  */
-function isSiteLevelHeader(el: Element): boolean {
+function isSiteLevelHeader(el: Element, scope: Element): boolean {
   const parent = el.parentElement
   if (!parent) return false
+  if (parent === scope) return true
   const tag = parent.tagName.toLowerCase()
   return tag === "body" || tag === "html"
+}
+
+/**
+ * 剥离站点级 chrome：nav / footer / 站点级 header / 导航形态的容器。
+ *
+ * 布局已统一提供这些元素，页面正文里再出现就是**重复渲染**
+ * （最典型的表现：页面上出现两个导航栏 —— LLM 常把导航写成
+ *  <aside class="sidebar-nav">，只按 <nav> 标签判定会漏掉）。
+ *
+ * 生成期由 sanitizePageFragment 处理，渲染期（合并正文时）再兜一次 ——
+ * 存量主题与任何绕过 sanitize 的路径都被覆盖。
+ *
+ * @param root 要清理的容器
+ * @param scope 判定「容器直属」用的参照（sanitize 时是 body，合并时是正文宿主）
+ */
+function stripSiteChrome(root: Element, scope: Element): void {
+  for (const el of Array.from(root.querySelectorAll("nav, footer"))) {
+    el.remove()
+  }
+  for (const el of Array.from(root.querySelectorAll("header"))) {
+    if (!isSiteLevelHeader(el, scope)) continue
+    el.remove()
+  }
+  stripNavLikeContainers(root)
 }
 
 /** 解包元素：用其子节点替换自身（保留内容，只拆掉多余容器）。 */
@@ -331,15 +428,7 @@ export function sanitizePageFragment(
   // 导航/页脚由布局统一提供，页面片段里再出现就是重复 chrome —— 强制剥离。
   // （旧实现只在校验阶段报告、不剥离，fastMode 下修订次数用完就直接提交，
   //   线上会出现第二个导航栏。）
-  for (const el of Array.from(body.querySelectorAll("nav, footer"))) {
-    noteRemoved(el.tagName.toLowerCase())
-    el.remove()
-  }
-  for (const el of Array.from(body.querySelectorAll("header"))) {
-    if (!isSiteLevelHeader(el)) continue
-    noteRemoved("header")
-    el.remove()
-  }
+  stripSiteChrome(body, body)
   for (const el of Array.from(body.querySelectorAll(PAGE_CHROME_SELECTORS))) {
     el.remove()
   }
@@ -461,6 +550,18 @@ export function validatePageFragment(
   )
   if (forbidden.length > 0) {
     issues.push(`页面片段包含不应出现的标签 <${forbidden[0].tagName.toLowerCase()}>`)
+  }
+  // 导航形态的容器（如 <aside class="sidebar-nav">）：布局已提供导航，
+  // 页面正文里再有一份就是重复渲染（页面上会出现两个导航栏）。
+  const navLike = Array.from(
+    doc.querySelectorAll("aside, div, section")
+  ).filter(isNavLikeContainer)
+  if (navLike.length > 0) {
+    issues.push(
+      `页面片段包含重复的导航容器（${navLike
+        .map((el) => `<${el.tagName.toLowerCase()} class="${el.getAttribute("class") ?? ""}">`)
+        .join("、")}），导航由布局统一提供，必须移除`
+    )
   }
   // 仅当输入本身含完整文档包裹时才告警（JSDOM 会为裸片段自动补 head/body，需用原始串判断）
   if (/<!DOCTYPE|<html[\s>]/i.test(fragmentHtml)) {

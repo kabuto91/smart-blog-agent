@@ -133,6 +133,147 @@ describe("renderContent 导航品牌区的全局字段可被赋值", () => {
   })
 })
 
+describe("renderContent 统计字段保留文案", () => {
+  const STAT_LAYOUT = `<!DOCTYPE html><html><body>
+  <ul class="widget-list">
+    <li><a href="#"><span data-content="total-articles" data-content-type="text">收录文章 42 篇</span></a></li>
+    <li><a href="#"><span data-content="total-views" data-content-type="text">累计浏览 1.2w+</span></a></li>
+    <li><a href="#"><span data-content="total-likes" data-content-type="text">收获点赞 3k+</span></a></li>
+    <li><a href="#"><span data-content="plain-number" data-content-type="text">99</span></a></li>
+  </ul>
+</body></html>`
+
+  it("统计字段只替换数字、保留「标签 + 数字」文案", () => {
+    const out = renderContent(
+      STAT_LAYOUT,
+      {},
+      undefined,
+      {
+        "total-articles": "17",
+        "total-views": "34",
+        "total-likes": "3",
+      },
+      { pageSpecific: true }
+    )
+    expect(out).toContain("收录文章 17 篇")
+    expect(out).toContain("累计浏览 34+")
+    expect(out).toContain("收获点赞 3+")
+  })
+
+  it("纯数字元素仍被正常替换", () => {
+    const out = renderContent(
+      `<span data-content="total-articles" data-content-type="text">99</span>`,
+      {},
+      undefined,
+      { "total-articles": "17" },
+      { pageSpecific: true }
+    )
+    expect(out).toContain(">17<")
+  })
+
+  it("标签在标记元素、数字在无标记兄弟元素时，数字位被真实值填充", () => {
+    // LLM 的另一种写法：<span data-content="total-articles">已发布文章</span><span>0</span>
+    const out = renderContent(
+      `<ul><li><span data-content="total-articles" data-content-type="text">已发布文章</span> <span>0</span></li></ul>`,
+      {},
+      undefined,
+      { "total-articles": "17" },
+      { pageSpecific: true }
+    )
+    expect(out).toContain("已发布文章")
+    expect(out).toContain("17")
+    expect(out).not.toContain(">0<")
+  })
+})
+
+describe("renderContent 详情页文章标签区", () => {
+  const DETAIL_LAYOUT = `<!DOCTYPE html><html><body>
+  <article data-content="article-body" data-content-type="article-body">
+    <div data-map="body">正文</div>
+  </article>
+  <div class="article-tags">
+    <span class="tag" data-content="tag-rain" data-content-type="text">雨天</span>
+    <span class="tag" data-content="tag-slow" data-content-type="text">慢生活</span>
+  </div>
+</body></html>`
+
+  const article = {
+    id: "1",
+    title: "T",
+    excerpt: "",
+    date: "2024-01-01",
+    slug: "t",
+    contentHtml: "<p>正文</p>",
+    tags: ["Next.js"],
+    tagList: [{ id: "9", name: "Next.js", slug: "next-js" }],
+  }
+
+  it("静态文本形态的标签组被替换为文章真实标签（带真实链接）", () => {
+    const out = renderContent(
+      DETAIL_LAYOUT,
+      {},
+      { articles: [article] },
+      undefined,
+      { pageSpecific: true }
+    )
+    expect(out).toContain("Next.js")
+    expect(out).toContain('href="/blog/tag/next-js"')
+    // 编造的假标签不再出现
+    expect(out).not.toContain("雨天")
+    expect(out).not.toContain("慢生活")
+    // 保留原 chip 结构（主题 CSS 不受影响）
+    expect(out).toContain('class="tag"')
+  })
+
+  it("文章没有标签时，标签区整体移除", () => {
+    const out = renderContent(
+      DETAIL_LAYOUT,
+      {},
+      { articles: [{ ...article, tags: [], tagList: [] }] },
+      undefined,
+      { pageSpecific: true }
+    )
+    expect(out).not.toContain("雨天")
+    expect(out).not.toContain("article-tags")
+  })
+
+  it("标记为 dynamic-tags 的区块按位置区分：文章流里用本文标签、侧栏用全站标签", () => {
+    const html = `<!DOCTYPE html><html><body>
+      <article data-content="article-body" data-content-type="article-body"><div data-map="body">正文</div></article>
+      <div class="article-tags" data-content="article-tags" data-content-type="dynamic-tags"><a href="#" data-map="link" class="tag"></a></div>
+      <aside class="sidebar"><div class="widget" data-content="tag-cloud" data-content-type="dynamic-tags"><a href="#" data-map="link" class="tag"></a></div></aside>
+    </body></html>`
+    const config: ContentConfig = {
+      "article-tags": {
+        type: "dynamic-tags",
+        label: "文章标签",
+        itemTemplate: '<a href="{link}" data-map="link" class="tag"></a>',
+        fieldMapping: { link: "link" },
+      },
+      "tag-cloud": {
+        type: "dynamic-tags",
+        label: "标签云",
+        itemTemplate: '<a href="{link}" data-map="link" class="tag"></a>',
+        fieldMapping: { link: "link" },
+      },
+    }
+    const out = renderContent(
+      html,
+      config,
+      {
+        articles: [article],
+        tags: [{ id: "1", name: "Vue", slug: "vue" }],
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    // 文章流里的标签区 → 本文标签
+    expect(out).toContain('href="/blog/tag/next-js"')
+    // 侧栏标签云 → 全站标签
+    expect(out).toContain('href="/blog/tag/vue"')
+  })
+})
+
 describe("renderContent legacy mode", () => {
   it("非拆分模式仍执行 data-page-type 剪枝（保留 home）", () => {
     // resolvePageType(undefined) => home

@@ -570,6 +570,76 @@ export function stripHardCodedTaxonomyLinks(doc: Document): void {
 }
 
 /**
+ * 导航链接列表宿主的判定。
+ *
+ * class 必须**同时**含 nav 词根与 list 类词根 —— 只含其一容易误伤：
+ *   - .nav-list / .nav-links / .nav-menu / .nav-items → 是导航列表 ✓
+ *   - .post-nav（文章上下篇导航）→ 只有 nav，没有 list 类词根 → 不算 ✓
+ *   - .sidebar-nav（导航容器本身）→ 同上 ✓
+ */
+function isNavLinkListHost(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag !== "ul" && tag !== "ol" && tag !== "div") return false
+  const cls = el.getAttribute("class") ?? ""
+  if (!/(^|[-_\s])nav([-_\s]|$)/i.test(cls)) return false
+  if (!/(^|[-_\s])(list|links|menu|items?|group)([-_\s]|$)/i.test(cls)) return false
+  return el.querySelectorAll("a").length >= 1
+}
+
+/** 品牌区判定（logo / 站名 / 头像所在块）：class 含 brand 词根。 */
+function isBrandBlock(el: Element): boolean {
+  const cls = el.getAttribute("class") ?? ""
+  return /(^|[-_\s])brand([-_\s]|$)/i.test(cls)
+}
+
+/**
+ * 判定元素是否是「导航形态的容器」。
+ *
+ * 【为什么不能只看 <nav> 标签】
+ * LLM 把站点导航写成 <aside class="sidebar-nav"> / <div class="nav-..."> 非常常见
+ * （侧边栏布局尤其如此）。若只按 <nav> 标签判定，页面正文里再写一份导航就
+ * 既检不出来、也剥不掉 —— 页面上就会出现**两个导航栏**。
+ *
+ * 判据（任一命中即算导航容器）：
+ * 1. <nav> 标签；
+ * 2. 带 data-content-type="nav-list" 标记（受配置管理的导航）；
+ * 3. 内部直接子级里存在「导航链接列表宿主」（ul/ol/div 且 class 含 nav 词根）。
+ */
+export function isNavLikeContainer(el: Element): boolean {
+  const tag = el.tagName.toLowerCase()
+  if (tag === "nav") return true
+  if (el.getAttribute("data-content-type") === "nav-list") return true
+  if (tag === "footer" || tag === "header") return false
+  return Array.from(el.children).some(isNavLinkListHost)
+}
+
+/**
+ * 剥离导航形态的容器（布局已统一提供导航，页面正文里再有一份就是重复渲染）。
+ *
+ * 优先整体移除带 nav-list 标记的容器；其余按「导航链接列表 + 品牌区」精确清理，
+ * 容器内若还剩其它内容（标签云、作者卡等）则保留容器，只摘掉导航部分。
+ */
+export function stripNavLikeContainers(root: Element): void {
+  // 1) 受配置管理的导航容器：整体移除
+  for (const el of Array.from(root.querySelectorAll('[data-content-type="nav-list"]'))) {
+    el.remove()
+  }
+  // 2) 未标记但形态是导航的容器：摘掉链接列表与品牌区
+  for (const el of Array.from(root.querySelectorAll("aside, div, section"))) {
+    const hosts = Array.from(el.children).filter(isNavLinkListHost)
+    if (hosts.length === 0) continue
+    for (const h of hosts) h.remove()
+    for (const b of Array.from(el.children)) {
+      if (isBrandBlock(b)) b.remove()
+    }
+    // 摘空后若容器内没有其它内容（链接/列表/内容标记）则整体移除，避免留下空壳
+    if (!el.querySelector("a, ul, ol, [data-content], [data-content-type]")) {
+      el.remove()
+    }
+  }
+}
+
+/**
  * 过滤导航项中硬编码的数据驱动链接（分类/标签/具体文章/合集详情）。
  *
  * 用于**存量主题**：这些项是在过滤规则生效之前写入 contentConfig 的，

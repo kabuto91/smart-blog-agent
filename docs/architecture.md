@@ -67,7 +67,17 @@ LLM 常把导航拆成多组链接（导航 / 分类 / 标签），但渲染时*
 | `contentConfig` 里已写入的导航项 | `ensureThemeNavConfig` → `stripDataDrivenNavItems()` 过滤（存量主题同样生效） |
 | 骨架提示词 | 明确导航只放核心路由（`/blog`、`/blog/archive`） |
 
-### 1.3 关键样式契约
+### 1.3 页面正文不得自带导航或复制布局骨架
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 页面上出现**两个导航栏** | LLM 把导航写进页面片段，且常用 `<aside class="sidebar-nav">` 而非 `<nav>` —— 只按标签名判定会漏 | 判定改为**导航形态**（`isNavLikeContainer`）：`<nav>` 标签 / `data-content-type="nav-list"` 标记 / 内部含 nav 类词根的链接列表宿主 |
+| 正文被挤进**窄列** | 页面片段把整块布局（`.layout-grid` / `.content-area`）抄了一遍 → 嵌套两层栅格 | `mergeThemePage` 按「布局正文宿主的祖先 class」剥离重复骨架容器（`collectLayoutSkeletonClasses` + `stripLayoutSkeleton`） |
+| 站名显示成 `{blog-title}` | 早期提示词让 LLM 写花括号占位符 | 渲染期兼容替换（`renderLegacyPlaceholders`）；新主题的提示词要求用 `data-content` 标记 |
+
+站点 chrome 的剥离在**两处**执行，覆盖存量主题与任何绕过生成期清洗的路径：生成期 `sanitizePageFragment`、渲染期 `mergeThemePage`（仅当布局本身提供了导航时才剥离）。
+
+### 1.4 关键样式契约
 
 | 变量 | 语义 | 写入方 |
 | --- | --- | --- |

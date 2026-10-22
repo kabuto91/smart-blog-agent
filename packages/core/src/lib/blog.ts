@@ -60,6 +60,12 @@ export function toArticleDetailData(a: ArticleRow): ArticleData {
     slug: a.slug,
     contentHtml: renderMarkdown(a.content),
     tags: a.tags.map((at) => at.tag.name),
+    // 详情页「文章标签区」要用真实标签及其链接（slug）
+    tagList: a.tags.map((at) => ({
+      id: at.tag.id,
+      name: at.tag.name,
+      slug: at.tag.slug,
+    })),
     cover: a.coverImage ?? "",
   }
 }

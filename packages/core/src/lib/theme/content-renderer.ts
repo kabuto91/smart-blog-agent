@@ -12,6 +12,8 @@ export interface ArticleData {
   slug: string
   contentHtml?: string
   tags?: string[]
+  /** 带 slug 的标签列表（详情页渲染「文章标签区」用，需要真实链接） */
+  tagList?: TagData[]
   /** 封面图 URL，无封面时为空字符串 */
   cover?: string
 }
@@ -69,11 +71,16 @@ export function renderContent(
 
   const fields = { ...contentConfig }
   augmentGlobalFields(doc, fields, siteConfig)
+  // 兼容旧模板语法（{blog-title} 之类），让存量主题的导航品牌区也能显示真实站名
+  renderLegacyPlaceholders(doc, siteConfig)
 
   for (const [key, field] of Object.entries(fields)) {
     if (field.type === "text") {
       const value = resolveTextValue(field, siteConfig, reusableTexts)
-      renderTextField(doc, key, value)
+      // 统计字段（只读）：只替换数字、保留「收录文章 42 篇」这类文案
+      renderTextField(doc, key, value, {
+        keepLabel: field.source === "readonly",
+      })
     } else if (
       field.type.startsWith("dynamic-") ||
       field.type === "article-body"
@@ -109,6 +116,8 @@ export function renderContent(
 
   renderStaticTaxonomyLists(doc, dynamicData)
   renderStaticArchiveList(doc, dynamicData)
+  // 详情页「文章标签区」兜底：静态文本形态的标签组改用文章真实标签
+  normalizeDetailArticleTags(doc, dynamicData?.articles?.[0])
 
   return dom.serialize()
 }
@@ -713,6 +722,46 @@ function applyAvatarOverflow(doc: Document, avatarUrl?: string): void {
   }
 }
 
+/**
+ * 收集元素下的全部文本节点（不依赖 NodeFilter/createTreeWalker，
+ * 后者在 jsdom 环境下不是全局对象）。
+ */
+function collectTextNodes(root: Node, out: Text[]): void {
+  for (const node of Array.from(root.childNodes)) {
+    if (node.nodeType === 3) {
+      out.push(node as Text)
+    } else if (node.nodeType === 1) {
+      collectTextNodes(node, out)
+    }
+  }
+}
+
+/**
+ * 兼容旧模板语法：把文本节点里**独立占位**的 `{字段名}` 替换为站点配置值。
+ *
+ * 早期版本的骨架提示词让 LLM 直接写 {blog-title} 这类占位符（没有 data-content 标记），
+ * 这类主题的导航品牌区至今仍是字面量，站名永远显示成 "{blog-title}"。
+ * 只替换「整个文本节点就是 {key}」的情况，避免误伤正文里正常的大括号。
+ */
+function renderLegacyPlaceholders(
+  doc: Document,
+  siteConfig?: Record<string, string>
+): void {
+  if (!siteConfig || !doc.body) return
+  const nodes: Text[] = []
+  collectTextNodes(doc.body, nodes)
+  for (const node of nodes) {
+    const text = node.textContent ?? ""
+    const m = text.trim().match(/^\{([a-zA-Z][\w-]*)\}$/)
+    if (!m) continue
+    const key = m[1]
+    if (!(key in FIELD_DEFINITIONS)) continue
+    const value = siteConfig[key]
+    if (!value) continue
+    node.textContent = value
+  }
+}
+
 function augmentGlobalFields(
   doc: Document,
   contentConfig: ContentConfig,
@@ -817,7 +866,161 @@ function isNavItemLabel(el: Element): boolean {
   return !!listHost && listHost.contains(el)
 }
 
-function renderTextField(doc: Document, key: string, value: string): void {
+/** 标签形态元素判定：class 含 tag/chip/badge 词根。 */
+function isTagLikeElement(el: Element): boolean {
+  if (!TAG_LIKE_CLASS_RE.test(el.getAttribute("class") ?? "")) return false
+  const tag = el.tagName.toLowerCase()
+  return tag === "span" || tag === "a" || tag === "li" || tag === "div"
+}
+
+/**
+ * 详情页「文章标签区」兜底修复。
+ *
+ * LLM 常把文章标签做成**静态文本字段**（<span class="tag" data-content="tag-rain">雨天</span>），
+ * 显示的是它编造的标签、而且不是链接 —— 与文章真实标签毫无关系。
+ * 这里把这类「未标记为动态区块的标签组」用文章的真实标签重建：
+ *   - 有真实标签 → 保留原 chip 结构与 class，文本换成真实标签名，外面套一层 <a> 使其可点击；
+ *   - 文章没有标签 → 整组移除（不该显示一个空标签区）。
+ */
+function normalizeDetailArticleTags(
+  doc: Document,
+  article: ArticleData | undefined
+): void {
+  if (!article) return
+  const bodyEl = doc.querySelector('[data-content="article-body"]')
+  if (!bodyEl) return
+  const realTags = article.tagList ?? []
+
+  // 候选：标签形态 + 是文本字段 + 不在动态标签块内 + 不在文章正文内 + 取最外层
+  const candidates = Array.from(
+    doc.querySelectorAll("span, a, li, div")
+  ).filter((el) => {
+    if (!isTagLikeElement(el)) return false
+    if (!el.hasAttribute("data-content")) return false
+    if (el.getAttribute("data-content-type") !== "text") return false
+    if (el.closest('[data-content-type="dynamic-tags"]')) return false
+    if (bodyEl.contains(el)) return false
+    // 同一组里只取最外层：父元素**自己也是候选**（有 content 标记）时才排除子元素
+    const parent = el.parentElement
+    if (
+      parent &&
+      parent.hasAttribute("data-content") &&
+      isTagLikeElement(parent)
+    ) {
+      return false
+    }
+    return true
+  })
+  if (candidates.length === 0) return
+
+  // 按父容器分组
+  const groups = new Map<Element, Element[]>()
+  for (const el of candidates) {
+    const parent = el.parentElement
+    if (!parent) continue
+    const arr = groups.get(parent) ?? []
+    arr.push(el)
+    groups.set(parent, arr)
+  }
+
+  for (const [parent, els] of groups) {
+    const template = els[0]
+    for (const el of els) el.remove()
+    if (realTags.length === 0) {
+      // 文章没有标签 → 标签区整体移除
+      if (!parent.textContent?.trim()) parent.remove()
+      continue
+    }
+    const frag = doc.createDocumentFragment()
+    for (const t of realTags) {
+      const chip = template.cloneNode(true) as Element
+      // 去掉内容标记：它已由真实标签接管，不应再作为可编辑文本字段
+      chip.removeAttribute("data-content")
+      chip.removeAttribute("data-content-type")
+      chip.textContent = t.name
+      // 外层套链接（保留原 chip 结构，主题 CSS 完全不受影响）
+      const anchor = doc.createElement("a")
+      anchor.setAttribute("href", `/blog/tag/${t.slug}`)
+      anchor.appendChild(chip)
+      frag.appendChild(anchor)
+    }
+    parent.appendChild(frag)
+  }
+}
+
+/**
+ * 找出统计字段的「数字位」——紧邻其后、且**没有 content 标记**的纯数字兄弟元素。
+ *
+ * LLM 写统计项时有两种习惯：
+ *   <span data-content="total-articles">收录文章 42 篇</span>   ← 文案+数字同元素
+ *   <span data-content="total-articles">已发布文章</span><span>0</span>  ← 标签在标记元素、数字在无标记兄弟
+ * 第二种写法下若只替换标记元素，数字位会保持 LLM 写的占位（"0"），
+ * 页面就显示成「17 0」。这里把真实值填到数字位，标签原文保留。
+ */
+function findUnlabeledNumberSibling(el: Element): Element | null {
+  let node: ChildNode | null = el.nextSibling
+  while (node) {
+    if (node.nodeType === 3) {
+      // 纯空白文本节点 → 跳过；实义文本 → 不是数字位
+      if ((node.textContent ?? "").trim() === "") {
+        node = node.nextSibling
+        continue
+      }
+      return null
+    }
+    if (node.nodeType === 1) {
+      const cand = node as Element
+      // 有标记的元素由它自己的字段负责，不动
+      if (cand.hasAttribute("data-content") || cand.hasAttribute("data-map")) {
+        return null
+      }
+      const text = (cand.textContent ?? "").trim()
+      if (text === "") return null
+      // 纯数字/单位（0、42、1.2w、3k+）→ 这是数字位
+      if (/^[\d\s.,%+]+(?:[KkWw万千亿])?$/.test(text)) return cand
+      return null
+    }
+    return null
+  }
+  return null
+}
+
+/**
+ * 统计字段的赋值：**只替换数字、保留文案**。
+ *
+ * LLM 常把「标签 + 数字」拆开或合在一起，三种写法都要能正确渲染：
+ *   1. <span data-content="total-articles">收录文章 42 篇</span>
+ *      → 「收录文章 17 篇」（只换数字段）
+ *   2. <span data-content="total-articles">已发布文章</span><span>0</span>
+ *      → 「已发布文章 17」（把真实值填进无标记的数字位，标签原文保留）
+ *   3. <span data-content="total-articles">42</span>
+ *      → 「17」（纯数字，整体替换）
+ */
+function renderStatField(el: Element, value: string): void {
+  const text = el.textContent ?? ""
+  // 1) 元素内含数字 → 只替换数字部分
+  const m = text.match(/^(\D*)([\d][\d.,]*)(\s*[A-Za-z]+)?(\D*)$/)
+  if (m) {
+    const [, prefix, , , suffix] = m
+    el.textContent = `${prefix}${value}${suffix}`
+    return
+  }
+  // 2) 元素内是纯标签 → 数字在紧邻的无标记兄弟元素里
+  const numberSlot = findUnlabeledNumberSibling(el)
+  if (numberSlot) {
+    numberSlot.textContent = value
+    return
+  }
+  // 3) 兜底：整段替换
+  el.textContent = value
+}
+
+function renderTextField(
+  doc: Document,
+  key: string,
+  value: string,
+  options?: { keepLabel?: boolean }
+): void {
   const els = Array.from(doc.querySelectorAll(`[data-content="${key}"]`))
   if (els.length === 0) return
 
@@ -854,6 +1057,10 @@ function renderTextField(doc: Document, key: string, value: string): void {
 
     // 配置值为空（未配置）时保留主题生成的占位文本，不清空页面
     if (!value) continue
+    if (options?.keepLabel) {
+      renderStatField(el, value)
+      continue
+    }
     el.textContent = value
   }
 }
@@ -967,12 +1174,33 @@ function renderDynamicField(
         count: String(c.count ?? 0),
       }))
       break
-    case "dynamic-tags":
-      data = (dynamicData.tags ?? []).map((t) => ({
-        name: t.name,
-        link: `/blog/tag/${t.slug}`,
-      }))
+    case "dynamic-tags": {
+      const article = dynamicData.articles?.[0]
+      const isDetail = !!article?.contentHtml
+      // 详情页里 dynamic-tags 可能表示两种东西：
+      //   · 文章正文下方的「文章标签区」→ 应显示**本文**的标签
+      //   · 侧栏的「标签云」→ 应显示全站热门标签
+      // 用 data-content-scope 显式声明；未声明时按位置启发式
+      // （在 aside / sidebar / widget 之外 → 视为文章标签区）。
+      const scope = container.getAttribute("data-content-scope")
+      const inSidebar = !!container.closest(
+        "aside, [class*='sidebar'], [class*='widget']"
+      )
+      const useArticleTags =
+        isDetail &&
+        !!article?.tagList?.length &&
+        (scope === "article" || (scope !== "site" && !inSidebar))
+      data = useArticleTags
+        ? article!.tagList!.map((t) => ({
+            name: t.name,
+            link: `/blog/tag/${t.slug}`,
+          }))
+        : (dynamicData.tags ?? []).map((t) => ({
+            name: t.name,
+            link: `/blog/tag/${t.slug}`,
+          }))
       break
+    }
     default:
       return
   }

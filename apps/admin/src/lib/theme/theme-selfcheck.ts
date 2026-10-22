@@ -2,9 +2,13 @@ import { JSDOM } from "jsdom"
 import {
   mergeThemePage,
   collectThemeClasses,
+  collectLayoutSkeletonClasses,
   CLASS_BRIDGE_SOURCE_CLASSES,
 } from "@smart-blog/core/lib/theme/theme-splitter"
-import { isDataDrivenNavHref } from "@smart-blog/core/lib/theme/content-extractor"
+import {
+  isDataDrivenNavHref,
+  isNavLikeContainer,
+} from "@smart-blog/core/lib/theme/content-extractor"
 
 /**
  * 主题渲染后自检（Theme Integrity Check）。
@@ -160,7 +164,35 @@ export function checkThemeIntegrity(
     }
   }
 
+  // ── 骨架级：多个导航元素 ────────────────────────────────
+  // 响应式主题常见「桌面导航 + 移动导航」两个 <nav>，需要靠 CSS 隐藏其一；
+  // 若两者都可见，页面上就会出现两个导航栏。
+  {
+    const navDoc = new JSDOM(layoutHtml).window.document
+    const navs = Array.from(navDoc.querySelectorAll("nav"))
+    if (navs.length > 1) {
+      const descs = navs.map(
+        (n) =>
+          `${n.getAttribute("class") || n.tagName.toLowerCase()}${
+            n.getAttribute("data-content") ? `[${n.getAttribute("data-content")}]` : ""
+          }`
+      )
+      issues.push(
+        issue(
+          "warn",
+          "skeleton",
+          `布局中有 ${navs.length} 个 <nav>（${descs.join("、")}）；若它们不是互斥的响应式版本（如桌面版 + 移动版），页面上会出现两个导航栏，请用 CSS 隐藏其中一个`
+        )
+      )
+    }
+  }
+
   const layoutClasses = collectThemeClasses(layoutHtml)
+
+  // ── 布局骨架：正文宿主的祖先容器 ────────────────────────
+  // 页面片段若套了同名容器，就是把整块布局复制进了正文 → 嵌套两层栅格，
+  // 正文被挤进窄列。渲染期会自动剥离，这里作为提示反馈给修订流程。
+  const layoutSkeletonClasses = collectLayoutSkeletonClasses(layoutHtml)
 
   // ── 骨架级：导航里硬编码的数据驱动链接 ──────────────────
   // 分类/标签/具体文章的 slug 是 LLM 编造的，点了会失效；且会与正文里
@@ -211,6 +243,49 @@ export function checkThemeIntegrity(
           "页面正文包含站点级 <header>（body 直属），与布局的页头重复，必须移除"
         )
       )
+    }
+
+    // 导航形态的容器（<aside class="sidebar-nav"> 等）：布局已提供导航，
+    // 页面正文里再有一份 → 页面上出现两个导航栏。
+    const navLike = Array.from(
+      new JSDOM(html).window.document.querySelectorAll("aside, div, section")
+    ).filter(isNavLikeContainer)
+    if (navLike.length > 0) {
+      issues.push(
+        issue(
+          "blocker",
+          type,
+          `页面正文包含重复的导航容器（${navLike
+            .map((el) => `<${el.tagName.toLowerCase()} class="${el.getAttribute("class") ?? ""}">`)
+            .join("、")}）；导航由布局统一提供，页面里再写一份会出现两个导航栏`
+        )
+      )
+    }
+
+    // 复制了布局骨架：页面片段里套了与布局正文宿主祖先同名的容器
+    if (layoutSkeletonClasses.size > 0) {
+      const doc2 = new JSDOM(html).window.document
+      const dupSkeleton = Array.from(
+        doc2.querySelectorAll("div, main, section, aside")
+      ).filter((el) => {
+        const tokens = (el.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
+        return tokens.some((t) => layoutSkeletonClasses.has(t))
+      })
+      if (dupSkeleton.length > 0) {
+        issues.push(
+          issue(
+            "error",
+            type,
+            `页面正文复制了布局骨架容器（${Array.from(
+              new Set(
+                dupSkeleton.map(
+                  (el) => el.getAttribute("class") ?? el.tagName.toLowerCase()
+                )
+              )
+            ).join("、")}）；正文只输出本页内容，不要再套一层布局外层容器，否则会与布局叠成两层栅格把正文挤窄`
+          )
+        )
+      }
     }
 
     const used = collectUsedClasses(html)

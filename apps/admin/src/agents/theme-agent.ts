@@ -147,8 +147,10 @@ const DYNAMIC_ARTICLES_RULE = `- 文章列表区域用 <section data-content="ar
 - 模板外的静态结构（标题、容器、按钮等）放在模板项同级位置，不要包在模板项里面；
 - 除模板项外不要再手写其它示例条目，那些都会被清除并替换为真实数据。`
 
-/** 动态标签/分类列表的数据绑定规则（首页/列表页若有标签云或分类侧栏时使用）。 */
-const DYNAMIC_TAG_RULE = `- 标签云区域用 <div data-content="tag-cloud" data-content-type="dynamic-tags"> 包裹，容器内首个子元素作为单个标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接（href 写占位 # 即可），并填一个示例标签名（渲染时会被真实标签替换）；
+/** 动态标签/分类列表的数据绑定规则（首页/列表页/详情页若有标签云或分类侧栏时使用）。 */
+const DYNAMIC_TAG_RULE = `- 标签云/标签列表区域用 <div data-content="tag-cloud" data-content-type="dynamic-tags"> 包裹，容器内首个子元素作为单个标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接（href 写占位 # 即可），并填一个示例标签名（渲染时会被真实标签替换）；
+- **文章详情页底部的「文章标签」区同样必须用 dynamic-tags 标记**（data-content="article-tags" data-content-type="dynamic-tags" data-content-scope="article"），渲染时会用**该文章的真实标签**及其链接替换；不要把文章标签写成普通 text 字段（那样会显示编造的假标签且无法点击）；
+- 若详情页侧栏另有「标签云」，它用全站热门标签，请显式标注 data-content-scope="site"（不标注时按位置自动判断，侧栏里的会自动视为全站标签）；
 - 若设计了分类列表区域，用 data-content-type="dynamic-categories" 同理标记（模板内 data-map="name" 标记分类名）。
 - 请勿用静态链接硬编码标签/分类列表——运行时会用后台维护的真实标签/分类自动替换（即便列表内同时混有标签与分类链接、或仅为分类链接，也会被替换）。`
 
@@ -186,6 +188,7 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
    - 导航**只放核心路由**：/blog（首页）、/blog/archive（归档）等站内固定页面。
    - **禁止**在导航里硬编码分类（/blog/category/...）、标签（/blog/tag/...）或具体文章（/blog/xxx）链接 —— 这些 slug 是编造的，点了会失效；而且正文里的动态标签云/分类列表已经按后台真实数据渲染了一份，导航里再写一份就是同一批标签重复出现两遍。
    - 导航品牌区（品牌名/logo 所在）如需放置作者头像占位：${AVATAR_PLACEHOLDER}，并在 CSS 中为 .avatar 定义圆形样式（overflow:hidden + 内部 img object-fit:cover）。
+   - 导航品牌区的**站名必须标记为** <span data-content="blog-title" data-content-type="text">站名</span>（副标题同理用 data-content="blog-subtitle"），否则后台配置的站名无法生效；**不要**写成 {blog-title} 这类花括号占位符。
    - 若导航固定于视口顶部（position:fixed 或 sticky），必须把 :root 中的 --nav-h 定义为导航真实高度。
 3. 页脚 <footer>：含链接列表（可选 data-content="footer-nav" data-content-type="nav-list"）
 4. body 中【必须】包含一个正文占位节点，且仅此一个：
@@ -254,7 +257,7 @@ ${DYNAMIC_TAG_RULE}
 【允许的区块】
 1. 文章标题区（标题 + 发布日期 + 分类标签）
 2. 文章正文容器（必须按下方数据绑定规则）
-3. 文章标签列表
+3. 文章标签列表（**必须**用 <div data-content="article-tags" data-content-type="dynamic-tags" data-content-scope="article"> 标记，容器内首个子元素作为标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接，填一个示例标签名；渲染时会用该文章的真实标签与链接替换）
 4. 作者信息区（姓名 + 简介 + 头像占位）
 
 不要生成任何其它区块（如相关推荐、延伸阅读、返回列表按钮、评论区、分享按钮等）。
@@ -413,6 +416,7 @@ export function buildPagePromptContext(
 - 不要输出任何 <style>、<script>、<link>、<meta>、<title> 标签；不要使用 !important；不要书写自定义 @media 规则（响应式已由骨架统一处理）；
 - 不要输出 <nav>、<header>、<footer>（它们由布局统一提供）；文章/卡片内部的 <header> 可以正常使用；
 - 不要输出 data-page-host（正文容器由布局提供），正文直接以页面自己的根元素开始；
+- **不要复制布局的容器骨架**：正文只输出本页自己的内容块，不要再套一层与骨架同名的外层容器（如 .layout-grid / .content-area / .site-wrap 等布局容器）——重复的骨架会与布局叠加成两层栅格，正文被挤进窄列，同时还会多出一份导航；
 - 顶部不要自己写 fixed 导航的留白（padding-top/margin-top 让位导航），布局已通过 --nav-clearance 统一处理该间距；
 - 正文以单层结构组织，不要自建整份 fixed 宽度的全屏容器；不得使用固定 px/vw 的 width、min-width、max-width、height，也不得用固定 px 字号覆盖骨架（layout 与字号交给骨架设计变量），以免造成溢出或错乱；
 - 封面/头图占位类（如 post-cover 等）只能用于网格/多列卡片容器内，全宽列表卡片内不要放 16:9 大幅封面块；网格/多列卡片容器内的文章封面占位必须使用 <img data-map="cover">（有封面时自动填充 src、无封面时整块隐藏），且必须放在列表宿主容器内；

@@ -417,6 +417,65 @@ describe("sanitizePageFragment 强制剥离站点 chrome", () => {
     const doc = new JSDOM(merged).window.document
     expect(doc.querySelectorAll("[data-page-host]").length).toBe(1)
   })
+
+  it("渲染期兜底：页面片段自带 nav 时合并后只剩布局那一个导航", () => {
+    // 存量主题/绕过 sanitize 的路径：片段里残留了第二个导航
+    const frag = `<nav class="page-nav"><a href="/blog">首页</a></nav><p>正文</p>`
+    const merged = mergeThemePage(LAYOUT, frag)
+    const doc = new JSDOM(merged).window.document
+    expect(doc.querySelectorAll("nav").length).toBe(1)
+    expect(doc.querySelectorAll("[data-page-host] nav").length).toBe(0)
+    expect(merged).toContain("正文")
+  })
+
+  it("渲染期兜底：页面片段自带 <aside> 形态的导航时也被剥离", () => {
+    // LLM 常把侧边导航写成 <aside class="sidebar-nav"> 而非 <nav>，
+    // 只按标签名判定会漏掉 → 页面上出现两个导航栏
+    const frag = `<aside class="sidebar-nav">
+      <div class="nav-brand"><span class="brand-text">站名</span></div>
+      <ul class="nav-list"><li><a href="/blog">首页</a></li><li><a href="/blog/archive">归档</a></li></ul>
+    </aside><p>正文</p>`
+    const merged = mergeThemePage(LAYOUT, frag)
+    const doc = new JSDOM(merged).window.document
+    expect(doc.querySelectorAll("aside").length).toBe(0)
+    expect(merged).toContain("正文")
+  })
+
+  it("页面片段复制了布局骨架容器时，整块骨架被剥离（不叠成两层栅格）", () => {
+    const layout = `<!DOCTYPE html><html><head><style>
+      .layout-grid { display:grid; grid-template-columns: 240px 1fr; }
+      .content-area { padding: 24px; }
+      .article-body { max-width: 720px; }
+    </style></head><body>
+      <div class="layout-grid">
+        <aside class="sidebar-nav" data-content="main-nav" data-content-type="nav-list"><a href="/blog">首页</a></aside>
+        <main class="content-area"><div data-page-host=""></div></main>
+      </div>
+    </body></html>`
+    // 页面片段把整块布局抄了一遍（含导航）
+    const frag = `<div class="layout-grid">
+      <aside class="sidebar-nav"><ul class="nav-list"><li><a href="/blog">首页</a></li></ul></aside>
+      <main class="content-area"><article class="article-body">正文</article></main>
+    </div>`
+    const merged = mergeThemePage(layout, frag)
+    const doc = new JSDOM(merged).window.document
+    // 只剩布局那一层骨架
+    expect(doc.querySelectorAll(".layout-grid").length).toBe(1)
+    expect(doc.querySelectorAll(".content-area").length).toBe(1)
+    expect(doc.querySelectorAll("aside").length).toBe(1)
+    // 正文仍在正文宿主里
+    const host = doc.querySelector("[data-page-host]")
+    expect(host?.querySelector(".article-body")?.textContent).toContain("正文")
+  })
+
+  it("渲染期兜底：页面片段自带站点级 header 时被剥离，文章内 header 保留", () => {
+    const frag = `<header class="page-head">站点页头</header>
+      <article><header class="post-header"><h1>标题</h1></header><p>正文</p></article>`
+    const merged = mergeThemePage(LAYOUT, frag)
+    const doc = new JSDOM(merged).window.document
+    expect(merged).not.toContain("page-head")
+    expect(merged).toContain("post-header")
+  })
 })
 
 describe("validatePageFragment", () => {
