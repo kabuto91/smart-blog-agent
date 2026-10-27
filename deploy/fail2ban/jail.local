@@ -1,0 +1,40 @@
+# smart-blog-agent 服务器加固 —— fail2ban 本地配置
+# 覆盖发行版默认 jail.conf，只启用需要的监狱
+# 部署位置：/etc/fail2ban/jail.local（配套 filter 见 filter.d/caddy-write-abuse.conf）
+#
+# 踩坑记录：
+# - caddy-write-abuse 必须 backend=polling（读日志文件）；DEFAULT 的 systemd 后端只读 journald，
+#   会静默看不见 /var/log/caddy/access.log（表现为「监枱在但计数恒为 0」）。
+# - 过滤器不要写 datepattern=%%s/Epoch：Caddy 的 ts 是浮点 epoch，%s 会触发
+#   re.error 组名冲突，Epoch 不匹配浮点；留空让默认探测器解析行内 resp_headers 的 Date 头即可。
+
+[DEFAULT]
+# Ubuntu 24.04 sshd 日志走 journald
+backend = systemd
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+# 轻量服务器直接用 iptables-nft 封禁
+banaction = iptables-multiport
+banaction_allports = iptables-allports
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
+enabled  = true
+port     = ssh
+logpath  = %(sshd_log)s
+maxretry = 4
+# 爆破常见手法：短时间多次失败即封
+findtime = 10m
+bantime  = 24h
+
+# Caddy 访问日志层的写接口滥用封禁（配合 access_log）
+[caddy-write-abuse]
+backend  = polling
+enabled  = true
+port     = http,https
+filter   = caddy-write-abuse
+logpath  = /var/log/caddy/access.log
+maxretry = 20
+findtime = 1m
+bantime  = 1h

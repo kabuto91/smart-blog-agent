@@ -1,0 +1,53 @@
+# smart-blog-agent 前台反代 —— Caddy 配置
+# 2026-10-27 安全加固：安全响应头 + 访问日志（供 fail2ban 滥用检测）+ 限流（caddy-ratelimit 插件）
+# 回滚备份见 /root/security-backup-20261027-155010/Caddyfile.bak
+#
+# 两个语法坑（踩过）：
+# 1. 匹配器必须用块级写法（@name { method POST / path ... }）。
+#    行内写法 `@writeapi method POST path ...` 会把 path 当成 method 的参数，限流块被静默丢弃。
+# 2. HTTP 访问日志由**站点块的 log 指令**开启；全局 log 块只记模块运行日志，不含请求行。
+
+:80 {
+	# ---- 访问日志（fail2ban caddy-write-abuse 读取）----
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+
+	# ---- 安全响应头 ----
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-XSS-Protection "0"
+		-Server
+	}
+
+	# ---- 限流层 1：写接口严格限流（每个 IP 每分钟最多 10 次点赞/阅读上报）----
+	@writeapi {
+		method POST
+		path /api/articles/*/like /api/articles/*/read
+	}
+	rate_limit @writeapi {
+		zone write_api {
+			key {remote_host}
+			events 10
+			window 1m
+		}
+	}
+
+	# ---- 限流层 2：全站每 IP 每分钟 200 请求（防 CC / 爬虫洪水）----
+	rate_limit {
+		zone per_ip {
+			key {remote_host}
+			events 200
+			window 1m
+		}
+	}
+
+	reverse_proxy 127.0.0.1:3000
+}
