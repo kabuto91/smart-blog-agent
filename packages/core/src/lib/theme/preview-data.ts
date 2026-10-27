@@ -47,10 +47,17 @@ export async function buildPreviewDynamicData(
       ? await getArticlesByIds(featuredIds)
       : []
     return {
+      pageType: "home",
       articles: result.items.map(toArticleData),
       featuredArticles: featured.map(toArticleData),
       categories: categories.map(toCategoryData),
       tags: topTags(tags),
+      // 与线上首页一致：带上分页数据，预览可见真实页码/高亮/禁用态
+      pagination: {
+        page: result.page,
+        totalPages: result.totalPages,
+        basePath: "/blog",
+      },
     }
   }
 
@@ -59,6 +66,7 @@ export async function buildPreviewDynamicData(
     const slug = latest.items[0]?.slug
     const article = slug ? await getArticleBySlug(slug) : null
     return {
+      pageType: "detail",
       articles: article ? [toArticleDetailData(article)] : [],
       categories: categories.map(toCategoryData),
       tags: topTags(tags),
@@ -71,6 +79,7 @@ export async function buildPreviewDynamicData(
     BLOG_PAGE_SIZE
   )
   return {
+    pageType: "list",
     articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: topTags(tags),

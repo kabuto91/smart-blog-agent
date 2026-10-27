@@ -234,6 +234,7 @@ ${DYNAMIC_CONTENT_RULE}
 ${DYNAMIC_ARTICLES_RULE}
 ${DYNAMIC_TAG_RULE}
 - ⚠️ 首页通常只需要一个「最新文章」文章流区块（data-content="article-list"，且只出现一次）。仅在用户明确要「手动精选文章」时才额外考虑 featured-articles，但文章流区块整体全页只能有一个——不要把同一批文章用「最新文章」「精选」「归档/时间线」等多个区块重复呈现。
+- 列表会自动填充全部文章并附加分页，正文不要写分页（不要输出 .pagination / 上一页 / 下一页 / 页码 1 2 3 之类的静态分页占位，渲染期会按真实页数自动生成并接好跳转）；
 - 首页自由组织的区块（作者介绍、统计、特色卡片组合等）内的所有标题（h2/h3/h4）与段落文本（p）都必须标记 data-content + data-content-type="text"，key 用语义化英文命名（如 core-modules-title、feature-card-desc）。
 
 【头像占位】
@@ -247,7 +248,7 @@ ${DYNAMIC_TAG_RULE}
 ${DYNAMIC_CONTENT_RULE}
 ${DYNAMIC_ARTICLES_RULE}
 ${DYNAMIC_TAG_RULE}
-- 列表会自动填充全部文章并附加分页，正文不要写分页；
+- 列表会自动填充全部文章并附加分页，正文不要写分页（不要输出 .pagination / pagination-nav / 上一页 / 下一页 / 页码 1 2 3 之类的静态分页占位或 nav-list 标记，渲染期会按真实页数自动生成并接好跳转）；
 - 可在列表上方或周围添加标题、筛选、搜索等辅助区块。`,
   },
   detail: {

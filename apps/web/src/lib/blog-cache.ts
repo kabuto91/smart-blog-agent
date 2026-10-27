@@ -115,10 +115,10 @@ function notConfigured(): CachedPage {
   return { html: blogNotConfiguredHtml, status: 200 }
 }
 
-/** 根路径 `/` 与 `/blog` 共用的主题首页。 */
-async function renderHome(): Promise<CachedPage> {
+/** 根路径 `/` 与 `/blog` 共用的主题首页（支持 ?page= 文章流翻页）。 */
+async function renderHome(page: number): Promise<CachedPage> {
   const [result, categories, tags, featuredIds] = await Promise.all([
-    getArticlesPage({ publishedOnly: true }, 1, HOME_PAGE_ARTICLE_LIMIT),
+    getArticlesPage({ publishedOnly: true }, page, HOME_PAGE_ARTICLE_LIMIT),
     getCategories(true),
     getTags(),
     getFeaturedArticleIds(),
@@ -126,10 +126,17 @@ async function renderHome(): Promise<CachedPage> {
   const featured = featuredIds.length ? await getArticlesByIds(featuredIds) : []
 
   const html = await renderThemePage("home", {
+    pageType: "home",
     articles: result.items.map(toArticleData),
     featuredArticles: featured.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: toHomeTagList(tags),
+    // 与列表页共用同一套分页渲染：页码数、当前页高亮、边界禁用行为一致
+    pagination: {
+      page: result.page,
+      totalPages: result.totalPages,
+      basePath: "/blog",
+    },
   })
   return pageOf(html)
 }
@@ -144,6 +151,7 @@ async function renderArchive(page: number): Promise<CachedPage> {
     getTags(),
   ])
   const html = await renderThemePage("list", {
+    pageType: "list",
     articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: [...tags]
@@ -179,6 +187,7 @@ async function renderCategory(slug: string, page: number): Promise<CachedPage> {
   if (!categories.find((c) => c.slug === slug)) return notFound()
 
   const html = await renderThemePage("list", {
+    pageType: "list",
     articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: tags.map(toTagData),
@@ -207,6 +216,7 @@ async function renderTag(slug: string, page: number): Promise<CachedPage> {
   if (!tags.find((t) => t.slug === slug)) return notFound()
 
   const html = await renderThemePage("list", {
+    pageType: "list",
     articles: result.items.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: toHomeTagList(tags),

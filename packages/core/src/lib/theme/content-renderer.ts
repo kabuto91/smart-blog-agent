@@ -44,6 +44,11 @@ export interface DynamicData {
   categories?: CategoryData[]
   tags?: TagData[]
   pagination?: PaginationData
+  /**
+   * 显式页面类型提示。首页也可能携带 pagination（文章流翻页），
+   * 仅凭 pagination 推断会误判成 list，因此允许调用方声明真实页面类型。
+   */
+  pageType?: PageType
 }
 
 /** 「精选文章」区块对应的 data-content key。 */
@@ -75,6 +80,9 @@ export function renderContent(
   renderLegacyPlaceholders(doc, siteConfig)
 
   for (const [key, field] of Object.entries(fields)) {
+    // 分页容器统一由 syncPagination 按真实页码数据渲染，
+    // 不能走 nav-list/静态字段路径（会把模板里的当前页 span 覆盖成死链样本项）
+    if (isPaginationKey(key)) continue
     if (field.type === "text") {
       const value = resolveTextValue(field, siteConfig, reusableTexts)
       // 统计字段（只读）：只替换数字、保留「收录文章 42 篇」这类文案
@@ -119,12 +127,17 @@ export function renderContent(
   // 详情页「文章标签区」兜底：静态文本形态的标签组改用文章真实标签
   normalizeDetailArticleTags(doc, dynamicData?.articles?.[0])
 
+  // 分页统一在所有动态区渲染完成后应用（替换模板静态占位 / 去重 / 补齐）
+  syncPagination(doc, dynamicData)
+
   return dom.serialize()
 }
 
 export type PageType = "home" | "list" | "detail"
 
 export function resolvePageType(dynamicData?: DynamicData): PageType {
+  // 调用方可显式声明页面类型（首页也可能带分页，不能只看 pagination 猜）
+  if (dynamicData?.pageType) return dynamicData.pageType
   if (dynamicData?.articles?.[0]?.contentHtml) return "detail"
   if (dynamicData?.pagination) return "list"
   return "home"
@@ -1081,7 +1094,6 @@ function renderDynamicField(
 
   if (!dynamicData) return
 
-  let isArticlesList = false
   let data: { [key: string]: string }[]
   switch (field.type) {
     case "dynamic-articles": {
@@ -1090,7 +1102,6 @@ function renderDynamicField(
         removeListRegion(container)
         return
       }
-      isArticlesList = true
       // 精选区块（data-content="featured-articles"）用后台精选配置填充，否则用文章列表
       const source =
         key === FEATURED_LIST_KEY
@@ -1209,17 +1220,6 @@ function renderDynamicField(
 
   const labelKey = field.type === "dynamic-articles" ? "title" : "name"
   renderListField(container, field, data, { labelKey })
-
-  if (
-    isArticlesList &&
-    dynamicData.pagination &&
-    dynamicData.pagination.totalPages > 1
-  ) {
-    container.insertAdjacentHTML(
-      "beforeend",
-      buildPaginationNav(dynamicData.pagination)
-    )
-  }
 }
 
 function renderCustomListField(container: Element, field: DynamicField): void {
@@ -1706,27 +1706,128 @@ function removeSampleItems(host: Element, template: Element, protect?: Element):
   }
 }
 
-function buildPaginationNav(pagination: PaginationData): string {
+/** 分页键识别：模板里可能标成 pagination-nav / pagination 等，均不走普通字段渲染。 */
+function isPaginationKey(key: string): boolean {
+  return /pagination/i.test(key)
+}
+
+/** 模板中的分页容器选择器（主题生成的静态占位或已渲染分页）。 */
+const PAGINATION_CONTAINER_SELECTOR =
+  '[data-content="pagination-nav"], [data-content*="pagination"], [data-pagination], .pagination'
+
+/**
+ * 找出页面上最外层的分页容器（去掉嵌套命中，避免重复处理）。
+ */
+function findPaginationContainers(doc: Document): Element[] {
+  const all = Array.from(doc.querySelectorAll(PAGINATION_CONTAINER_SELECTOR))
+  return all.filter(
+    (el) => !el.parentElement?.closest(PAGINATION_CONTAINER_SELECTOR)
+  )
+}
+
+/**
+ * 统一分页应用：首页/列表页共用同一渲染路径。
+ *
+ * 根因回顾：
+ * - 首页模板里的分页是静态占位（href="#"），无数据源、无事件绑定 → 点击无响应；
+ * - 列表页模板里的分页被当成 nav-list 渲染出错误样本项，同时又自动追加
+ *   buildPaginationNav → 两套分页叠在一起，多出多余页码/按钮。
+ *
+ * 修复策略：
+ * - 有分页数据且 totalPages > 1：填充模板内已有分页容器（保留主题 class/样式），
+ *   没有容器则在主文章列表后追加一个；多余容器删除，保证只有一套分页。
+ * - 无分页数据或只有一页：移除模板里的静态分页占位，避免死链按钮。
+ */
+function syncPagination(doc: Document, dynamicData?: DynamicData): void {
+  const containers = findPaginationContainers(doc)
+  const pagination = dynamicData?.pagination
+  const visible = !!pagination && pagination.totalPages > 1
+
+  if (!visible) {
+    for (const el of containers) el.remove()
+    return
+  }
+
+  const itemsHtml = buildPaginationItems(pagination!, { inlineStyles: false })
+
+  if (containers.length > 0) {
+    const primary = containers[0]
+    primary.setAttribute("data-pagination", "true")
+    // 保留主题 class（.pagination 等），仅替换内部页码结构
+    primary.innerHTML = itemsHtml
+    for (const extra of containers.slice(1)) extra.remove()
+    return
+  }
+
+  // 模板没有分页容器：在主文章列表（article-list）后追加一套
+  const host =
+    doc.querySelector('[data-content="article-list"]') ??
+    doc.querySelector('[data-content-type="dynamic-articles"]')
+  const nav = doc.createElement("nav")
+  nav.className = "pagination"
+  nav.setAttribute("data-pagination", "true")
+  nav.setAttribute(
+    "style",
+    "display:flex;gap:0.375rem;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:1.5rem;"
+  )
+  nav.innerHTML = buildPaginationItems(pagination!, { inlineStyles: true })
+  if (host) host.insertAdjacentElement("afterend", nav)
+  else doc.body.appendChild(nav)
+}
+
+/**
+ * 构建分页项（上一页 / 页码 / 下一页）。
+ * - 当前页用 <span class="active"> 高亮；
+ * - 边界页（首页/末页）的上一页/下一页用 <span class="disabled" aria-disabled> 禁用；
+ * - 链接 href 为真实路由（page<=1 时指向 basePath，否则 basePath?page=N）。
+ */
+function buildPaginationItems(
+  pagination: PaginationData,
+  options: { inlineStyles: boolean }
+): string {
   const { page, totalPages, basePath } = pagination
   const hrefFor = (p: number) => (p <= 1 ? basePath : `${basePath}?page=${p}`)
-  const baseStyle =
-    "display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;"
-  const currentStyle =
-    baseStyle + "background:#E5A83D;border-color:#E5A83D;color:#181A1E;font-weight:600;"
-  const disabledStyle = "color:#9CA3AF;pointer-events:none;"
+  const inline = options.inlineStyles
+
+  const linkStyle = inline
+    ? 'style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;color:#1C1C1E;text-decoration:none;font-size:0.875rem;box-sizing:border-box;"'
+    : ""
+  const activeStyle = inline
+    ? 'style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;box-sizing:border-box;background:#E5A83D;border-color:#E5A83D;color:#181A1E;font-weight:600;"'
+    : ""
+  const disabledStyle = inline
+    ? 'style="display:inline-flex;align-items:center;justify-content:center;min-width:2rem;height:2rem;padding:0 0.5rem;border:1px solid rgba(0,0,0,0.12);border-radius:0.375rem;box-sizing:border-box;color:#9CA3AF;pointer-events:none;cursor:not-allowed;"'
+    : 'style="opacity:0.45;cursor:not-allowed;"'
 
   const links: string[] = []
-  links.push(
-    `<a href="${hrefFor(page - 1)}" style="${baseStyle}${page <= 1 ? disabledStyle : ""}">上一页</a>`
-  )
-  for (let p = 1; p <= totalPages; p++) {
-    const style = p === page ? currentStyle : baseStyle
-    links.push(`<a href="${hrefFor(p)}" style="${style}">${p}</a>`)
+
+  // 上一页：首页时禁用
+  if (page <= 1) {
+    links.push(
+      `<span class="disabled" aria-disabled="true" ${disabledStyle}>上一页</span>`
+    )
+  } else {
+    links.push(`<a href="${hrefFor(page - 1)}" ${linkStyle}>上一页</a>`)
   }
-  links.push(
-    `<a href="${hrefFor(page + 1)}" style="${baseStyle}${page >= totalPages ? disabledStyle : ""}">下一页</a>`
-  )
-  return `<nav style="display:flex;gap:0.375rem;flex-wrap:wrap;justify-content:center;align-items:center;margin-top:1.5rem;">${links.join("")}</nav>`
+
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === page) {
+      links.push(`<span class="active" ${activeStyle}>${p}</span>`)
+    } else {
+      links.push(`<a href="${hrefFor(p)}" ${linkStyle}>${p}</a>`)
+    }
+  }
+
+  // 下一页：末页时禁用
+  if (page >= totalPages) {
+    links.push(
+      `<span class="disabled" aria-disabled="true" ${disabledStyle}>下一页</span>`
+    )
+  } else {
+    links.push(`<a href="${hrefFor(page + 1)}" ${linkStyle}>下一页</a>`)
+  }
+
+  return links.join("")
 }
 
 function mappedElements(root: Element, mapKey?: string): Element[] {

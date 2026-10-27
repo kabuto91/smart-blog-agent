@@ -1724,3 +1724,281 @@ describe("renderContent 静态时间锚点归档列表兜底", () => {
     expect(out).toContain("2024.05")
   })
 })
+describe("renderContent 分页统一渲染", () => {
+  const articleConfig: ContentConfig = {
+    "article-list": {
+      type: "dynamic-articles",
+      label: "文章列表",
+      itemTemplate: '<article class="post-card"><a href="#" data-map="link"><h3 data-map="title"></h3></a></article>',
+      fieldMapping: { link: "link", title: "title" },
+    },
+  }
+
+  const articles = [
+    { id: 1, title: "文章甲", excerpt: "", date: "2026-01-01", slug: "a" },
+    { id: 2, title: "文章乙", excerpt: "", date: "2026-01-02", slug: "b" },
+  ]
+
+  /** 首页形态：分页容器在文章列表旁，模板里是静态死链占位 */
+  const HOME_WITH_STATIC_PAGINATION = `<!DOCTYPE html><html><body>
+<div data-page-host="">
+  <div class="post-list" data-content="article-list" data-content-type="dynamic-articles">
+    <article class="post-card"><a href="#" data-map="link"><h3 data-map="title"></h3></a></article>
+  </div>
+  <div class="pagination mt-lg">
+    <a href="#">← 上一页</a>
+    <span class="active">1</span>
+    <a href="#">2</a>
+    <a href="#">3</a>
+    <a href="#">下一页 →</a>
+  </div>
+</div>
+</body></html>`
+
+  /** 列表页形态：分页被标成 nav-list（曾被错误渲染出多余页码） */
+  const LIST_WITH_NAV_PAGINATION = `<!DOCTYPE html><html><body>
+<div data-page-host="">
+  <section data-content="article-list" data-content-type="dynamic-articles" class="post-list">
+    <article class="post-card"><a href="#" data-map="link"><h3 data-map="title"></h3></a></article>
+  </section>
+  <div class="pagination" data-content="pagination-nav" data-content-type="nav-list">
+    <span class="active">1</span>
+    <a href="#">2</a>
+    <a href="#">3</a>
+    <a href="#">→</a>
+  </div>
+</div>
+</body></html>`
+
+  const listNavConfig: ContentConfig = {
+    ...articleConfig,
+    "pagination-nav": {
+      type: "nav-list",
+      label: "pagination-nav",
+      items: [
+        { label: "2", href: "#" },
+        { label: "3", href: "#" },
+        { label: "→", href: "#" },
+      ],
+      itemTemplate: '<li><a href="{href}">{label}</a></li>',
+    },
+  }
+
+  const countPageNumbers = (html: string, totalPages: number) => {
+    const doc = new JSDOM(html).window.document
+    const pager = doc.querySelector("[data-pagination]")
+    expect(pager).not.toBeNull()
+    const labels = Array.from(
+      pager!.querySelectorAll("a, span")
+    ).map((el) => el.textContent?.trim())
+    // 页码 1..totalPages 各出现一次
+    for (let p = 1; p <= totalPages; p++) {
+      expect(labels.filter((l) => l === String(p)).length).toBe(1)
+    }
+    return { doc, pager: pager!, labels }
+  }
+
+  it("首页：模板静态分页被替换为真实链接，当前页高亮，边界禁用", () => {
+    const out = renderContent(
+      HOME_WITH_STATIC_PAGINATION,
+      articleConfig,
+      {
+        pageType: "home",
+        articles,
+        pagination: { page: 1, totalPages: 3, basePath: "/blog" },
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    const { doc, pager, labels } = countPageNumbers(out, 3)
+
+    // 只有一套分页（不重复）
+    expect(doc.querySelectorAll("[data-pagination]").length).toBe(1)
+    expect(labels.filter((l) => l === "2").length).toBe(1)
+
+    // 死链 href="#" 不再出现
+    expect(pager.innerHTML).not.toContain('href="#"')
+
+    // 当前页高亮
+    const active = pager.querySelector("span.active")
+    expect(active?.textContent?.trim()).toBe("1")
+
+    // 首页边界：上一页禁用、下一页可点
+    const prev = Array.from(pager.querySelectorAll("a, span")).find(
+      (el) => el.textContent?.trim() === "上一页"
+    )
+    expect(prev?.tagName.toLowerCase()).toBe("span")
+    expect(prev?.getAttribute("aria-disabled")).toBe("true")
+    const next = Array.from(pager.querySelectorAll("a, span")).find(
+      (el) => el.textContent?.trim() === "下一页"
+    )
+    expect(next?.tagName.toLowerCase()).toBe("a")
+    expect(next?.getAttribute("href")).toBe("/blog?page=2")
+
+    // 翻页链接指向 basePath?page=N
+    const page2 = Array.from(pager.querySelectorAll("a")).find(
+      (el) => el.textContent?.trim() === "2"
+    )
+    expect(page2?.getAttribute("href")).toBe("/blog?page=2")
+  })
+
+  it("首页中间页：上一页/下一页都可点，当前页高亮第 2 页", () => {
+    const out = renderContent(
+      HOME_WITH_STATIC_PAGINATION,
+      articleConfig,
+      {
+        pageType: "home",
+        articles,
+        pagination: { page: 2, totalPages: 3, basePath: "/blog" },
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    const { pager } = countPageNumbers(out, 3)
+    const active = pager.querySelector("span.active")
+    expect(active?.textContent?.trim()).toBe("2")
+    const prev = Array.from(pager.querySelectorAll("a")).find(
+      (el) => el.textContent?.trim() === "上一页"
+    )
+    expect(prev?.getAttribute("href")).toBe("/blog")
+    const next = Array.from(pager.querySelectorAll("a")).find(
+      (el) => el.textContent?.trim() === "下一页"
+    )
+    expect(next?.getAttribute("href")).toBe("/blog?page=3")
+  })
+
+  it("首页末页：下一页禁用、上一页可点", () => {
+    const out = renderContent(
+      HOME_WITH_STATIC_PAGINATION,
+      articleConfig,
+      {
+        pageType: "home",
+        articles,
+        pagination: { page: 3, totalPages: 3, basePath: "/blog" },
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    const { pager } = countPageNumbers(out, 3)
+    const next = Array.from(pager.querySelectorAll("a, span")).find(
+      (el) => el.textContent?.trim() === "下一页"
+    )
+    expect(next?.tagName.toLowerCase()).toBe("span")
+    expect(next?.getAttribute("aria-disabled")).toBe("true")
+    const prev = Array.from(pager.querySelectorAll("a")).find(
+      (el) => el.textContent?.trim() === "上一页"
+    )
+    expect(prev?.getAttribute("href")).toBe("/blog?page=2")
+  })
+
+  it("列表页：nav-list 形态的静态分页被替换，不再多出多余页码", () => {
+    const out = renderContent(
+      LIST_WITH_NAV_PAGINATION,
+      listNavConfig,
+      {
+        pageType: "list",
+        articles,
+        pagination: { page: 1, totalPages: 2, basePath: "/blog/archive" },
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    const { doc, labels } = countPageNumbers(out, 2)
+
+    // 唯一一套分页；样本项「→」及重复页码不残留
+    expect(doc.querySelectorAll("[data-pagination]").length).toBe(1)
+    expect(labels).not.toContain("→")
+    expect(out).not.toContain('href="#"')
+
+    // 页码数量正确：1、2 各一次 + 上一页/下一页
+    expect(labels.filter((l) => l === "1").length).toBe(1)
+    expect(labels.filter((l) => l === "2").length).toBe(1)
+    expect(labels.filter((l) => l === "上一页").length).toBe(1)
+    expect(labels.filter((l) => l === "下一页").length).toBe(1)
+
+    const active = doc.querySelector("[data-pagination] span.active")
+    expect(active?.textContent?.trim()).toBe("1")
+  })
+
+  it("单页时移除模板静态分页，不渲染无效按钮", () => {
+    const out = renderContent(
+      HOME_WITH_STATIC_PAGINATION,
+      articleConfig,
+      {
+        pageType: "home",
+        articles,
+        pagination: { page: 1, totalPages: 1, basePath: "/blog" },
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelector("[data-pagination]")).toBeNull()
+    expect(doc.querySelector(".pagination")).toBeNull()
+    expect(out).not.toContain("上一页")
+  })
+
+  it("无分页数据时同样清掉死链占位", () => {
+    const out = renderContent(
+      HOME_WITH_STATIC_PAGINATION,
+      articleConfig,
+      { pageType: "home", articles },
+      undefined,
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelector(".pagination")).toBeNull()
+  })
+
+  it("模板无分页容器时自动在文章列表后追加一套", () => {
+    const bare = `<!DOCTYPE html><html><body>
+<div data-page-host="">
+  <div class="post-list" data-content="article-list" data-content-type="dynamic-articles">
+    <article class="post-card"><a href="#" data-map="link"><h3 data-map="title"></h3></a></article>
+  </div>
+</div>
+</body></html>`
+    const out = renderContent(
+      bare,
+      articleConfig,
+      {
+        pageType: "list",
+        articles,
+        pagination: { page: 2, totalPages: 3, basePath: "/blog/archive" },
+      },
+      undefined,
+      { pageSpecific: true }
+    )
+    const doc = new JSDOM(out).window.document
+    const pager = doc.querySelector("[data-pagination]")
+    expect(pager).not.toBeNull()
+    // 追加在文章列表之后（兄弟节点），不混进列表内部
+    const list = doc.querySelector('[data-content="article-list"]')
+    expect(list?.nextElementSibling).toBe(pager)
+    const active = pager!.querySelector("span.active")
+    expect(active?.textContent?.trim()).toBe("2")
+    // 上一页指向第 1 页（basePath）
+    const prev = Array.from(pager!.querySelectorAll("a")).find(
+      (el) => el.textContent?.trim() === "上一页"
+    )
+    expect(prev?.getAttribute("href")).toBe("/blog/archive")
+    const next = Array.from(pager!.querySelectorAll("a")).find(
+      (el) => el.textContent?.trim() === "下一页"
+    )
+    expect(next?.getAttribute("href")).toBe("/blog/archive?page=3")
+  })
+
+  it("首页带分页时 resolvePageType 仍返回 home", async () => {
+    const { resolvePageType } = await import("./content-renderer")
+    expect(
+      resolvePageType({
+        pageType: "home",
+        pagination: { page: 1, totalPages: 3, basePath: "/blog" },
+      })
+    ).toBe("home")
+    // 无显式 pageType 时维持原推断
+    expect(
+      resolvePageType({ pagination: { page: 1, totalPages: 3, basePath: "/x" } })
+    ).toBe("list")
+  })
+})
