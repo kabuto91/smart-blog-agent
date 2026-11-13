@@ -190,6 +190,65 @@ describe("createThemeGraph", () => {
     expect(res.validation.detail?.ok).toBe(true)
   })
 
+  it("judge 首轮低分只触发 1 轮定向修订，不重建骨架、不吃满预算", async () => {
+    let judgeCalls = 0
+    let skeletonCalls = 0
+    const localStages: string[] = []
+    const localEmitter: ThemeGraphEmitter = {
+      stage: (s) => localStages.push(s),
+      tool: () => {},
+      warn: () => {},
+    }
+    const dim = (score: number) => ({ score, issues: [] as string[] })
+
+    // 模型输出完全固定，只有评分变化：首轮 55 分、之后 95 分。
+    // 修复前会因「陈旧评分残留」连续修订到 maxAttempts 耗尽并反复重建骨架。
+    const invoke = async (messages: BaseMessage[]): Promise<AIMessage> => {
+      const sys = String(messages[0]?.content ?? "")
+      let text = ""
+      if (sys.includes("设计总监")) {
+        text = '{"style":"极简杂志","palette":"米白+黑","typography":"衬线","layout":"居中","image":"none","notes":""}'
+      } else if (sys.includes("资深前端设计师")) {
+        judgeCalls++
+        const score = judgeCalls === 1 ? 55 : 95
+        text = JSON.stringify({
+          dimensions: {
+            briefMatch: dim(score), visualPolish: dim(score), typography: dim(score),
+            color: dim(score), layout: dim(score), editability: dim(score),
+          },
+          reason: judgeCalls === 1 ? "首轮偏低" : "已达标",
+        })
+      } else if (sys.includes("任务分为两阶段")) {
+        skeletonCalls++
+        text = SKELETON
+      } else if (sys.includes("博客首页")) text = HOME
+      else if (sys.includes("文章列表页")) text = LIST
+      else if (sys.includes("文章详情页")) text = DETAIL
+      return new AIMessage({ content: text })
+    }
+    const llm = {
+      invoke,
+      bindTools: () => ({ invoke }),
+    } as unknown as BaseChatModel
+
+    const graph = await createThemeGraph({
+      llm,
+      emitter: localEmitter,
+      judgeEnabled: true,
+      maxAttempts: 3,
+    })
+    const res = await graph.invoke(input(), {
+      configurable: { thread_id: "t-judge-low" },
+    })
+
+    expect(res.reviseCount).toBe(1)
+    expect(res.qualityScore).toBe(95)
+    expect(judgeCalls).toBe(2)
+    // 主观低分只定向重生成页面，绝不整树重建骨架
+    expect(skeletonCalls).toBe(1)
+    expect(localStages.filter((s) => s === "revise")).toHaveLength(1)
+  })
+
   it("渲染后自检存在 blocker 且修订机会用尽 → 拒绝保存（不 commit）", async () => {
     // 骨架引用了未定义的 CSS 变量（无 fallback）→ 浏览器会丢弃整条声明
     const BROKEN_SKELETON = SKELETON.replace(

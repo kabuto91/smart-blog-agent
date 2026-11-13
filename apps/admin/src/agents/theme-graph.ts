@@ -184,14 +184,11 @@ const ThemeStateAnnotation = Annotation.Root({
     reducer: (left, right) => ({ ...left, ...right }),
     default: () => ({}),
   }),
-  validation: Annotation<Record<string, PageValidation>>({
-    reducer: (left, right) => ({ ...left, ...right }),
-    default: () => ({}),
-  }),
-  feedback: Annotation<Record<string, string>>({
-    reducer: (left, right) => ({ ...left, ...right }),
-    default: () => ({}),
-  }),
+  // 校验结果与修订反馈按「本轮整体覆盖」而不是增量合并：
+  // 旧一轮的失败页面/旧反馈若跨轮残留，会让 computeRevisePlan 在本轮已通过时
+  // 仍判定需要修订，形成「改了也白改」的连续重生成。
+  validation: last<Record<string, PageValidation>>(() => ({})),
+  feedback: last<Record<string, string>>(() => ({})),
   reviseCount: last<number>(() => 0),
   qualityScore: last<number>(() => 0),
   qualityReason: last<string>(() => ""),
@@ -482,7 +479,9 @@ function makeValidatorNode(ctx: NodeContext) {
     ctx.emitter?.stage("validator", "校验页面与骨架一致性", "start")
     const layoutClasses = collectThemeClasses(state.layoutHtml)
     const validation: Record<string, PageValidation> = {}
-    for (const pt of state.activePages) {
+    // 校验所有已生成页面，而不只本轮 activePages：修订常常只重生成部分页面，
+    // 若只校验 activePages，state.validation 会出现空洞（旧结果被整体覆盖）。
+    for (const pt of PAGE_TYPES) {
       const html = state.pages[pt]
       if (!html) continue
       const issue = validatePageFragment(
@@ -571,17 +570,16 @@ function computeRevisePlan(
   const lowKeys = Object.entries(state.qualityDimensions)
     .filter(([, dim]) => dim.score > 0 && dim.score < scoreThreshold)
     .map(([k]) => k)
-  const skeletonDimLow = lowKeys.some((k) => SKELETON_DIMENSION_KEYS.includes(k))
   const pageDimLow = lowKeys.some((k) => !SKELETON_DIMENSION_KEYS.includes(k))
   const totalLow =
     state.qualityScore > 0 && state.qualityScore < scoreThreshold
 
-  // 骨架级修订：设计系统本身不合格时整树重建（迭代模式下禁止）
+  // 骨架整树重建代价极高（重生成骨架 + 全部页面），且 judge 是主观打分、抖动大：
+  // 只由确定性缺陷（静态样式审计 / 渲染后自检 blocker）触发，不因评分低分触发。
+  // 低分改为定向重生成页面，各维度建议由 buildFeedback 下发。
   const skeletonFix =
     !state.iteration &&
-    (state.styleAudit.skeletonIssues.length > 0 ||
-      skeletonDimLow ||
-      integritySkeleton)
+    (state.styleAudit.skeletonIssues.length > 0 || integritySkeleton)
 
   const pageTargets = skeletonFix
     ? []  // 骨架重做会连带所有页面重建，无需单独发 page Sends
@@ -603,6 +601,9 @@ function computeRevisePlan(
  * 只做「放行 or 拒绝」，不再触发修订 —— 修订机会已在 audit 阶段用同一套预算发放过，
  * 避免出现「审计修一轮、闸门又修一轮」的预算语义分叉。
  * 这里重新跑一次自检是为了校验**最终状态**（含 judge 可能引发的最后一轮修订结果）。
+ *
+ * 注意：revise 会清空上一轮 judge 评分与校验/反馈状态，因此 audit 阶段的
+ * computeRevisePlan 只看本轮确定性检查结果，不会因陈旧低分二次触发修订。
  */
 function makeGateNode(ctx: NodeContext) {
   return async function gateNode(state: GraphState) {
@@ -676,10 +677,11 @@ const JUDGE_SYSTEM_PROMPT = `你是资深前端设计师与博客产品评审。
 {"dimensions":{"briefMatch":{"score":0到100整数,"issues":["具体问题"]},"visualPolish":{"score":0,"issues":[]},"typography":{"score":0,"issues":[]},"color":{"score":0,"issues":[]},"layout":{"score":0,"issues":[]},"editability":{"score":0,"issues":[]}},"reason":"一句话总评"}
 维度说明：briefMatch 是否符合用户需求与设计简报；visualPolish 视觉精致度与"AI 感"程度（背景层次、动效、细节打磨，避免平淡）；typography 排版与字体系统；color 配色体系（主色+点缀色、对比与层次）；layout 布局层次与信息密度；editability 可编辑性（data-content 标记、动态列表模板）。
 重点排查（常见低分点，命中请在对应维度 issues 给出可执行的修改建议）：
-- 同一页面重复展示同一视觉元素，尤其是作者头像（author-avatar）在导航、hero、作者介绍、文章标题区、页脚等多处出现。作者头像全站只允许 1 个，应集中在作者/简介区块；重复出现直接拉低 visualPolish 与 layout 评分。
+- 同一区域内重复展示同一视觉元素。作者头像的现行契约是「导航品牌区与页面正文各自最多 1 个」：导航头像由布局统一提供、正文作者头像属于页面内容，两者同时出现是正常设计，**不要**据此扣分；只有同一区域重复（例如正文里 hero 头像 + 作者介绍头像）才算问题，命中请在 visualPolish/layout 给出建议。
 - 其它无意义重复的 UI 模块（如两个相同的作者卡、重复的统计区）。
 - 同一页出现多个绑定同一批文章/最新文章的动态文章区块（例如既放了「最新文章」article-list，又放了「精选 featured-articles」或「归档/时间线」归档列表，渲染后都展示同一批文章）。每个页面应只有一个文章流区块；命中请在 layout/issues 给出「合并/删减重复文章区块」的建议并拉低 layout 与 visualPolish 分。
-- 固定/吸顶导航必须为页面预留空间：导航 position:fixed 时 body 需有 padding-top 引用 var(--nav-h)，否则首页首屏会被导航遮挡。命中请在 layout/issues 给出可执行建议并拉低 layout 分。
+- 固定/吸顶导航的留白：现行契约下顶部留白只由运行时写入的 var(--nav-clearance, 0px) 承担，骨架**不应**在 body 上写 padding-top: var(--nav-h)（--nav-h 只是导航自身高度的设计令牌）。若发现骨架仍用 --nav-h 承担顶部留白，请在 layout/issues 给出建议并扣分。
+- 重复卡片一致性：同一组文章卡片在**相同交互状态**下必须样式一致。若骨架用 :nth-child / :first-child / 直接子选择器给同类卡片设置不同的 font-size、color、padding、margin，或 :hover / :focus 里改动 font-size、line-height、letter-spacing、padding、margin、width、height、gap、display、position，以及 transform 里整卡 translateY 超过 4px，都会造成文字重排、卡片上浮后与相邻卡片错落（表现为「同组卡片长得不一样」），命中请在 layout/visualPolish 给出具体选择器与修改建议并扣分。同时检查卡片组是否等高（align-items:stretch + 卡片 height:100%）、尾部元素是否 margin-top:auto 贴底、标题/摘要是否用 -webkit-line-clamp 钳制行数；缺失会让长标题把标签顶到不同位置。
 每个维度的 issues 用具体可执行的修改建议填充（没有问题则为空数组），它们会被直接用于指导修订。`
 
 function buildJudgeInput(state: GraphState): string {
@@ -798,6 +800,23 @@ async function judgeQuality(
   return null
 }
 
+/**
+ * 开始一轮修订时必须清掉的跨轮状态。
+ *
+ * qualityScore / qualityDimensions 只在 judge 节点更新，而 judge 排在 gate 之后；
+ * 修订会回到 validator → audit，若不清空，routeAfterAudit 会读到上一轮的低分，
+ * 无条件再发一轮修订（甚至整树重建骨架），直到 maxAttempts 耗尽 —— 页面其实没变过。
+ * validation / feedback 同理：只保留本轮重新校验、重新生成的结果，避免旧问题
+ * 与旧反馈跨轮累积，指令越来越长又互相矛盾。
+ */
+const REVISE_STATE_RESET = {
+  qualityScore: 0,
+  qualityReason: "",
+  qualityDimensions: {} as Record<string, DimensionVerdict>,
+  validation: {} as Record<string, PageValidation>,
+  feedback: {} as Record<string, string>,
+}
+
 /** revise：对未通过校验/审计/评审的页面或骨架进行修订。 */
 function makeReviseNode(ctx: NodeContext) {
   return async function reviseNode(state: GraphState) {
@@ -832,6 +851,7 @@ function makeReviseNode(ctx: NodeContext) {
           reviseCount: next,
           skeletonFeedback,
           prevLayout: state.layoutHtml,
+          ...REVISE_STATE_RESET,
         },
         goto: new Send(
           "skeleton",
@@ -873,11 +893,12 @@ function makeReviseNode(ctx: NodeContext) {
         update: {
           activePages: plan.pageTargets,
           reviseCount: next,
+          ...REVISE_STATE_RESET,
           feedback: nextFeedback,
         },
         goto: new Send(
           `page_${pt}`,
-          buildPagePayload(state, { ...state.feedback, ...nextFeedback })
+          buildPagePayload(state, nextFeedback)
         ),
       })
     )

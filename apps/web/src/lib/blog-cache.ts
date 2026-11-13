@@ -115,10 +115,15 @@ function notConfigured(): CachedPage {
   return { html: blogNotConfiguredHtml, status: 200 }
 }
 
-/** 根路径 `/` 与 `/blog` 共用的主题首页（支持 ?page= 文章流翻页）。 */
-async function renderHome(page: number): Promise<CachedPage> {
+/**
+ * 根路径 `/` 与 `/blog` 共用的主题首页。
+ * 首页的「最新文章 / 近期文章」只展示最新 HOME_PAGE_ARTICLE_LIMIT 篇，是预览区块：
+ * 不再传 pagination，渲染期也不会为首页生成分页；完整列表与翻页交给 /blog/archive。
+ * 旧的 `/?page=N`、`/blog?page=N` 链接由路由层转交归档列表，避免内容静默丢失。
+ */
+async function renderHome(): Promise<CachedPage> {
   const [result, categories, tags, featuredIds] = await Promise.all([
-    getArticlesPage({ publishedOnly: true }, page, HOME_PAGE_ARTICLE_LIMIT),
+    getArticlesPage({ publishedOnly: true }, 1, HOME_PAGE_ARTICLE_LIMIT),
     getCategories(true),
     getTags(),
     getFeaturedArticleIds(),
@@ -131,12 +136,6 @@ async function renderHome(page: number): Promise<CachedPage> {
     featuredArticles: featured.map(toArticleData),
     categories: categories.map(toCategoryData),
     tags: toHomeTagList(tags),
-    // 与列表页共用同一套分页渲染：页码数、当前页高亮、边界禁用行为一致
-    pagination: {
-      page: result.page,
-      totalPages: result.totalPages,
-      basePath: "/blog",
-    },
   })
   return pageOf(html)
 }

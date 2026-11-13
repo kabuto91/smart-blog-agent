@@ -52,12 +52,7 @@ export async function buildPreviewDynamicData(
       featuredArticles: featured.map(toArticleData),
       categories: categories.map(toCategoryData),
       tags: topTags(tags),
-      // 与线上首页一致：带上分页数据，预览可见真实页码/高亮/禁用态
-      pagination: {
-        page: result.page,
-        totalPages: result.totalPages,
-        basePath: "/blog",
-      },
+      // 与线上首页一致：首页只展示最新若干篇，不带分页数据（预览也不显示分页控件）
     }
   }
 

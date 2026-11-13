@@ -128,6 +128,20 @@ describe("ensureLayoutContract", () => {
     // 不应再出现未降特异性的容器子项规则
     expect(fixed).not.toMatch(/^\[data-page-host\] > \*/m)
   })
+
+  it("限宽容器漏写居中 → 安全层补齐，避免宽屏右侧大片留白", () => {
+    const uncentered = LAYOUT.replace(
+      ".container { max-width: 800px; margin: 0 auto; }",
+      ".container { max-width: 1200px; margin: 0; }"
+    )
+    const out = ensureLayoutContract(uncentered)
+    expect(out).toContain("margin-inline: auto !important")
+  })
+
+  it("限宽容器已正确居中 → 不追加 !important，不覆盖设计系统", () => {
+    const out = ensureLayoutContract(LAYOUT)
+    expect(out).not.toContain("margin-inline: auto !important")
+  })
 })
 
 describe("导航留白契约（--nav-h / --nav-clearance 分离）", () => {
@@ -684,5 +698,40 @@ describe("normalizeThemeSpacing", () => {
     expect(result).toMatch(/padding-top:\s*4rem/)
     expect(result).toMatch(/padding-bottom:\s*3em/)
     expect(result).toMatch(/gap:\s*5%/)
+  })
+})
+
+describe("固定列数网格不满行兜底", () => {
+  const layout = `<!DOCTYPE html><html><head><style>
+  .stat-strip{ display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; }
+  .post-grid{ display:grid; grid-template-columns:repeat(3, 1fr); }
+  @media (max-width:640px){ .stat-strip{ grid-template-columns:1fr; } }
+  </style></head><body><nav>nav</nav><div data-page-host=""></div><footer>f</footer></body></html>`
+
+  it("4 个静态子项 + 3 列改为 repeat(4)，媒体查询仍保留", () => {
+    const page = `<div class="stat-strip">
+      <div class="stat-cell">1</div><div class="stat-cell">2</div>
+      <div class="stat-cell">3</div><div class="stat-cell">4</div>
+    </div>`
+    const out = mergeThemePage(layout, page)
+    expect(out).toMatch(
+      /\.stat-strip\{[^}]*grid-template-columns:repeat\(4, minmax\(0, 1fr\)\)/
+    )
+    expect(out).toContain("@media (max-width:640px)")
+    // 区块间距兜底（:where() 特异性 0，主题自有规则优先）
+    expect(out).toContain(".crumbs")
+    expect(out).toMatch(/stat-strip\)\s*\{\s*margin-top/)
+  })
+
+  it("6 个子项整除 3 列时保持原样", () => {
+    const page = `<div class="stat-strip">${'<div class="stat-cell">x</div>'.repeat(6)}</div>`
+    const out = mergeThemePage(layout, page)
+    expect(out).toMatch(/\.stat-strip\{[^}]*grid-template-columns:repeat\(3, 1fr\)/)
+  })
+
+  it("文章列表只有 1 个模板项时不误伤", () => {
+    const page = `<div class="post-grid"><article class="post-card">模板</article></div>`
+    const out = mergeThemePage(layout, page)
+    expect(out).toMatch(/\.post-grid\{[^}]*grid-template-columns:repeat\(3, 1fr\)/)
   })
 })

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph"
 import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages"
 import { addMessage, getLatestSnapshot } from "@/lib/theme/theme-session"
 import { getThemeCheckpointer, pruneThemeCheckpoints } from "@/lib/theme/checkpoint"
@@ -127,7 +128,18 @@ export async function POST(request: Request) {
         })
       }
       // 检查点持久化到 Supabase(Postgres)：进程重启/断线后仍可按 thread_id 恢复。
-      const checkpointer = await getThemeCheckpointer()
+      // DB 不可用不应让整次生成失败 —— 降级为进程内检查点（仅丢失断点续生能力）。
+      let checkpointer: BaseCheckpointSaver
+      try {
+        checkpointer = await getThemeCheckpointer()
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "未知错误"
+        send({
+          type: "warn",
+          message: `检查点数据库不可用（${msg}），本次生成改用内存检查点，断点续生暂不可用`,
+        })
+        checkpointer = new MemorySaver()
+      }
       // 旧线程按数量回收（完成态线程需保留，供断线后"继续生成"重放结果）
       await pruneThemeCheckpoints()
       const graph = await createThemeGraph({
@@ -205,6 +217,9 @@ export async function POST(request: Request) {
           {
             streamMode: "messages",
             durability: "sync",
+            // 完整流程含 3 页并行 superstep + 可能的修订轮，默认 25 容易撞
+            // LangGraph 的递归上限；留足余量，避免长生成中途抛 GraphRecursionError。
+            recursionLimit: 60,
             // 客户端断线时中止执行：图停在当前 superstep，已完成步骤留在检查点
             signal: runAbort.signal,
             configurable: { thread_id: threadId },

@@ -128,7 +128,7 @@ export function renderContent(
   normalizeDetailArticleTags(doc, dynamicData?.articles?.[0])
 
   // 分页统一在所有动态区渲染完成后应用（替换模板静态占位 / 去重 / 补齐）
-  syncPagination(doc, dynamicData)
+  syncPagination(doc, dynamicData, pageType)
 
   return dom.serialize()
 }
@@ -320,6 +320,9 @@ export function ensureAvatarOverflow(html: string): string {
  * 导航栏的头像由骨架/SKELETON_SYSTEM_PROMPT 保证，但页面正文区域（hero/作者简介/文章底部）
  * 的头像依赖 LLM 生成，不一定存在。此函数在渲染完成后检测正文区域，
  * 若无任何头像标记则自动注入，保证所有页面都至少显示作者头像。
+ *
+ * 只负责「正文区补一个头像」，绝不改动 nav/header/footer 里的站点级头像：
+ * 布局是全站共用的，页面正文的内容不能反过来决定导航栏长什么样。
  */
 export function ensureMultipleAvatarPlaces(doc: Document, avatarUrl?: string): void {
   if (!avatarUrl) return
@@ -327,16 +330,9 @@ export function ensureMultipleAvatarPlaces(doc: Document, avatarUrl?: string): v
   const host = doc.querySelector<HTMLElement>("[data-page-host]")
   if (!host) return
 
-  // 检查正文区域内是否已有头像元素
-  const hasAvatarInBody =
-    host.querySelector('[data-content="author-avatar"]') ||
-    host.querySelector("img.avatar") ||
-    host.querySelector("img[class*='avatar']") ||
-    Array.from(host.querySelectorAll<HTMLElement>("[class]")).some((el) =>
-      (el.getAttribute("class") || "").toLowerCase().includes("avatar")
-    )
-
-  if (hasAvatarInBody) return
+  // 与 ensureSingleAuthorAvatar 共用同一套头像识别口径，避免出现
+  // 「宽口径判定已有头像、窄口径却不参与去重」的中间态。
+  if (collectAvatarUnits(host).length > 0) return
 
   // 按优先级寻找注入位置：<aside> > 含 author/bio/sidebar 的容器 > 正文首部
   // 注意用 querySelectorAll 遍历全部候选：querySelector 只取第一个匹配，
@@ -402,30 +398,69 @@ function hasAuthorAncestor(el: Element): boolean {
   return false
 }
 
-/** 收集文档中的作者头像元素（仅显式标记，不含装饰性渐变圆）。 */
-function collectAvatarElements(doc: Document): Element[] {
-  return Array.from(
-    doc.querySelectorAll<HTMLElement>(
-      '[data-content="author-avatar"], img.avatar'
-    )
-  )
+/**
+ * 站点级 chrome：由布局统一提供，全站所有页面共用同一份。
+ * 任何以页面正文为依据的头像处理都不得改动这些区域，否则同一份布局
+ * 会因为各页面正文里有没有头像而渲染出不同的导航栏。
+ */
+const SITE_CHROME_SELECTOR = "nav, header, footer"
+
+/**
+ * 头像识别口径（唯一来源）——「正文是否已有头像」与「去重」共用。
+ *
+ * LLM 生成的写法不统一：显式 data-content 标记、img.avatar、
+ * .avatar 容器包 img、data-map="author-avatar" 的图片，都必须归为同一类。
+ * 旧实现两处口径不同（检测宽松、去重只认 img.avatar / data-content），
+ * 导致 <div class="avatar"><img data-map="author-avatar"></div> 这类写法
+ * 被判定为「已有头像」却不参与去重，页面之间导航表现分叉。
+ */
+const AVATAR_MARKER_SELECTOR = [
+  '[data-content="author-avatar"]',
+  '[data-map="author-avatar"]',
+  "img.avatar",
+  'img[class*="avatar"]',
+  '[class*="avatar"]',
+].join(",")
+
+/**
+ * 收集作用域内的「头像单元」：每个视觉头像只返回一个可删除的承载元素。
+ * - img / 带显式标记的元素 → 自身；
+ * - .avatar 容器 → 内部 img（保留容器本身的圆角/边框样式，只摘多余图片）；
+ * - 容器与其内部 img 同时命中时只计一次。
+ */
+function collectAvatarUnits(root: ParentNode): Element[] {
+  const units: Element[] = []
+  for (const el of Array.from(
+    root.querySelectorAll<HTMLElement>(AVATAR_MARKER_SELECTOR)
+  )) {
+    if (units.some((u) => u !== el && u.contains(el))) continue
+    const isImage = el.tagName.toLowerCase() === "img"
+    const isMarked =
+      el.hasAttribute("data-content") || el.hasAttribute("data-map")
+    const unit = isImage || isMarked ? el : el.querySelector("img") ?? el
+    if (!units.includes(unit)) units.push(unit)
+  }
+  return units
 }
 
 /**
- * 渲染兜底：保证全页作者头像只出现 1 个，消除「导航+hero+作者区」多处重复。
- * 优先保留作者/简介区内的头像，其次正文区，最后取文档首个；其余多余头像直接移除
- * （仅移除头像元素本身，保留兄弟文字与结构）。
+ * 渲染兜底：保证「正文区」的作者头像只出现 1 个，消除 hero/作者区多处重复。
+ *
+ * 【作用域契约】导航/页头/页脚是布局提供的站点级 chrome，绝不参与去重：
+ * 旧实现在整篇文档范围内只保留一个头像，且优先保留正文作者区，于是正文
+ * 有作者卡的首页会把导航头像删掉、没有作者卡的列表页却保留 —— 同一份
+ * 导航栏在不同页面长得不一样。现在只在 [data-page-host] 内去重（无 host
+ * 的旧模板退化为排除 chrome 的文档范围），并对 chrome 再做一次硬保护。
  */
 export function ensureSingleAuthorAvatar(doc: Document): void {
-  const avatars = collectAvatarElements(doc)
+  const scope: ParentNode =
+    doc.querySelector<HTMLElement>("[data-page-host]") ?? doc.body
+  const avatars = collectAvatarUnits(scope).filter(
+    (el) => el.closest(SITE_CHROME_SELECTOR) === null
+  )
   if (avatars.length <= 1) return
 
-  const keeper =
-    avatars.find((el) => el.closest("[data-page-host]") && hasAuthorAncestor(el)) ||
-    avatars.find((el) => hasAuthorAncestor(el)) ||
-    avatars.find((el) => !!el.closest("[data-page-host]")) ||
-    avatars[0]
-
+  const keeper = avatars.find((el) => hasAuthorAncestor(el)) ?? avatars[0]
   for (const el of avatars) {
     if (el !== keeper) el.remove()
   }
@@ -1028,6 +1063,16 @@ function renderStatField(el: Element, value: string): void {
   el.textContent = value
 }
 
+/** 头像类站点字段：值是图片 URL，不能按普通文本字段写进容器。 */
+function isAvatarImageField(key: string): boolean {
+  return /(?:^|[-_])avatar(?:[-_]|$)/i.test(key)
+}
+
+/** 只认站内路径 / http(s) / data:image，避免把作者名之类文本误判为图片。 */
+function isImageUrlValue(value: string): boolean {
+  return /^(?:\/|https?:\/\/|data:image\/)/i.test(value.trim())
+}
+
 function renderTextField(
   doc: Document,
   key: string,
@@ -1065,6 +1110,29 @@ function renderTextField(
 
     if (img) {
       if (value) img.setAttribute("src", value)
+      continue
+    }
+
+    // 头像占位被写成 CSS 圆形容器（div/span）而非 <img> 时，绝不能把
+    // 头像 URL 当普通文本写进容器 —— 页面会直接显示 "/api/uploads/..." 字符串。
+    // 统一补一个 img，让后续的 applyAvatarOverflow / ensureSingleAuthorAvatar
+    // 仍按既有 img 口径处理。
+    if (!img && isAvatarImageField(key) && isImageUrlValue(value)) {
+      const avatar = doc.createElement("img")
+      avatar.setAttribute("class", "avatar")
+      avatar.setAttribute("src", value)
+      avatar.setAttribute("alt", "作者头像")
+      avatar.setAttribute(
+        "style",
+        "width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit;"
+      )
+      el.textContent = ""
+      // 消费掉这个文本字段标记：保留它会让 collectAvatarUnits 把「容器」
+      // 和「内部 img」算成两个头像，随后被 ensureSingleAuthorAvatar 去重删掉
+      // 整个容器（连同刚插入的图片）。
+      el.removeAttribute("data-content")
+      el.removeAttribute("data-content-type")
+      el.appendChild(avatar)
       continue
     }
 
@@ -1604,6 +1672,21 @@ function resolveListItemTemplate(
   }
   if (!template) return null
 
+  // 宿主落在「与模板同构的样例卡片」内部时，容器本身才是列表宿主。
+  // 典型：卡片内部的行容器 <div class="archive-row"> 命中 LIST_HOST_CLASS_RE
+  // 的 row 词根被 findDynamicListHost 选中；随后 removeSampleItems 删除样例
+  // 卡片时会把位于其内部的 host 一并删掉，克隆项被追加到已脱离文档的节点，
+  // 结果整个列表变空。宿主就是样例卡片本身时（host === child）不处理，
+  // 避免改动既有主题的平铺行为。
+  if (host !== container) {
+    for (const child of Array.from(container.children) as Element[]) {
+      if (child === host || !child.contains(host)) continue
+      if (!isSameElementShape(child, template)) continue
+      host = container
+      break
+    }
+  }
+
   return { host, template }
 }
 
@@ -1726,22 +1809,34 @@ function findPaginationContainers(doc: Document): Element[] {
 }
 
 /**
- * 统一分页应用：首页/列表页共用同一渲染路径。
+ * 统一分页应用：列表页/归档页按真实页数渲染，首页不渲染分页。
  *
  * 根因回顾：
  * - 首页模板里的分页是静态占位（href="#"），无数据源、无事件绑定 → 点击无响应；
  * - 列表页模板里的分页被当成 nav-list 渲染出错误样本项，同时又自动追加
  *   buildPaginationNav → 两套分页叠在一起，多出多余页码/按钮。
  *
+ * 【首页不分页】首页的「最新文章 / 近期文章」只是最新若干篇的预览区块，
+ * 完整列表与翻页属于 /blog/archive 等列表页。旧实现让首页也跟着文章总数
+ * 分页，于是一个只该展示几篇文章的区块下面挂了「1 2 3 下一页」。
+ * 这里对 pageType=home 做硬保护：即使调用方仍误传 pagination（存量代码、
+ * 自定义页、后台预览），也只清理静态占位，绝不填充或追加分页。
+ *
  * 修复策略：
- * - 有分页数据且 totalPages > 1：填充模板内已有分页容器（保留主题 class/样式），
- *   没有容器则在主文章列表后追加一个；多余容器删除，保证只有一套分页。
- * - 无分页数据或只有一页：移除模板里的静态分页占位，避免死链按钮。
+ * - 非首页且有分页数据且 totalPages > 1：填充模板内已有分页容器（保留主题
+ *   class/样式），没有容器则在主文章列表后追加一个；多余容器删除，保证只有一套。
+ * - 首页 / 无分页数据 / 只有一页：移除模板里的静态分页占位，避免死链按钮。
  */
-function syncPagination(doc: Document, dynamicData?: DynamicData): void {
+function syncPagination(
+  doc: Document,
+  dynamicData?: DynamicData,
+  pageType?: PageType
+): void {
   const containers = findPaginationContainers(doc)
   const pagination = dynamicData?.pagination
-  const visible = !!pagination && pagination.totalPages > 1
+  const resolvedPageType = pageType ?? resolvePageType(dynamicData)
+  const visible =
+    resolvedPageType !== "home" && !!pagination && pagination.totalPages > 1
 
   if (!visible) {
     for (const el of containers) el.remove()

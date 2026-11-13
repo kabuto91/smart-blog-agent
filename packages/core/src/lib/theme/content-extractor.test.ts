@@ -331,6 +331,42 @@ describe("extractContentConfig 动态列表项模板", () => {
       title: "title",
     })
   })
+
+  it("卡片内部的 archive-row 包装不抢模板，整张卡片保留全部动态字段", () => {
+    // 复现「主题 6」列表页没有文章：卡片内层 .archive-row 命中 row 词根，
+    // 旧逻辑把首个子元素 <span data-map="date"> 记成 itemTemplate，
+    // fieldMapping 又漏掉模板根节点自身的 data-map，最终只剩一串日期。
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      <article class="archive-item">
+        <div class="archive-row">
+          <span class="archive-date" data-map="date">2025.06.18</span>
+          <h3 class="archive-title"><a href="#" data-map="link"><span data-map="title">样本标题</span></a></h3>
+          <span class="archive-read" data-map="category">设计随笔</span>
+        </div>
+      </article>
+    </section>`
+    const { contentConfig } = extractContentConfig(html)
+    const field = contentConfig["article-list"] as DynamicField
+    expect(field.itemTemplate).toContain('<article class="archive-item">')
+    expect(field.itemTemplate).toContain('data-map="title"')
+    expect(field.fieldMapping).toMatchObject({
+      date: "date",
+      link: "link",
+      title: "title",
+      category: "category",
+    })
+  })
+
+  it("模板根节点自身带 data-map 时也计入 fieldMapping", () => {
+    const html = `<div data-content="article-list" data-content-type="dynamic-articles">
+      <span class="archive-date" data-map="date">2025.06.18</span>
+    </div>`
+    const { contentConfig } = extractContentConfig(html)
+    const field = contentConfig["article-list"] as DynamicField
+    // 模板根节点即带 data-map 的 span：旧逻辑只扫后代，fieldMapping 会是 {}
+    expect(field.itemTemplate).toContain('data-map="date"')
+    expect(field.fieldMapping).toMatchObject({ date: "date" })
+  })
 })
 
 describe("extractContentConfig 兜底补标", () => {

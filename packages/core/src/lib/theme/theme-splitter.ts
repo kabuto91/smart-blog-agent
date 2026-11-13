@@ -22,8 +22,9 @@ export const BUILTIN_PAGE_TYPES: BuiltinPageType[] = ["home", "list", "detail"]
 
 /**
  * 安全兜底样式层：作为布局 <head> 的最后一个 <style> 注入。
- * 只作用于 [data-page-host] 正文区（不影响导航/页脚），机械保证真实内容不外溢，
- * 弥补 LLM 骨架对长文本、固定宽度、刚性 grid 等溢出场景没有兜底的缺口。
+ * 只作用于 [data-page-host] 正文区（不影响导航/页脚），机械保证真实内容不外溢、
+ * 且限宽容器至少居中，弥补 LLM 骨架对长文本、固定宽度、刚性 grid、
+ * 「只写 max-width 忘了 margin-inline:auto」等场景没有兜底的缺口。
  *
  * 【重要：全部用 :where() 包裹】
  * :where() 把特异性降为 0，因此骨架设计系统里的任何规则都优先于本兜底层，
@@ -37,6 +38,13 @@ export const THEME_SAFETY_CSS = `/* === theme-safety: 溢出安全兜底，勿�
 /* 全部 :where() 包裹 → 特异性 0，骨架设计系统永远优先 */
 :where(html, body) { max-width: 100%; overflow-x: clip; }
 :where([data-page-host]) { box-sizing: border-box; max-width: 100%; }
+/* 正文区宽度兜底：LLM 常给限宽容器只写 max-width 却漏了 margin-inline:auto，
+   宽屏上正文会全挤在左侧、右侧留出一大块空白。这里给常见的限宽/段落容器补居中。
+   刻意不给 host 自身加 width:100% —— 左侧固定导航布局靠 host 的 margin-left 偏移，
+   叠加 100% 宽度会直接横向溢出。 */
+:where([data-page-host] .wrap, [data-page-host] .container,
+  [data-page-host] .page-content, [data-page-host] > section,
+  [data-page-host] > main) { margin-inline: auto; }
 :where([data-page-host], [data-page-host] *,
   [data-page-host] *::before, [data-page-host] *::after) { box-sizing: border-box; }
 /* 行内/host 子元素最小宽度修正，避免 flex/grid 子项撑破容器。 */
@@ -57,7 +65,46 @@ export const THEME_SAFETY_CSS = `/* === theme-safety: 溢出安全兜底，勿�
   [data-page-host] [data-map="body"]) { overflow-wrap: break-word; word-break: normal; }
 /* 导航链接 li 的兜底：骨架可能生成 div 直接包 li（非法结构），清除 UA 默认圆点标记 */
 :where(nav li, [data-content-type="nav-list"] li) { list-style: none; }
+/* 区块间距兜底：骨架常漏写相邻区块的垂直间距（面包屑贴着 kicker、统计条贴着
+   上方卡片），视觉上挤成一团。全部 :where() 特异性 0，主题自己的间距规则优先。 */
+:where([data-page-host] .crumbs) { margin-bottom: 12px; }
+:where([data-page-host] .stat-strip) { margin-top: 24px; }
 /* === /theme-safety === */`
+
+/**
+ * 针对「限宽容器没写居中」的存量主题补丁。
+ *
+ * THEME_SAFETY_CSS 里的 :where() 规则特异性为 0，只要骨架显式写过
+ * `margin: 0` 就会压过兜底。这里在注入安全层时确定性检测：若存在
+ * 「有 max-width（非 100%）但没有任何 margin … auto」的限宽容器规则，
+ * 才追加一条精确、带 !important 的居中修正；已正确居中的主题不受影响。
+ *
+ * 只匹配 .wrap/.container/.section，避开左侧固定导航布局里靠
+ * margin-left 偏移的 [data-page-host] 本身。
+ */
+function buildWidthFallbackCss(cssText: string): string {
+  let hasUncentered = false
+  const ruleRe = /([^{}]+)\{([^{}]*)\}/g
+  let m: RegExpExecArray | null
+  while ((m = ruleRe.exec(cssText)) !== null) {
+    const sel = m[1]
+    const body = m[2]
+    if (!/(?:\.wrap|\.container|\.section)/i.test(sel)) continue
+    const mw = /(?:^|[;\n])\s*max-width\s*:\s*([^;]+)/i.exec(body)
+    if (!mw || /^\s*100%\s*$/.test(mw[1])) continue
+    if (
+      /(?:^|[;\n])\s*margin(?:-inline|-left|-right)?\s*:\s*[^;]*\bauto\b/i.test(
+        body
+      )
+    ) {
+      continue
+    }
+    hasUncentered = true
+    break
+  }
+  if (!hasUncentered) return ""
+  return `\n/* theme-safety: 限宽容器缺居中 → 补齐，避免宽屏右侧大片留白 */\n[data-page-host] :where(.wrap, .container, .section) { margin-inline: auto !important; }\n`
+}
 
 export interface SplitPageResult {
   type: BuiltinPageType
@@ -145,7 +192,7 @@ export function ensureLayoutContract(layoutHtml: string): string {
   }
   const safety = doc.createElement("style")
   safety.setAttribute("data-theme-safety", "")
-  safety.textContent = THEME_SAFETY_CSS
+  safety.textContent = THEME_SAFETY_CSS + buildWidthFallbackCss(cssText)
   doc.head.appendChild(safety)
 
   // 4. 运行时测量脚本（版本化重注入：先移除旧版脚本再注入当前版，
@@ -208,6 +255,10 @@ export function mergeThemePage(
   // 剥离页面片段里复制来的布局骨架（LLM 照着骨架类名清单抄了整块布局），
   // 否则页面上会嵌套两层栅格，正文被挤进窄列。
   stripLayoutSkeleton(host, collectLayoutSkeletonClasses(doc))
+  // 固定列数网格里若静态子项数不是列数的整数倍（典型：3 列统计条放了 4 个
+  // 数字），最后一行会露出容器背景，形成一大块空白并把下一区块顶出异常间隔。
+  // 这里做确定性兜底：只改这类「不满行」的网格为自适应列数。
+  fixIncompleteGridRows(doc)
   // 顶部留白统一由 --nav-clearance 承担（仅固定顶部导航时有值），
   // 布局自身已在 body 上提供顶部留白时不再叠加 host 留白（避免双重间距）。
   // 片段根部的冗余包裹（data-page-host / page-content）已由
@@ -219,6 +270,63 @@ export function mergeThemePage(
   }
 
   return dom.serialize()
+}
+
+/**
+ * 修正「固定列数网格 + 子项数不整除」造成的不满行空白。
+ *
+ * LLM 常写 `.stat-strip{grid-template-columns:repeat(3,1fr)}` 却放 4 个
+ * 统计项：第 4 项单独占一行，右侧两列露出容器的 background（一大块深色
+ * 空白），并把下方区块顶出异常的垂直间隔。这类静态结构在 merge 阶段就能
+ * 确定（动态文章列表此时只有 1 个模板项，不会被误伤），所以直接把命中的
+ * 规则改成 auto-fit；响应式断点里的单列规则在后面，仍会正常覆盖。
+ */
+function fixIncompleteGridRows(doc: Document): void {
+  for (const style of Array.from(doc.querySelectorAll("style"))) {
+    const css = style.textContent ?? ""
+    if (!css.trim()) continue
+
+    const next = css.replace(
+      /([^{}]+)\{([^{}]*)\}/g,
+      (full: string, selectorPart: string, body: string) => {
+        // 媒体查询块由简单正则解析后选择器会含 @media，跳过不动
+        if (/@media|@supports/i.test(selectorPart)) return full
+        const decl = /(grid-template-columns\s*:\s*)repeat\(\s*(\d+)\s*,[^;}]*\)/i.exec(
+          body
+        )
+        if (!decl) return full
+        const columns = Number(decl[2])
+        if (columns < 2) return full
+        const cls = /\.([a-zA-Z_][\w-]*)/.exec(selectorPart)?.[1]
+        if (!cls) return full
+
+        let nodes: Element[]
+        try {
+          nodes = Array.from(doc.querySelectorAll("." + cls))
+        } catch {
+          return full
+        }
+        let itemCount = 0
+        for (const node of nodes) {
+          const count = Array.from(node.children).length
+          if (count > columns && count % columns !== 0) {
+            itemCount = count
+            break
+          }
+        }
+        if (!itemCount) return full
+
+        return `${selectorPart}{${body.replace(
+          decl[0],
+          // 列数直接对齐子项数：改成 auto-fit 时，minmax(240px) 在 ~800px
+          // 容器里仍会排 3 列，4 个子项照样 3+1 露白（实测 833px 视口复现）。
+          // repeat(N, minmax(0,1fr)) 保证任何宽度都是整齐的一行，窄屏由主题的 @media 覆盖。
+          `${decl[1]}repeat(${itemCount}, minmax(0, 1fr))`
+        )}}`
+      }
+    )
+    if (next !== css) style.textContent = next
+  }
 }
 
 /**

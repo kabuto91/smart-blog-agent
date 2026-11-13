@@ -12,6 +12,22 @@ export interface SseHandle {
 }
 
 /**
+ * 把底层数据库驱动的连接错误翻译成可操作的前端提示。
+ * 原始报错（如 "Client has encountered a connection error and is not queryable"）
+ * 对用户没有指导意义，而检查点已保留，应提示可从断点续生。
+ */
+function friendlySseError(message: string): string {
+  if (
+    /not queryable|connection (error|terminated|reset)|Connection terminated unexpectedly|ECONNRESET/i.test(
+      message
+    )
+  ) {
+    return "数据库连接中断，本次生成已停止。已完成的步骤保留在检查点中，可点击「继续生成」从断点恢复；若反复出现请检查数据库连接配置。"
+  }
+  return message
+}
+
+/**
  * 创建统一的 SSE ReadableStream：内部统一处理 error 帧与关闭逻辑，
  * 路由只需在 run 里调用 send/close。
  *
@@ -54,7 +70,7 @@ export function createSSEStream(
         await run({ send, close })
       } catch (error) {
         const message = error instanceof Error ? error.message : "未知错误"
-        send({ type: "error", error: message })
+        send({ type: "error", error: friendlySseError(message) })
       } finally {
         close()
       }

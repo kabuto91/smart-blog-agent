@@ -362,7 +362,12 @@ function extractDynamicField(el: Element, key: string, type: DynamicField["type"
   const fieldMapping: Record<string, string> = {}
 
   if (templateEl) {
-    const mappedElements = templateEl.querySelectorAll("[data-map]")
+    // 模板根节点自身也可能带 data-map（如 <span data-map="date">）：
+    // 只遍历后代会丢掉这个字段，得到空 fieldMapping。
+    const mappedElements: Element[] = [
+      ...(templateEl.matches("[data-map]") ? [templateEl] : []),
+      ...Array.from(templateEl.querySelectorAll("[data-map]")),
+    ]
     for (const mapped of mappedElements) {
       const fieldName = mapped.getAttribute("data-map")
       if (fieldName) {
@@ -446,7 +451,18 @@ function findRepeatableItemTemplate(root: Element): Element | null {
     if (isGridList) {
       const first = wrapper.firstElementChild
       if (first && (first.matches("[data-map]") || first.querySelector("[data-map]"))) {
-        return first
+        // 只有当包装里的动态字段全部落在首个子元素内时，它才是真正的列表项。
+        // 反例：<article class="archive-item"><div class="archive-row">
+        //   <span data-map="date">…</span><a data-map="link">…</a>…</div></article>
+        // —— .archive-row 命中 row 词根，但首个子元素只是卡片里的「日期」字段，
+        // 把它记成 itemTemplate 会让 fieldMapping 只剩 date，渲染期只剩一串
+        // 日期，标题/链接/分类全部丢失（表现为列表页没有文章）。
+        const wrapperKeys = mapKeysOf(wrapper)
+        const firstKeys = mapKeysOf(first)
+        const firstCoversAllFields =
+          firstKeys.length > 0 &&
+          wrapperKeys.every((key) => firstKeys.includes(key))
+        if (firstCoversAllFields) return first
       }
     }
   }

@@ -793,6 +793,44 @@ describe("renderContent 动态列表不重复整块面板", () => {
     expect(directItems[0].querySelector(".date")!.textContent).toBe("2026-01-01")
   })
 
+  it("卡片内部 .archive-row 被误选为宿主时，完整卡片模板仍渲染出全部文章", () => {
+    // 复现「主题 6」列表页空白：.archive-row 命中 row 词根成为宿主，
+    // removeSampleItems 删样例卡片时连宿主一起删掉，克隆项落到游离节点。
+    const CARD = `<article class="archive-item">
+      <div class="archive-row">
+        <span class="archive-date" data-map="date">2025.06.18</span>
+        <h3 class="archive-title"><a href="#" data-map="link"><span data-map="title">样例标题</span></a></h3>
+        <span class="archive-read" data-map="category">设计随笔</span>
+      </div>
+    </article>`
+    const config: ContentConfig = {
+      "article-list": {
+        type: "dynamic-articles",
+        label: "article-list",
+        itemTemplate: CARD,
+        fieldMapping: {
+          date: "date",
+          link: "link",
+          title: "title",
+          category: "category",
+        },
+      },
+    }
+    const html = `<section data-content="article-list" data-content-type="dynamic-articles">
+      ${CARD}
+    </section>`
+    const out = renderContent(html, config, dynamicData, undefined, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    const section = doc.querySelector('[data-content="article-list"]')!
+    expect(section.querySelectorAll("article.archive-item").length).toBe(2)
+    expect(section.querySelectorAll('a[href^="/blog/"]').length).toBe(2)
+    expect(out).not.toContain("样例标题")
+    expect(out).toContain("真实文章A")
+    expect(out).toContain("真实文章B")
+  })
+
   it("列表项模板同时带 data-map 与 data-content 时不被误弃，卡片按条克隆且每卡一个封面", () => {
     // 复现真实 bug：抽取器按硬约束给列表项内的文本单位补了 data-content，
     // 旧逻辑仅凭「模板含 data-content」就弃用配置模板，随后 findDynamicListHost
@@ -1023,38 +1061,48 @@ describe("renderContent 动态列表不重复整块面板", () => {
   })
 })
 
-describe("ensureSingleAuthorAvatar", () => {
-  function count(doc: Document): number {
-    return doc.querySelectorAll(
-      '[data-content="author-avatar"], img.avatar, [class*="avatar"]'
-    ).length
-  }
+describe("ensureSingleAuthorAvatar（只去重正文区，保护站点级导航）", () => {
+  it("正文多处头像时只保留 1 个，导航头像不受影响", () => {
+    const dom = new JSDOM(`<body>
+      <nav><img class="avatar" data-content="author-avatar" src="" alt="导航头像"></nav>
+      <div data-page-host="">
+        <section class="hero"><img class="avatar" data-content="author-avatar" src="" alt="hero头像"></section>
+        <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
+      </div>
+    </body>`)
+    ensureSingleAuthorAvatar(dom.window.document)
+    // 布局 chrome 永不被页面正文的头像数量影响
+    expect(dom.window.document.querySelector("nav img")).not.toBeNull()
+    expect(dom.window.document.querySelector(".hero img")).toBeNull()
+    expect(dom.window.document.querySelector(".author-bio img")).not.toBeNull()
+  })
 
-  it("同一页面 3 个头像时只保留 1 个", () => {
+  it("无 data-page-host 的旧模板仍只去重正文，导航头像保留", () => {
     const dom = new JSDOM(`<body>
       <nav><img class="avatar" data-content="author-avatar" src="" alt="导航头像"></nav>
       <section class="hero"><img class="avatar" data-content="author-avatar" src="" alt="hero头像"></section>
       <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
     </body>`)
     ensureSingleAuthorAvatar(dom.window.document)
-    expect(count(dom.window.document)).toBe(1)
-    // 优先保留作者/简介区内的头像
-    expect(dom.window.document.querySelector(".author-bio")).not.toBeNull()
+    expect(dom.window.document.querySelector("nav img")).not.toBeNull()
+    expect(dom.window.document.querySelector(".hero img")).toBeNull()
     expect(dom.window.document.querySelector(".author-bio img")).not.toBeNull()
   })
 
   it("移除多余头像时保留兄弟文字与结构", () => {
     const dom = new JSDOM(`<body>
       <nav><img class="avatar" data-content="author-avatar" src="" alt="导航头像"></nav>
-      <aside class="author-bio"><h3>关于我</h3><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
+      <div data-page-host="">
+        <section class="hero"><h3>Hero</h3><img class="avatar" src="" alt="hero头像"></section>
+        <aside class="author-bio"><h3>关于我</h3><img class="avatar" src="" alt="作者头像"></aside>
+      </div>
     </body>`)
     ensureSingleAuthorAvatar(dom.window.document)
-    expect(count(dom.window.document)).toBe(1)
-    // 作者区文字仍在，头像被保留
+    expect(dom.window.document.querySelector("nav img")).not.toBeNull()
     expect(dom.window.document.querySelector(".author-bio h3")?.textContent).toBe(
       "关于我"
     )
-    expect(dom.window.document.querySelector("nav img")).toBeNull()
+    expect(dom.window.document.querySelectorAll("[data-page-host] img.avatar").length).toBe(1)
   })
 
   it("仅 1 个头像时不破坏布局", () => {
@@ -1062,7 +1110,7 @@ describe("ensureSingleAuthorAvatar", () => {
       <aside class="author-bio"><img class="avatar" data-content="author-avatar" src="" alt="作者头像"></aside>
     </body>`)
     ensureSingleAuthorAvatar(dom.window.document)
-    expect(count(dom.window.document)).toBe(1)
+    expect(dom.window.document.querySelector(".author-bio img")).not.toBeNull()
   })
 
   it("装饰性渐变圆不作为头像被删除", () => {
@@ -1075,6 +1123,62 @@ describe("ensureSingleAuthorAvatar", () => {
     // 两个装饰渐变圆保留，作者头像保留，总计 3 个视觉元素
     expect(dom.window.document.querySelectorAll(".blob").length).toBe(2)
     expect(dom.window.document.querySelector('[data-content="author-avatar"]')).not.toBeNull()
+  })
+})
+
+describe("renderContent 导航头像全站一致（回归：首页无头像 / 列表页有）", () => {
+  const AVATAR_URL = "/api/uploads/avatar1"
+
+  const layout = (hostBody: string) => `<body>
+    <nav class="site-nav"><a class="nav-brand">
+      <img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">
+      <span class="brand-text">站名</span>
+    </a></nav>
+    <div data-page-host="">${hostBody}</div>
+    <footer>尾</footer>
+  </body>`
+
+  const render = (hostBody: string) =>
+    new JSDOM(
+      renderContent(
+        layout(hostBody),
+        {},
+        undefined,
+        { "author-avatar": AVATAR_URL },
+        { pageSpecific: true }
+      )
+    ).window.document
+
+  it("首页正文有作者卡（会触发注入）时，导航头像仍保留", () => {
+    const doc = render('<aside class="sidebar"><h3>关于作者</h3><p>作者简介</p></aside>')
+    const navAvatar = doc.querySelector("nav img.avatar")
+    expect(navAvatar).not.toBeNull()
+    expect(navAvatar?.getAttribute("src")).toBe(AVATAR_URL)
+    expect(doc.querySelector("[data-page-host] img.avatar")).not.toBeNull()
+  })
+
+  it("列表页正文用 .avatar 容器包 data-map 图片时，导航头像保留且不额外注入", () => {
+    const doc = render(`<aside class="sidebar">
+      <div class="avatar"><img data-map="author-avatar" src="" alt=""></div>
+      <p>关于作者</p>
+    </aside>`)
+    expect(doc.querySelector("nav img.avatar")).not.toBeNull()
+    expect(doc.querySelectorAll("[data-page-host] img.avatar").length).toBe(0)
+    expect(doc.querySelector("[data-page-host] .avatar img")).not.toBeNull()
+  })
+
+  it("正文没有作者容器时，导航头像同样保留", () => {
+    const doc = render("<p>正文内容</p>")
+    expect(doc.querySelector("nav img.avatar")).not.toBeNull()
+    expect(doc.querySelectorAll("[data-page-host] img.avatar").length).toBe(0)
+  })
+
+  it("正文区多个头像时只留一个，导航头像始终保留", () => {
+    const doc = render(`<section class="hero"><img class="avatar" src=""></section>
+      <aside class="author-bio"><img class="avatar" src=""></aside>`)
+    expect(doc.querySelector("nav img.avatar")).not.toBeNull()
+    expect(doc.querySelectorAll("[data-page-host] img.avatar").length).toBe(1)
+    expect(doc.querySelector(".author-bio img.avatar")).not.toBeNull()
   })
 })
 
@@ -1798,7 +1902,7 @@ describe("renderContent 分页统一渲染", () => {
     return { doc, pager: pager!, labels }
   }
 
-  it("首页：模板静态分页被替换为真实链接，当前页高亮，边界禁用", () => {
+  it("首页：即使调用方误传分页数据，也移除静态占位且不渲染分页", () => {
     const out = renderContent(
       HOME_WITH_STATIC_PAGINATION,
       articleConfig,
@@ -1810,41 +1914,26 @@ describe("renderContent 分页统一渲染", () => {
       undefined,
       { pageSpecific: true }
     )
-    const { doc, pager, labels } = countPageNumbers(out, 3)
-
-    // 只有一套分页（不重复）
-    expect(doc.querySelectorAll("[data-pagination]").length).toBe(1)
-    expect(labels.filter((l) => l === "2").length).toBe(1)
-
-    // 死链 href="#" 不再出现
-    expect(pager.innerHTML).not.toContain('href="#"')
-
-    // 当前页高亮
-    const active = pager.querySelector("span.active")
-    expect(active?.textContent?.trim()).toBe("1")
-
-    // 首页边界：上一页禁用、下一页可点
-    const prev = Array.from(pager.querySelectorAll("a, span")).find(
-      (el) => el.textContent?.trim() === "上一页"
-    )
-    expect(prev?.tagName.toLowerCase()).toBe("span")
-    expect(prev?.getAttribute("aria-disabled")).toBe("true")
-    const next = Array.from(pager.querySelectorAll("a, span")).find(
-      (el) => el.textContent?.trim() === "下一页"
-    )
-    expect(next?.tagName.toLowerCase()).toBe("a")
-    expect(next?.getAttribute("href")).toBe("/blog?page=2")
-
-    // 翻页链接指向 basePath?page=N
-    const page2 = Array.from(pager.querySelectorAll("a")).find(
-      (el) => el.textContent?.trim() === "2"
-    )
-    expect(page2?.getAttribute("href")).toBe("/blog?page=2")
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelector(".pagination")).toBeNull()
+    expect(doc.querySelector("[data-pagination]")).toBeNull()
+    expect(out).not.toContain("上一页")
+    expect(out).not.toContain("下一页")
+    // 只清分页，不误伤正文与文章列表
+    expect(doc.querySelector('[data-content="article-list"]')).not.toBeNull()
+    expect(doc.querySelector(".post-card")).not.toBeNull()
   })
 
-  it("首页中间页：上一页/下一页都可点，当前页高亮第 2 页", () => {
+  it("首页：模板无分页容器时也不会自动追加分页", () => {
+    const bare = `<!DOCTYPE html><html><body>
+<div data-page-host="">
+  <div class="post-list" data-content="article-list" data-content-type="dynamic-articles">
+    <article class="post-card"><a href="#" data-map="link"><h3 data-map="title"></h3></a></article>
+  </div>
+</div>
+</body></html>`
     const out = renderContent(
-      HOME_WITH_STATIC_PAGINATION,
+      bare,
       articleConfig,
       {
         pageType: "home",
@@ -1854,41 +1943,10 @@ describe("renderContent 分页统一渲染", () => {
       undefined,
       { pageSpecific: true }
     )
-    const { pager } = countPageNumbers(out, 3)
-    const active = pager.querySelector("span.active")
-    expect(active?.textContent?.trim()).toBe("2")
-    const prev = Array.from(pager.querySelectorAll("a")).find(
-      (el) => el.textContent?.trim() === "上一页"
-    )
-    expect(prev?.getAttribute("href")).toBe("/blog")
-    const next = Array.from(pager.querySelectorAll("a")).find(
-      (el) => el.textContent?.trim() === "下一页"
-    )
-    expect(next?.getAttribute("href")).toBe("/blog?page=3")
-  })
-
-  it("首页末页：下一页禁用、上一页可点", () => {
-    const out = renderContent(
-      HOME_WITH_STATIC_PAGINATION,
-      articleConfig,
-      {
-        pageType: "home",
-        articles,
-        pagination: { page: 3, totalPages: 3, basePath: "/blog" },
-      },
-      undefined,
-      { pageSpecific: true }
-    )
-    const { pager } = countPageNumbers(out, 3)
-    const next = Array.from(pager.querySelectorAll("a, span")).find(
-      (el) => el.textContent?.trim() === "下一页"
-    )
-    expect(next?.tagName.toLowerCase()).toBe("span")
-    expect(next?.getAttribute("aria-disabled")).toBe("true")
-    const prev = Array.from(pager.querySelectorAll("a")).find(
-      (el) => el.textContent?.trim() === "上一页"
-    )
-    expect(prev?.getAttribute("href")).toBe("/blog?page=2")
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelector("[data-pagination]")).toBeNull()
+    expect(doc.body.textContent).not.toContain("上一页")
+    expect(doc.body.textContent).not.toContain("下一页")
   })
 
   it("列表页：nav-list 形态的静态分页被替换，不再多出多余页码", () => {
@@ -1920,14 +1978,14 @@ describe("renderContent 分页统一渲染", () => {
     expect(active?.textContent?.trim()).toBe("1")
   })
 
-  it("单页时移除模板静态分页，不渲染无效按钮", () => {
+  it("列表页只有一页时移除模板静态分页，不渲染无效按钮", () => {
     const out = renderContent(
       HOME_WITH_STATIC_PAGINATION,
       articleConfig,
       {
-        pageType: "home",
+        pageType: "list",
         articles,
-        pagination: { page: 1, totalPages: 1, basePath: "/blog" },
+        pagination: { page: 1, totalPages: 1, basePath: "/blog/archive" },
       },
       undefined,
       { pageSpecific: true }
@@ -2000,5 +2058,45 @@ describe("renderContent 分页统一渲染", () => {
     expect(
       resolvePageType({ pagination: { page: 1, totalPages: 3, basePath: "/x" } })
     ).toBe("list")
+  })
+})
+
+describe("作者头像占位字段（author-avatar）", () => {
+  const config: ContentConfig = {
+    "author-avatar": {
+      type: "text",
+      label: "author-avatar",
+      value: "/api/uploads/avatar.png",
+      source: "global",
+      globalKey: "author-avatar",
+    },
+  }
+  const site = { "author-avatar": "/api/uploads/avatar.png" }
+
+  it("div 圆形头像容器不再显示图片 URL 文本，自动补 <img>", () => {
+    // 复现「作者档案头像里显示 /api/uploads/... 字符串」：
+    // 该字段是 text 类型但值是图片 URL，旧逻辑直接写 textContent。
+    const html = `<div class="avatar-box">
+      <div class="avatar" data-content="author-avatar" data-content-type="text"></div>
+    </div>`
+    const out = renderContent(html, config, undefined, site, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelector("img.avatar")?.getAttribute("src")).toBe(
+      "/api/uploads/avatar.png"
+    )
+    expect(doc.body.textContent).not.toContain("/api/uploads/avatar.png")
+  })
+
+  it("img 头像占位仍按 src 填充", () => {
+    const html = `<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">`
+    const out = renderContent(html, config, undefined, site, {
+      pageSpecific: true,
+    })
+    const doc = new JSDOM(out).window.document
+    expect(doc.querySelector("img.avatar")?.getAttribute("src")).toBe(
+      "/api/uploads/avatar.png"
+    )
   })
 })

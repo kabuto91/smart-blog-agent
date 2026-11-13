@@ -47,9 +47,22 @@ export function extractHtmlFromContent(content: string): string {
 }
 
 /** 作者头像占位。src 留空，渲染时自动填入选中的头像 URL；
- * 渲染期（content-renderer）会自动注入并按需全局去重，确保全站只有一个头像。
+ * 渲染期（content-renderer）只在正文区注入/去重头像，导航品牌区头像由骨架提供，
+ * 两者各自最多 1 个、互不影响。
  */
 export const AVATAR_PLACEHOLDER = `<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">`
+
+/**
+ * 头像占位的硬约束。
+ * author-avatar 是「text 类型但值是图片 URL」的特殊全局字段：渲染器只对
+ * <img>（或内部含 <img> 的容器）设置 src，其余元素会走普通文本路径把 URL
+ * 写进 textContent。LLM 若用纯 CSS 圆形 div 充当头像并标 text 字段，
+ * 页面就会显示一串 "/api/uploads/..." 字符而不是头像。
+ */
+const AVATAR_MARKUP_RULE = `【头像占位硬约束】作者头像必须是 <img> 元素；若需要外层 CSS 圆形容器，容器内部也必须放 <img>。
+- 唯一允许的头像占位写法：${AVATAR_PLACEHOLDER}
+- **禁止**把 <div>/<span> 等容器直接写成 data-content="author-avatar" data-content-type="text" 的头像占位：该字段的值是图片 URL，会被当作普通文本渲染成一串可见字符。
+- 头像的圆形、边框、裁剪等样式写在 .avatar / .avatar-box 上，不要靠「容器里写文字」实现。`
 
 // ---------------------------------------------------------------------------
 // 随机设计种子：从原型池随机抽取组合，注入 planner 简报，避免每次生成都
@@ -138,7 +151,9 @@ export function rollDesignSeeds(): DesignSeeds {
 /** 通用图片规则：除作者头像外，禁止任何图片素材，一律用纯 CSS 视觉手段完成设计。 */
 const IMAGE_RULE = `【图片规则】
 本主题禁止使用任何图片素材（包括外部图片 URL 或编造的图片地址），一律以纯排版、色彩、几何图形、渐变、纹理等 CSS 视觉手段完成设计。
-唯一允许的例外是作者头像占位（渲染期自动注入选中的头像 URL）。`
+唯一允许的例外是作者头像占位（渲染期自动注入选中的头像 URL）。
+
+${AVATAR_MARKUP_RULE}`
 
 /** 动态文章列表的数据绑定规则（首页/列表页共用）。 */
 const DYNAMIC_ARTICLES_RULE = `- 文章列表区域用 <section data-content="article-list" data-content-type="dynamic-articles"> 包裹；
@@ -146,6 +161,35 @@ const DYNAMIC_ARTICLES_RULE = `- 文章列表区域用 <section data-content="ar
 - 模板项内的每个字段必须填一句完整的示例文案（标题、摘要、日期各写一句），用于主题预览时完整呈现；渲染时会被真实文章数据整条替换，不会出现在线上页面；
 - 模板外的静态结构（标题、容器、按钮等）放在模板项同级位置，不要包在模板项里面；
 - 除模板项外不要再手写其它示例条目，那些都会被清除并替换为真实数据。`
+
+/**
+ * 重复卡片一致性契约：由骨架阶段的 CSS 设计系统保证。
+ *
+ * 渲染期会把每张文章卡片包进 <a style="display:contents"> 实现整卡可点，
+ * 并按真实数据克隆模板。因此基于 :nth-child / 直接子选择器的差异化样式会失效或错配，
+ * hover 里改动 font-size / padding / transform 会引发文字重排、同组卡片高低错落
+ * —— 这是生成主题里最常见的「卡片排版乱掉」来源。
+ */
+const CARD_LAYOUT_CONTRACT = `【重复卡片一致性契约】（文章卡片、列表项等同类重复单元必须全部遵守）
+- 同组卡片必须结构、类名、字号、颜色、间距完全一致；**禁止**用 :nth-child / :first-child / :last-child / 直接子选择器 (>) 给同类卡片设置不同的 font-size、color、padding、margin、width、height。渲染期会为每张卡片包裹一层链接，位置选择器会失效或错配，导致同组卡片样式不一致。差异化只允许用在**不改变布局与文字样式**的装饰性伪元素（::before/::after 的几何纹理）上。
+- 卡片组必须等高：网格容器用 align-items:stretch；卡片本体 display:flex + flex-direction:column + height:100%；卡片底部的标签/按钮/日期等尾部元素用 margin-top:auto 贴底，保证标题长短不同时同行卡片仍然对齐。
+- 标题与摘要必须钳制行数：标题 -webkit-line-clamp:2、摘要 -webkit-line-clamp:3，并配套 display:-webkit-box、-webkit-box-orient:vertical、overflow:hidden，避免长标题把卡片内容顶歪、标签上下错位。
+- **hover / focus / 过渡态禁止改变任何影响布局的属性**：font-size、line-height、letter-spacing、padding、margin、width、height、gap、display、position 一律不允许；只允许 color、background-color、border-color、box-shadow、opacity、text-shadow，以及不引起重排的 transform（卡片内部装饰元素的 scale 可用，整卡 translateY 不超过 4px）。禁止在 hover 里放大标题、加大内边距或大幅上浮卡片——这会造成文字重排、卡片与相邻卡片错落。
+- 卡片头图/封面一律用纯 CSS（渐变、几何、纹理）绘制，不要用 <img>：真实文章大多没有封面图，使用图片会让封面块在渲染期被整体移除，卡片高度塌陷、设计走样。`
+
+/**
+ * 正文区宽度契约：解决「内容只占左侧、右侧一大块空白」。
+ * LLM 常给限宽容器只写 max-width 忘记居中，或把卡片网格写死 2 列，
+ * 在 1920px 宽屏上就会留出一整块没人用的背景区。
+ */
+const LAYOUT_WIDTH_CONTRACT = `【正文区宽度与填充契约】（避免宽屏上右侧留出一大块空白）
+- [data-page-host] 是全站唯一正文容器：必须 box-sizing:border-box；**禁止**给它设置固定/百分比宽度、max-width 或 grid-template-columns。需要为左侧固定导航留位时只用 margin-left / padding-left（叠加 width:100% 会横向溢出）。
+- 正文里的限宽容器（.wrap / .container / .section 等）必须**同时**写 width:100%、max-width:min(100% - 2×水平内边距, 1440px)、margin-inline:auto；只写 max-width 不写居中，宽屏上内容会全挤在左侧、右侧空出一大块。max-width 不要小于 1200px，否则大屏仍会留下明显空白。
+- **所有多列网格**（文章卡片网格、统计数字条、特性卡片、时间线、指标卡等）都必须用 repeat(auto-fill, minmax(280px, 1fr)) 或 repeat(auto-fit, minmax(240px, 1fr))，让列数随可用宽度自动增加；**禁止**写死 repeat(2, 1fr) / repeat(3, 1fr) / grid-template-columns: 1fr 1fr 这类固定列数，也禁止给网格容器单独设 max-width。固定列数下若子项数不是列数的整数倍，最后一行会露出容器背景形成一大块空白、并把下一区块顶出异常间隔；大屏上也会空出整列。
+- 若设计「主内容 + 侧栏」双列（如 1fr 280px），侧栏必须有可见内容（作者卡 / 标签云 / 分类 / 归档）；没有内容时直接用单列，禁止预留空列。响应式断点把双列折叠成单列时，不要留下空的 grid 列。
+- 网格子项数必须与列数匹配：固定列数时列数必须能整除子项数（4 个统计项就用 4 列或 2 列，**不要** 3 列），否则最后一行会露出容器背景，形成一大块空白。
+- 相邻区块之间必须保留明显的垂直间距（≥16px）：面包屑与下方 kicker/标题、统计条与上方卡片网格、章节与章节之间都不能紧贴成一团；同理标题→描述、描述→按钮组之间也要有呼吸感。紧贴的两行不同层级的文字会被看成一句排坏的文本。
+- 自检：在 1920px 宽视口下，正文最右侧内容应至少延伸到视口宽度的 85%，且左右留白大致对称。`
 
 /** 动态标签/分类列表的数据绑定规则（首页/列表页/详情页若有标签云或分类侧栏时使用）。 */
 const DYNAMIC_TAG_RULE = `- 标签云/标签列表区域用 <div data-content="tag-cloud" data-content-type="dynamic-tags"> 包裹，容器内首个子元素作为单个标签项模板，用 data-map="name" 标记标签名、data-map="link" 标记链接（href 写占位 # 即可），并填一个示例标签名（渲染时会被真实标签替换）；
@@ -160,7 +204,7 @@ const DYNAMIC_CONTENT_RULE = `【动态内容识别规则】生成页面时，�
 一、动态列表（运行时会自动填充真实数据，禁止硬编码真实链接、禁止手写多条示例条目）：
 1. 文章类列表：任何「展示多篇文章 / 多个卡片 / 网格 / 日期+标题条目」的区块（如 热门文章、近期/最新文章、推荐阅读、文章卡片、文章网格、侧边栏「时间锚点/归档」日期列表）都归为此类，整块只用一个外层容器标记：
    <section data-content="article-list" data-content-type="dynamic-articles">
-     首个子元素是单个文章项模板（<article> 或 <li>），模板内用 data-map 标记 title、excerpt、date、category、link；封面用 <img data-map="cover">（仅限网格/多列卡片容器内）；若卡片展示标签，用 <div data-map="tags"> 包裹标签芯片（内嵌的 <span class="tag"> 作为单个标签样式模板，渲染时会逐个填入真实标签）；模板项内各字段都要填一句示例文案（渲染时整条替换为真实数据，仅为预览完整）。
+     首个子元素是单个文章项模板（<article> 或 <li>），模板内用 data-map 标记 title、excerpt、date、category、link；**卡片头图/封面一律用纯 CSS（渐变、几何、纹理）绘制，禁止用 <img data-map="cover">**（真实文章大多没有封面图，用图片会让封面块在渲染期被整体移除，卡片高度塌陷、同组卡片参差不齐）；若卡片展示标签，用 <div data-map="tags"> 包裹标签芯片（内嵌的 <span class="tag"> 作为单个标签样式模板，渲染时会逐个填入真实标签）；模板项内各字段都要填一句示例文案（渲染时整条替换为真实数据，仅为预览完整）。
    </section>
    切勿给每个文章项的标题/摘要/日期单独打 data-content="text"——整块就是一个动态列表。
    其中，「精选文章/编辑推荐」这类由后台手动挑选的区块，请改用 data-content="featured-articles"（同样 data-content-type="dynamic-articles"），其余文章列表/网格都用 data-content="article-list"。
@@ -195,6 +239,10 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
    <div data-page-host=""></div>
    后续三个页面的正文会被依次填入这里。除该占位节点外，骨架不要包含其它正文内容。
 
+${CARD_LAYOUT_CONTRACT}
+
+${LAYOUT_WIDTH_CONTRACT}
+
 【JS 交互特效（可选能力）】
 - 仅当用户明确提出"跟随鼠标移动、鼠标悬停跟随、滚动浮现、打字机标题"等纯 CSS 无法实现的交互特效时，才允许放置特效脚本；无此类需求时不要写任何脚本。
 - 脚本用原生 Vanilla JS（不依赖任何库/CDN），内联放在 <head> 末尾的独立 <script> 中（不要放在 data-page-host 内）。
@@ -203,7 +251,7 @@ export const SKELETON_SYSTEM_PROMPT = `你是一个专业的博客主题设计�
 - 若与"设计感要求"中的纯 CSS 过渡/入场动效配合，可只用一个自执行函数包裹实现，并监听 DOMContentLoaded 后再绑定事件。
 
 ${IMAGE_RULE}
-作者头像全站仅需一个即可（渲染期会自动注入并按需去重）；如需在品牌区展示，放置：${AVATAR_PLACEHOLDER}
+作者头像分两处独立管理：导航品牌区的头像由本骨架提供（如需展示，放置：${AVATAR_PLACEHOLDER}），页面正文的头像由各页面自行决定；渲染期只保证正文区最多 1 个，不会因正文有头像而删除导航头像。
 
 【内容标记规则】
 - 导航/页脚等链接列表用 data-content + data-content-type="nav-list" 标记。
@@ -234,11 +282,11 @@ ${DYNAMIC_CONTENT_RULE}
 ${DYNAMIC_ARTICLES_RULE}
 ${DYNAMIC_TAG_RULE}
 - ⚠️ 首页通常只需要一个「最新文章」文章流区块（data-content="article-list"，且只出现一次）。仅在用户明确要「手动精选文章」时才额外考虑 featured-articles，但文章流区块整体全页只能有一个——不要把同一批文章用「最新文章」「精选」「归档/时间线」等多个区块重复呈现。
-- 列表会自动填充全部文章并附加分页，正文不要写分页（不要输出 .pagination / 上一页 / 下一页 / 页码 1 2 3 之类的静态分页占位，渲染期会按真实页数自动生成并接好跳转）；
+- 首页的「最新文章」只展示最新若干篇，是预览区块，**不要输出分页**（不要 .pagination / pagination-nav / data-content="pagination-nav" / 上一页 / 下一页 / 页码 1 2 3 之类的静态占位或 nav-list 标记，渲染期不会为首页生成分页）；可以在该区块放一个「查看全部文章」链接指向 /blog/archive，完整列表与翻页都在归档页；
 - 首页自由组织的区块（作者介绍、统计、特色卡片组合等）内的所有标题（h2/h3/h4）与段落文本（p）都必须标记 data-content + data-content-type="text"，key 用语义化英文命名（如 core-modules-title、feature-card-desc）。
 
 【头像占位】
-如需在正文展示作者信息，可放一个作者头像占位：${AVATAR_PLACEHOLDER}（渲染期会确保全局只有 1 个；该区域不要标记 data-page-type）。`,
+如需在正文展示作者信息，可放一个作者头像占位：${AVATAR_PLACEHOLDER}（渲染期只保证正文区最多 1 个头像；导航栏头像由布局统一提供，不受正文内容影响；该区域不要标记 data-page-type）。`,
   },
   list: {
     context: "文章列表页 /blog/archive 等",
@@ -276,7 +324,7 @@ ${DYNAMIC_TAG_RULE}
 - 标题/排版/容器尽量用骨架已有的类
 
 【头像占位】
-如需在底部作者信息区放置头像：${AVATAR_PLACEHOLDER}（渲染期会确保全局只有 1 个；该元素不要标记 data-page-type）。`,
+如需在底部作者信息区放置头像：${AVATAR_PLACEHOLDER}（渲染期只保证正文区最多 1 个头像；导航头像由布局提供，互不影响；该元素不要标记 data-page-type）。`,
   },
 }
 
@@ -289,7 +337,9 @@ export function buildPageSystemPrompt(
   const imageSection =
     pageType === "detail"
       ? `【图片规则】
-本页（文章详情页）正文不含封面或配图，文章配图会随正文内容自动渲染（data-map="body"），不要使用任何图片素材。底部如需放置作者头像占位：${AVATAR_PLACEHOLDER}（渲染期会确保全局只有 1 个；该元素不要标记 data-page-type）。`
+本页（文章详情页）正文不含封面或配图，文章配图会随正文内容自动渲染（data-map="body"），不要使用任何图片素材。底部如需放置作者头像占位：${AVATAR_PLACEHOLDER}（渲染期只保证正文区最多 1 个头像；导航头像由布局提供，互不影响；该元素不要标记 data-page-type）。
+
+${AVATAR_MARKUP_RULE}`
       : IMAGE_RULE
 
   return `你是一个博客「${spec.context}」的正文设计者。请基于给定的共享骨架（其样式/类名/设计语言已由骨架阶段产出），结合用户描述的风格需求，输出该页面正文。
@@ -301,6 +351,8 @@ ${spec.bodyPrompt}
 
 【设计原则】
 根据用户描述的风格和需求自由发挥，决定页面包含哪些区块、如何排布。区块组合没有固定模板，完全由你根据设计方向和用户偏好来组织。保持与骨架视觉语言一致，追求精致的设计感。
+
+【重复卡片结构要求】同一组文章卡片/列表项的 HTML 结构、类名必须完全一致（渲染期按真实数据克隆单个模板，不要手写多条结构不同的示例卡片）；标题、摘要、日期、标签各自放在独立元素里，便于骨架 CSS 用 -webkit-line-clamp 钳制行数、用 margin-top:auto 把尾部元素贴底；卡片头图用纯 CSS 装饰元素，不要用 <img>。完整约束见骨架的【重复卡片一致性契约】。
 
 ${imageSection}
 

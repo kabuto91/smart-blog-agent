@@ -20,6 +20,13 @@ export interface StyleAuditReport {
 const MIN_ROOT_VARS = 5
 /** 页面问题清单里最多列出的未定义类名数。 */
 const MAX_MISSING_CLASSES = 8
+/**
+ * 页面未定义类名触发修订的阈值（与 theme-selfcheck 的 blocker 判定对齐）。
+ * LLM 自由设计时产生 1~2 个骨架未声明的工具类是常态，逐个报 error 会让
+ * 每次生成都无谓重来一轮；只有大面积未定义才值得让模型改用骨架类名。
+ */
+const MISSING_CLASS_MIN_COUNT = 3
+const MISSING_CLASS_MIN_RATIO = 0.3
 
 /** 判断颜色值是否属于默认纯白系。 */
 function isPlainWhite(value: string): boolean {
@@ -144,11 +151,226 @@ function checkMotion(css: string, issues: string[]): void {
   }
 }
 
-/** 检查 hover 反馈态（warn）。 */
-function checkHover(css: string, warnings: string[]): void {
-  if (!/:hover/i.test(css)) {
+/**
+ * hover/focus 态中禁止出现的布局属性。
+ * 改这些属性会让鼠标一悬停就重排文字、改变盒子尺寸，同组卡片随即高低错落
+ * —— 是「生成出来的主题卡片排版乱掉」最常见的确定性来源。
+ */
+const HOVER_LAYOUT_PROPS = [
+  "font-size", "line-height", "letter-spacing", "word-spacing",
+  "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+  "padding-inline", "padding-block", "margin", "margin-top", "margin-right",
+  "margin-bottom", "margin-left", "width", "height", "min-width", "min-height",
+  "max-width", "max-height", "gap", "row-gap", "column-gap", "display", "position",
+  "top", "left", "right", "bottom", "inset", "flex", "flex-basis", "flex-grow",
+  "grid-template-columns", "grid-template-rows", "border-width", "overflow",
+  "white-space",
+]
+
+/** 卡片类重复单元的特征（用于位置选择器与一致性审计）。 */
+const CARD_SELECTOR_RE = /(?:card|post|item|entry|article|tile)/i
+const POSITION_PSEUDO_RE =
+  /:nth-(?:child|of-type)|:first-child|:last-child|:only-child/
+/** 会让同组卡片「长得不一样」的差异化声明。 */
+const DIFFERENTIATING_DECL_RE =
+  /(?:^|[;\n])\s*(?:font-size|font-weight|color|background-color|padding(?:-[\w-]+)?|margin(?:-[\w-]+)?|width|height|border-color|opacity)\s*:/i
+
+/** 检查声明串里是否出现某个 CSS 属性（容忍缩进与换行）。 */
+function hasDecl(body: string, prop: string): boolean {
+  return new RegExp(`(?:^|[;\\n])\\s*${prop}\\s*:`, "i").test(body)
+}
+
+/**
+ * 检查 hover 反馈态：
+ * - 完全没有交互反馈 → warn；
+ * - hover/focus 里改了布局属性或 transform 幅度过大 → error（会触发修订）。
+ */
+function checkHover(css: string, issues: string[], warnings: string[]): void {
+  if (!/:hover|:focus/i.test(css)) {
     warnings.push("没有任何 :hover 交互反馈态")
+    return
   }
+
+  const found: string[] = []
+  for (const block of parseRuleBlocks(css)) {
+    const interactive = block.selectors.filter((s) => /:hover|:focus/i.test(s))
+    if (interactive.length === 0) continue
+    // 伪元素装饰（导航下划线展开、光晕、几何纹理）是绝对定位元素，
+    // 改 width/left/transform 都不会影响文档流，不算布局问题。
+    const flowTargets = interactive.filter(
+      (s) => !/::?(?:before|after)/i.test(s)
+    )
+    if (flowTargets.length === 0) continue
+    const label = flowTargets[0].trim().slice(0, 80)
+
+    const badProps = HOVER_LAYOUT_PROPS.filter((p) => hasDecl(block.body, p))
+    if (badProps.length > 0) {
+      found.push(`${label} 改了布局属性 ${badProps.slice(0, 4).join("/")}`)
+    }
+
+    // transform 不引起 reflow，只有整卡位移会让同行卡片高低错落；
+    // 卡片内部缩略图 scale 属纯视觉放大，放行。
+    const transform = lastDecl(block.body, "transform")
+    if (transform) {
+      const ty = /translateY\(\s*(-?[\d.]+)px\s*\)/i.exec(transform)
+      if (ty && Math.abs(parseFloat(ty[1])) > 4) {
+        found.push(`${label} transform 位移 ${ty[1]}px 超过 4px`)
+      }
+    }
+  }
+
+  if (found.length > 0) {
+    issues.push(
+      `hover/focus 态改变了布局，会造成文字重排与同组卡片高低错落：${found
+        .slice(0, 3)
+        .join("；")}。请只改 color/background-color/border-color/box-shadow/opacity/text-shadow；transform 只用不引起重排的视觉变换，整卡 translateY 不超过 4px`
+    )
+  }
+}
+
+/**
+ * 检查用位置选择器给同类卡片做差异化样式。
+ * 渲染期会为每张卡片包一层 <a style="display:contents">（整卡可点），卡片不再是
+ * 网格的直接子项，:nth-child / :first-child 必然失效或全部错配成同一规则。
+ * 纯装饰性伪元素（::before/::after 的几何纹理）不改变布局与文字样式，放行。
+ */
+function checkCardPositionStyles(css: string, issues: string[]): void {
+  const bad = new Set<string>()
+  for (const block of parseRuleBlocks(css)) {
+    for (const sel of block.selectors) {
+      if (!POSITION_PSEUDO_RE.test(sel) || !CARD_SELECTOR_RE.test(sel)) continue
+      if (/::?(?:before|after)/i.test(sel)) continue
+      if (!DIFFERENTIATING_DECL_RE.test(block.body)) continue
+      bad.add(sel.trim().slice(0, 80))
+    }
+  }
+  if (bad.size === 0) return
+  issues.push(
+    `使用位置选择器给同类卡片做差异化：${Array.from(bad)
+      .slice(0, 3)
+      .join("、")}。渲染期会为每张卡片包裹链接，:nth-child / :first-child 会失效或错配，造成同组卡片样式不一致；请把差异化收敛到不改变布局与文字样式的装饰性伪元素上`
+  )
+}
+
+/** 声明串里是否把水平外边距设为 auto（限宽容器居中的判据）。 */
+const CENTERED_DECL_RE =
+  /(?:^|[;\n])\s*margin(?:-inline|-left|-right)?\s*:\s*[^;]*\bauto\b/i
+
+/**
+ * 正文区宽度与填充审计：抓「内容只占左侧、右侧一大块空白」。
+ *
+ * 三类确定性成因：
+ * 1. 限宽容器只写 max-width 却漏了 margin-inline:auto；
+ * 2. 给 [data-page-host] 自身设宽度/栅格列，正文被挤进窄列；
+ * 3. 卡片网格写死固定列数，宽屏上多出来的宽度没有列去填。
+ */
+function checkContentWidth(
+  css: string,
+  issues: string[],
+  warnings: string[]
+): void {
+  const blocks = parseRuleBlocks(css)
+
+  // 1. 限宽容器未居中
+  const uncentered = new Set<string>()
+  for (const block of blocks) {
+    for (const sel of block.selectors) {
+      if (!/(?:\.wrap|\.container|\.section|data-page-host|^\s*main\b)/i.test(sel)) {
+        continue
+      }
+      // 只关心真正的「限宽」，且排除 theme-safety 的 max-width:100% 兜底
+      const mw = /(?:^|[;\n])\s*max-width\s*:\s*([^;]+)/i.exec(block.body)
+      if (!mw || /^\s*100%\s*$/.test(mw[1])) continue
+      if (CENTERED_DECL_RE.test(block.body)) continue
+      uncentered.add(sel.trim().slice(0, 70))
+    }
+  }
+  if (uncentered.size > 0) {
+    issues.push(
+      `限宽容器未居中：${Array.from(uncentered)
+        .slice(0, 3)
+        .join("、")}。只写 max-width 不写 margin-inline:auto，宽屏上正文会全挤在左侧、右侧留出一大块空白；请补 width:100%; margin-inline:auto`
+    )
+  }
+
+  // 2. host 自身被限宽 / 变成栅格
+  //    注意：不能用 `(?!100%)` 负向前瞻 —— `\s*` 回溯会让它在 ": 100%" 的
+  //    空格处通过，把 theme-safety 的 max-width:100% 兜底误判为限宽。
+  //    一律先提取声明值再判断。
+  const hostConstrained = blocks.some((block) => {
+    if (!block.selectors.some((s) => /data-page-host/i.test(s))) return false
+    if (/(?:^|[;\n])\s*grid-template-columns\s*:/i.test(block.body)) return true
+    for (const prop of ["width", "max-width"]) {
+      const m = new RegExp(
+        `(?:^|[;\\n])\\s*${prop}\\s*:\\s*([^;]+)`,
+        "i"
+      ).exec(block.body)
+      if (!m) continue
+      const value = m[1].trim().toLowerCase()
+      if (value !== "100%" && value !== "auto" && value !== "none") return true
+    }
+    return false
+  })
+  if (hostConstrained) {
+    issues.push(
+      "[data-page-host] 被设置了宽度或栅格列：它是全站正文容器，会把正文挤进窄列、右侧留白；请改为在内部 .wrap/.container 上限宽并用 margin-inline:auto 居中"
+    )
+  }
+
+  // 3. 固定列数的文章网格
+  const fixed: string[] = []
+  for (const block of blocks) {
+    const gtc = /(?:^|[;\n])\s*grid-template-columns\s*:\s*([^;]+)/i.exec(
+      block.body
+    )
+    if (!gtc) continue
+    const value = gtc[1].trim()
+    if (/auto-fill|auto-fit/i.test(value)) continue
+    const isRepeat = /^repeat\(\s*(\d+)\s*,\s*1fr\s*\)$/i.test(value)
+    const isPlain = /^(?:1fr\s+){1,4}1fr$/i.test(value)
+    if (!isRepeat && !isPlain) continue
+    if (!block.selectors.some((s) => /grid|card|post|list|articles/i.test(s))) {
+      continue
+    }
+    fixed.push(`${block.selectors[0].trim().slice(0, 48)} → ${value.slice(0, 36)}`)
+  }
+  if (fixed.length > 0) {
+    warnings.push(
+      `多列网格写死固定列数（${fixed
+        .slice(0, 2)
+        .join("；")}），大屏上右侧会空出整列；建议改用 repeat(auto-fill, minmax(280px, 1fr))`
+    )
+  }
+}
+
+/**
+ * 卡片对齐稳定性（warn，不阻断）：等高、尾部贴底、行数钳制。
+ * 缺这些时，长标题会把标签/按钮顶到不同高度，同行卡片内容上下错位。
+ */
+function checkCardConsistency(css: string, warnings: string[]): void {
+  const cardBodies = parseRuleBlocks(css)
+    .filter((b) => b.selectors.some((s) => CARD_SELECTOR_RE.test(s)))
+    .map((b) => b.body)
+    .join("\n")
+  if (!cardBodies.trim()) return
+
+  const missing: string[] = []
+  if (
+    !/align-items\s*:\s*stretch/i.test(css) &&
+    !/height\s*:\s*100%/i.test(cardBodies)
+  ) {
+    missing.push("等高（align-items:stretch / 卡片 height:100%）")
+  }
+  if (!/margin-top\s*:\s*auto/i.test(cardBodies)) {
+    missing.push("尾部元素贴底（margin-top:auto）")
+  }
+  if (!/(?:-webkit-)?line-clamp/i.test(cardBodies)) {
+    missing.push("标题/摘要行数钳制（-webkit-line-clamp）")
+  }
+  if (missing.length === 0) return
+  warnings.push(
+    `重复卡片对齐稳定性不足，缺少：${missing.join("、")}。标题/摘要长短不一时，同行卡片内容会上下错位`
+  )
 }
 
 /** 检查响应式断点（warn）。 */
@@ -303,7 +525,10 @@ export function analyzeSkeletonStyles(
     checkBackground(css, skeletonIssues)
     checkMotion(css, skeletonIssues)
     checkNavClearance(css, skeletonIssues)
-    checkHover(css, warnings)
+    checkHover(css, skeletonIssues, warnings)
+    checkCardPositionStyles(css, skeletonIssues)
+    checkCardConsistency(css, warnings)
+    checkContentWidth(css, skeletonIssues, warnings)
     checkMediaQueries(css, warnings)
     checkTypography(css, warnings)
     checkRootVars(css, warnings)
@@ -312,17 +537,22 @@ export function analyzeSkeletonStyles(
   const pageIssues: Record<string, string[]> = {}
   if (css.trim()) {
     const skeletonClasses = collectSkeletonClasses(layoutHtml)
-    const navAvatarCount = countNavAvatars(layoutHtml)
     for (const [type, html] of Object.entries(pages)) {
       if (!html) continue
-      const missing = Array.from(collectElementClasses(html))
+      const used = collectElementClasses(html)
+      const missing = Array.from(used)
         // 桥接源类名（如 .post-list）由映射到的目标类提供样式，不算「未定义」
         .filter((cls) => !skeletonClasses.has(cls))
         .filter((cls) => !CLASS_BRIDGE_SOURCE_CLASSES.has(cls))
-        .slice(0, MAX_MISSING_CLASSES)
-      if (missing.length > 0) {
+      const ratio = used.size > 0 ? missing.length / used.size : 0
+      if (
+        missing.length >= MISSING_CLASS_MIN_COUNT &&
+        ratio >= MISSING_CLASS_MIN_RATIO
+      ) {
         pageIssues[type] = [
-          `页面使用了骨架未定义的类名（将失去样式）：${missing.join(", ")}`,
+          `页面使用了骨架未定义的类名（将失去样式）：${missing
+            .slice(0, MAX_MISSING_CLASSES)
+            .join(", ")}`,
         ]
       }
 
@@ -334,13 +564,25 @@ export function analyzeSkeletonStyles(
       const pageAvatarCount = countAvatars(html)
       if (pageAvatarCount > 1) {
         ;(pageIssues[type] ??= []).push(
-          `页面正文出现 ${pageAvatarCount} 个作者头像，重复展示显得廉价，应只保留 1 个（author-avatar 全站唯一）`
+          `页面正文出现 ${pageAvatarCount} 个作者头像（同一区域重复展示），正文区应只保留 1 个；导航品牌区头像由布局提供，与正文各自独立`
         )
       }
-      if (navAvatarCount > 0 && pageAvatarCount > 0) {
+      // 导航头像 + 正文头像并存是现行渲染契约（chrome 与正文各自最多 1 个），
+      // 不再判为重复 —— 旧规则会让 LLM「放也错、删也错」，反复触发修订。
+
+      const textAvatars = collectTextAvatarPlaceholders(html)
+      if (textAvatars.length > 0) {
         ;(pageIssues[type] ??= []).push(
-          "导航已含作者头像，正文又放置头像，造成同页重复，请移除正文中的头像"
+          `作者头像占位被写成非 <img> 的文本字段（${textAvatars
+            .slice(0, 2)
+            .join("、")}）：author-avatar 的值是图片 URL，会被渲染成一串可见字符；请改用 ${AVATAR_PLACEHOLDER_HINT} 或在容器内放 <img>`
         )
+      }
+
+      // 固定列数网格 + 子项数不整除：最后一行会露出容器背景形成大块空白。
+      // 渲染期有确定性兜底，这里只给 warn，不为它额外触发一轮修订。
+      for (const msg of collectIncompleteGridRows(css, html)) {
+        warnings.push(`[${type}] ${msg}`)
       }
     }
   }
@@ -356,12 +598,61 @@ function countAvatars(html: string): number {
   ).length
 }
 
-/** 统计骨架中位于 <nav> 内的作者头像数量。 */
-function countNavAvatars(html: string): number {
-  const dom = new JSDOM(html)
-  return Array.from(
-    dom.window.document.querySelectorAll(
-      '[data-content="author-avatar"], img.avatar'
-    )
-  ).filter((el) => !!el.closest("nav")).length
+const AVATAR_PLACEHOLDER_HINT =
+  '<img class="avatar" data-content="author-avatar" data-content-type="text" src="" alt="作者头像">'
+
+/**
+ * 找出「被标成 text 字段、但自身不是 img 且内部也没有 img」的头像占位。
+ * author-avatar 的值是图片 URL，渲染器对普通元素会写 textContent，
+ * 结果页面显示一串 /api/uploads/... 字符而不是头像。
+ */
+function collectTextAvatarPlaceholders(html: string): string[] {
+  const doc = new JSDOM(html).window.document
+  const out: string[] = []
+  for (const el of Array.from(
+    doc.querySelectorAll('[data-content*="avatar"][data-content-type="text"]')
+  )) {
+    if (el.tagName.toLowerCase() === "img" || el.querySelector("img")) continue
+    const cls = el.getAttribute("class")
+    out.push(`<${el.tagName.toLowerCase()}${cls ? ` class="${cls}"` : ""}>`)
+  }
+  return out
+}
+
+/**
+ * 固定列数网格（repeat(N, ...)）里，静态子项数不是 N 的整数倍时，
+ * 最后一行会露出容器背景，形成一大块空白并把下一区块顶出异常间隔。
+ */
+function collectIncompleteGridRows(css: string, html: string): string[] {
+  const doc = new JSDOM(html).window.document
+  const out = new Set<string>()
+  for (const block of parseRuleBlocks(css)) {
+    const gtc =
+      /(?:^|[;\n])\s*grid-template-columns\s*:\s*repeat\(\s*(\d+)\s*,/i.exec(
+        block.body
+      )
+    if (!gtc) continue
+    const columns = Number(gtc[1])
+    if (columns < 2) continue
+    for (const selector of block.selectors) {
+      const cls = /\.([a-zA-Z_][\w-]*)/.exec(selector)?.[1]
+      if (!cls) continue
+      let nodes: Element[]
+      try {
+        nodes = Array.from(doc.querySelectorAll("." + cls))
+      } catch {
+        continue
+      }
+      for (const node of nodes) {
+        const count = Array.from(node.children).length
+        if (count > columns && count % columns !== 0) {
+          out.add(
+            `.${cls} 写死 ${columns} 列但页面里有 ${count} 个子项，最后一行会空出容器背景；请改用 repeat(auto-fit, minmax(240px, 1fr))`
+          )
+          break
+        }
+      }
+    }
+  }
+  return Array.from(out)
 }
